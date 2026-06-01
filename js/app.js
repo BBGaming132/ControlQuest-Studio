@@ -1,708 +1,91 @@
 import { initFirebase, register, login, logout, sendPasswordReset, loadProfile, saveProfile, subscribeProfile, createGroup, joinGroup, subscribeGroup, saveGroup, updateMemberSummary, leaveGroup, archiveAndDeleteProfile, exportProfileBackup, firebaseEnabled } from './firebase-service.js';
-import { defaultProfile, defaultGroup, emptyLiveSession, awardXp, completeDailyChallenge, updateStreak, useStreakFreeze, levelFromXp, dailyChallenges, renderAvatar, isAvatarItemUnlocked } from './gamification.js';
-import { DOMAINS, AVATAR_ITEMS, BADGES, GAME_QUESTIONS } from './content.js';
-import { todayISO, formatDate, addDays, generateRoadmap, currentRoadmapDay, progressSummary, domainCompletion, catchUpPlan, adaptiveMessage } from './planner.js';
-import { downloadIcs, recurrenceRuleForDays } from './calendar.js';
+import { defaultGroup, emptyLiveSession, award, completeDailyChallenge, evaluateDailyCompletion, levelFromXp, dailyChallenges, renderAvatar, isAvatarItemUnlocked, buyAvatarItem, openChest, buyShopItem, resetProfileForTesting } from './gamification.js';
+import { DOMAINS, TOPICS, AVATAR_ITEMS, BADGES, GAME_QUESTIONS, STARTER_DECKS, SHOP_ITEMS, BONUS_QUESTS } from './content.js';
+import { todayISO, formatDate, formatShort, addDays, generateRoadmap, groupByWeek, currentRoadmapDay, progressSummary, domainCompletion, catchUpPlan, adaptiveMessage, isPaused, isStudyDay } from './planner.js';
+import { downloadIcs } from './calendar.js';
 
-const $ = (sel, root=document) => root.querySelector(sel);
-const $$ = (sel, root=document) => [...root.querySelectorAll(sel)];
-
-const state = {
-  firebaseStatus:'Starting...',
-  user:null,
-  profile:null,
-  group:null,
-  activeView:'dashboard',
-  saving:false,
-  tutorialStep:0,
-  timerTick:null,
-  activeGame:null,
-  pendingProfileSave:null
-};
-
-const app = $('#app');
-
+const $=(s,r=document)=>r.querySelector(s), $$=(s,r=document)=>[...r.querySelectorAll(s)];
+const state={user:null,profile:null,group:null,activeView:'dashboard',tutorialStep:0,timerTick:null,game:null};
+const app=$('#app');
 init();
-
-async function init(){
-  renderBoot('Connecting to Firebase...');
-  await initFirebase(handleAuthChange, msg => { state.firebaseStatus = msg; });
-  if(!firebaseEnabled()) renderFirebaseSetup();
-  window.addEventListener('resize', () => document.body.classList.toggle('mobile-size', window.innerWidth < 760));
-}
-
-async function handleAuthChange(user){
-  state.user = user;
-  if(!user){
-    stopTimerTick();
-    state.profile = null; state.group = null;
-    renderLogin();
-    return;
-  }
-  renderBoot('Loading your profile...');
-  try{
-    state.profile = await loadProfile(user.uid);
-    state.profile.uid = user.uid;
-    state.profile.email = user.email || state.profile.email;
-    applyTheme();
-    subscribeProfile(user.uid, profile => {
-      state.profile = profile;
-      applyTheme();
-      if(profile.activeGroupId) attachGroup(profile.activeGroupId);
-      renderApp();
-    });
-    if(state.profile.activeGroupId) attachGroup(state.profile.activeGroupId);
-    renderApp();
-    if(!state.profile.onboarding?.completed) showTutorial();
-  }catch(error){
-    toast(error.message, 'error');
-    renderLogin();
-  }
-}
-
-function attachGroup(groupId){
-  if(state.group?.id === groupId && state.groupAttached) return;
-  state.groupAttached = groupId;
-  subscribeGroup(groupId, group => {
-    state.group = group;
-    renderApp();
-  });
-}
-
-function renderBoot(message){
-  app.className = 'boot-screen';
-  app.innerHTML = `<div class="boot-card float-in"><img src="assets/mascots/ollie.svg" alt="Ollie the Audit Owl"><h1>ControlQuest Studio</h1><p>${escapeHtml(message)}</p></div>`;
-}
-
-function renderFirebaseSetup(){
-  app.className = 'auth-shell';
-  app.innerHTML = `<section class="auth-card wide float-in">
-    <div class="auth-visual"><img src="assets/mascots/ollie.svg" alt="Ollie mascot"><h1>Almost ready.</h1><p>Firebase is not enabled in <code>config/firebase-config.js</code>. Paste your web app config and set <code>enabled: true</code>.</p></div>
-    <div class="auth-form"><h2>Setup checklist</h2><ol class="setup-list"><li>Open <code>config/firebase-config.js</code>.</li><li>Paste the Firebase web config values.</li><li>Change <code>enabled</code> from <code>false</code> to <code>true</code>.</li><li>Enable Email/Password Auth.</li><li>Create Firestore and publish <code>firebase.rules</code>.</li><li>Refresh this page.</li></ol></div>
-  </section>`;
-}
-
-function renderLogin(){
-  app.className = 'auth-shell';
-  app.innerHTML = `<section class="auth-card float-in">
-    <div class="auth-visual">
-      <img src="assets/mascots/ollie.svg" alt="Ollie the Audit Owl">
-      <p class="eyebrow">Gamified CISA prep</p>
-      <h1>ControlQuest Studio</h1>
-      <p>Build your streak, run live study rooms, join a study guild, and turn QAE practice into a game loop you actually want to come back to.</p>
-      <div class="mini-proof"><span>Live sync</span><span>Study groups</span><span>Adaptive roadmap</span><span>Daily quests</span></div>
-    </div>
-    <div class="auth-form">
-      <div class="tab-row" role="tablist"><button class="tab active" data-auth-tab="login">Log in</button><button class="tab" data-auth-tab="create">Create account</button></div>
-      <form id="loginForm" class="auth-tab active">
-        <h2>Welcome back</h2>
-        <label>Email<input type="email" id="loginEmail" autocomplete="email" required></label>
-        <label>Password<input type="password" id="loginPassword" autocomplete="current-password" required></label>
-        <button class="primary-button full" type="submit">Log in</button>
-        <button class="text-button" type="button" id="resetPasswordBtn">Send password reset</button>
-        <p class="helper">Your browser will keep you signed in unless you log out or clear site data.</p>
-      </form>
-      <form id="createForm" class="auth-tab">
-        <h2>Create your quest profile</h2>
-        <label>Display name<input type="text" id="createName" placeholder="Example: Bennett" required></label>
-        <label>Email<input type="email" id="createEmail" autocomplete="email" required></label>
-        <label>Password<input type="password" id="createPassword" autocomplete="new-password" minlength="6" required></label>
-        <button class="primary-button full" type="submit">Create account</button>
-        <p class="helper">This creates a Firebase Auth account and your private profile document.</p>
-      </form>
-    </div>
-  </section>`;
-  $$('[data-auth-tab]').forEach(btn => btn.addEventListener('click', () => switchAuthTab(btn.dataset.authTab)));
-  $('#loginForm').addEventListener('submit', async e => { e.preventDefault(); await doLogin(); });
-  $('#createForm').addEventListener('submit', async e => { e.preventDefault(); await doCreateAccount(); });
-  $('#resetPasswordBtn').addEventListener('click', async () => {
-    const email = $('#loginEmail').value.trim();
-    if(!email) return toast('Enter your email first.', 'warn');
-    try{ await sendPasswordReset(email); toast('Password reset email sent.'); }catch(error){ toast(error.message, 'error'); }
-  });
-}
-
-function switchAuthTab(tab){
-  $$('[data-auth-tab]').forEach(b => b.classList.toggle('active', b.dataset.authTab === tab));
-  $$('.auth-tab').forEach(el => el.classList.toggle('active', el.id.startsWith(tab)));
-}
-
-async function doLogin(){
-  try{
-    await login($('#loginEmail').value.trim(), $('#loginPassword').value);
-    toast('Logged in. Loading your quest...');
-  }catch(error){ toast(friendlyFirebaseError(error), 'error'); }
-}
-async function doCreateAccount(){
-  try{
-    await register($('#createEmail').value.trim(), $('#createPassword').value, $('#createName').value.trim());
-    toast('Account created. Welcome to ControlQuest.');
-  }catch(error){ toast(friendlyFirebaseError(error), 'error'); }
-}
-
-function renderApp(){
-  if(!state.profile) return;
-  const p = state.profile;
-  const summary = progressSummary(p);
-  const lvl = levelFromXp(p.stats.xp || 0);
-  app.className = 'app-shell';
-  app.innerHTML = `
-    <aside class="sidebar">
-      <div class="brand"><img src="assets/icons/logo-mark.svg" alt="ControlQuest logo"><div><p class="eyebrow">ControlQuest</p><h1>Studio</h1></div></div>
-      <button class="mobile-close" id="closeNavBtn" type="button">Close</button>
-      <nav class="nav-list">
-        ${navButton('dashboard','Command Center','dashboard')}
-        ${navButton('live','Live Study Room','live')}
-        ${navButton('roadmap','Roadmap','roadmap')}
-        ${navButton('guild','Study Guild','guild')}
-        ${navButton('calendar','Calendar','calendar')}
-        ${navButton('qae','QAE Arena','qae')}
-        ${navButton('mistakes','Mistake Forge','forge')}
-        ${navButton('flashcards','Memory Deck','cards')}
-        ${navButton('games','Arcade','arcade')}
-        ${navButton('avatar','Avatar Closet','avatar')}
-        ${navButton('profile','Profile + Settings','settings')}
-      </nav>
-      <div class="side-player">${renderAvatar(p,'small')}<div><strong>${escapeHtml(p.displayName)}</strong><span>Level ${lvl.level} · ${p.stats.streak || 0}-day streak</span></div></div>
-    </aside>
-    <main class="main">
-      <header class="topbar">
-        <button class="hamburger" id="openNavBtn" type="button">${icon('menu')}</button>
-        <div><p class="eyebrow">${state.group ? escapeHtml(state.group.name) : 'Solo quest mode'}</p><h2>${viewTitle(state.activeView)}</h2></div>
-        <div class="top-actions"><button class="ghost-button" id="themeToggle">${icon(p.preferences.theme === 'light' ? 'moon' : 'sun')}<span>${p.preferences.theme === 'light' ? 'Dark' : 'Light'}</span></button><button class="ghost-button" id="logoutBtn">${icon('logout')}<span>Log out</span></button></div>
-      </header>
-      <section class="status-strip">
-        <div><span>${summary.daysLeft}</span><small>days to exam</small></div>
-        <div><span>${summary.percent}%</span><small>roadmap</small></div>
-        <div><span>${p.stats.streak || 0}</span><small>streak</small></div>
-        <div><span>${p.stats.streakFreezes || 0}</span><small>freezes</small></div>
-        <div><span>${p.stats.totalQae || 0}</span><small>QAE logged</small></div>
-      </section>
-      <div id="viewMount"></div>
-    </main>
-  `;
-  bindShell();
-  renderView();
-}
-
-function navButton(view,label,iconName){
-  return `<button class="nav-btn ${state.activeView===view?'active':''}" data-view="${view}">${icon(iconName)}<span>${label}</span></button>`;
-}
-function viewTitle(view){
-  const map = { dashboard:'Command Center', live:'Live Study Room', roadmap:'Adaptive Roadmap', guild:'Study Guild', calendar:'Calendar Builder', qae:'QAE Arena', mistakes:'Mistake Forge', flashcards:'Memory Deck', games:'ControlQuest Arcade', avatar:'Avatar Closet', profile:'Profile + Settings' };
-  return map[view] || 'ControlQuest Studio';
-}
-function bindShell(){
-  $$('.nav-btn').forEach(btn => btn.addEventListener('click', () => { state.activeView = btn.dataset.view; document.body.classList.remove('nav-open'); renderApp(); }));
-  $('#themeToggle').addEventListener('click', async () => { state.profile.preferences.theme = state.profile.preferences.theme === 'light' ? 'dark' : 'light'; await saveProfileDebounced(true); applyTheme(); renderApp(); });
-  $('#logoutBtn').addEventListener('click', async () => { await logout(); toast('Logged out.'); });
-  $('#openNavBtn')?.addEventListener('click', () => document.body.classList.add('nav-open'));
-  $('#closeNavBtn')?.addEventListener('click', () => document.body.classList.remove('nav-open'));
-}
-
-function renderView(){
-  const mount = $('#viewMount');
-  const renderers = { dashboard:renderDashboard, live:renderLiveRoom, roadmap:renderRoadmap, guild:renderGuild, calendar:renderCalendar, qae:renderQae, mistakes:renderMistakes, flashcards:renderFlashcards, games:renderGames, avatar:renderAvatarCloset, profile:renderProfile };
-  mount.innerHTML = renderers[state.activeView]?.() || renderDashboard();
-  bindView();
-  startTimerTick();
-}
-
-function renderDashboard(){
-  const p = state.profile;
-  const roadmapDay = currentRoadmapDay(p);
-  const summary = progressSummary(p);
-  const lvl = levelFromXp(p.stats.xp || 0);
-  const challenges = dailyChallenges(p);
-  const doneMap = p.progress.dailyChallenges[todayISO()] || {};
-  return `<div class="dashboard-grid">
-    <section class="hero panel glow-card">
-      <div class="hero-copy"><p class="eyebrow">Today’s audit quest</p><h2>${roadmapDay ? escapeHtml(roadmapDay.topic.title) : 'Set your exam date to build the roadmap'}</h2><p>${roadmapDay ? escapeHtml(roadmapDay.topic.focus) : 'Your adaptive roadmap will build itself around your personal exam date.'}</p><div class="hero-actions"><button class="primary-button" data-action="go-live">Open Live Study Room</button><button class="secondary-button" data-action="go-roadmap">View Roadmap</button></div></div>
-      <div class="hero-avatar">${renderAvatar(p,'large')}<div class="speech">${escapeHtml(adaptiveMessage(p))}</div></div>
-    </section>
-    <section class="panel level-panel"><div class="section-head"><div><p class="eyebrow">Level ${lvl.level}</p><h3>${p.stats.xp || 0} XP</h3></div>${icon('level')}</div><div class="progress"><span style="width:${lvl.progress}%"></span></div><p class="helper">${lvl.progress}% toward Level ${lvl.level+1}</p></section>
-    <section class="panel streak-panel"><div class="section-head"><div><p class="eyebrow">Streak engine</p><h3>${p.stats.streak || 0} days</h3></div>${icon('flame')}</div><p>${p.stats.streakFreezes || 0} streak freezes available.</p><button class="secondary-button small" data-action="use-freeze">Use streak freeze</button></section>
-    <section class="panel"><div class="section-head"><div><p class="eyebrow">Exam countdown</p><h3>${summary.daysLeft} days</h3></div>${icon('calendar')}</div><p>Your personal exam date is ${formatDate(p.studyPlan.examDate,{year:true})}.</p><div class="progress"><span style="width:${summary.percent}%"></span></div></section>
-    <section class="panel wide"><div class="section-head"><div><p class="eyebrow">Daily challenges</p><h3>Complete 3 bonus quests today</h3></div>${icon('spark')}</div><div class="quest-grid">${challenges.map(ch => challengeCard(ch, doneMap[ch.key]?.done)).join('')}</div></section>
-    <section class="panel"><div class="section-head"><div><p class="eyebrow">Catch-up compass</p><h3>${summary.behindDays} days behind</h3></div>${icon('compass')}</div>${catchUpPlan(p).slice(0,3).map(c=>`<p class="mini-line">${escapeHtml(c.title)}</p>`).join('') || '<p class="helper">No catch-up needed right now.</p>'}</section>
-    <section class="panel"><div class="section-head"><div><p class="eyebrow">Group pulse</p><h3>${state.group ? escapeHtml(state.group.name) : 'No group yet'}</h3></div>${icon('group')}</div>${renderGroupPulse()}</section>
-  </div>`;
-}
-
-function challengeCard(ch, done){
-  return `<article class="quest-card ${done?'done':''}"><div class="quest-icon">${icon(ch.type === 'qae' ? 'target' : ch.type === 'mistake' ? 'forge' : ch.type === 'flashcards' ? 'cards' : 'spark')}</div><h4>${escapeHtml(ch.title)}</h4><p>${escapeHtml(ch.description)}</p><strong>+${ch.xp} XP</strong>${done ? '<span class="done-pill">Complete</span>' : `<button class="primary-button small" data-complete-challenge="${ch.key}">Complete</button>`}</article>`;
-}
-
-function renderGroupPulse(){
-  if(!state.group) return '<p class="helper">Create or join a study group to see buddy progress.</p><button class="secondary-button small" data-action="go-guild">Join group</button>';
-  const members = Object.values(state.group.memberSummaries || {});
-  return `<div class="member-stack">${members.map(m => `<div class="member-mini"><span>${escapeHtml(m.displayName)}</span><strong>${m.progressPercent || 0}%</strong><em>${m.behindDays || 0} behind</em></div>`).join('')}</div>`;
-}
-
-function renderLiveRoom(){
-  const p = state.profile;
-  const group = state.group;
-  const day = currentRoadmapDay(p);
-  if(!group) return `<section class="panel empty-state"><img src="assets/mascots/ollie.svg" alt="Ollie"><h2>Join a study group to use live sync.</h2><p>The Live Study Room syncs timer, checklist, notes, and check-ins across every member in the same group.</p><button class="primary-button" data-action="go-guild">Create or join a group</button></section>`;
-  const live = normalizedLiveSession(group, p);
-  return `<section class="panel live-room">
-    <div class="live-hero"><div><p class="eyebrow">Live Study Room</p><h2>${escapeHtml(live.title || 'Study Session')}</h2><p>${escapeHtml(day?.topic?.title || 'Today’s topic')}</p></div><div class="timer-orb"><span id="liveTimer">${timerText(live)}</span><small>${live.active ? 'Live now' : 'Ready'}</small></div></div>
-    <div class="live-controls"><button class="primary-button" data-live="start">Start / Resume</button><button class="secondary-button" data-live="pause">Pause</button><button class="secondary-button" data-live="reset">Reset</button><button class="secondary-button" data-live="complete">Complete session</button></div>
-    <div class="live-grid">
-      <div class="panel nested"><div class="section-head"><h3>Group check-in</h3>${icon('check')}</div><div class="checkin-grid">${Object.entries(group.memberSummaries || {}).map(([uid,m]) => `<button class="check-card ${live.checkins?.[uid]?'checked':''}" data-checkin="${uid}"><span>${escapeHtml(m.displayName)}</span><strong>${live.checkins?.[uid] ? 'Checked in' : 'Not yet'}</strong></button>`).join('')}</div></div>
-      <div class="panel nested"><div class="section-head"><h3>Shared session flow</h3>${icon('list')}</div><div class="session-list">${(day?.sessionFlow || []).map(step => `<label class="session-step"><input type="checkbox" data-live-task="${step.id}" ${live.checklist?.[step.id]?'checked':''}><span><strong>${escapeHtml(step.label)}</strong><em>${step.minutes} min · ${escapeHtml(step.prompt)}</em></span></label>`).join('')}</div></div>
-      <div class="panel nested"><div class="section-head"><h3>Today’s plan</h3>${icon('map')}</div>${(day?.checklist || []).map(t => `<p class="task-line"><strong>${escapeHtml(t.label)}</strong><span>${escapeHtml(t.detail)}</span></p>`).join('')}</div>
-      <div class="panel nested"><div class="section-head"><h3>Shared notes + homework</h3>${icon('notes')}</div><textarea id="liveNotes" placeholder="Topic, QAE misses, CISA rules, tomorrow’s start point...">${escapeHtml(live.notes || '')}</textarea><div class="inline-form"><input id="homeworkInput" placeholder="Add after-session homework"><button class="secondary-button" data-action="add-homework">Add</button></div></div>
-    </div>
-  </section>`;
-}
-
-function renderRoadmap(){
-  const p = state.profile;
-  const roadmap = generateRoadmap(p);
-  const domains = domainCompletion(p);
-  const weeks = groupBy(roadmap, r => r.activeWeek);
-  return `<section class="panel"><div class="section-head"><div><p class="eyebrow">Adaptive personal roadmap</p><h2>Your plan bends without breaking</h2><p class="helper">Exam date and pause blocks are personal to you, not the whole group.</p></div>${icon('roadmap')}</div>
-    <div class="settings-grid"><label>Start date<input type="date" id="startDate" value="${p.studyPlan.startDate}"></label><label>Exam date<input type="date" id="examDate" value="${p.studyPlan.examDate}"></label><label>QAE/day<input type="number" min="1" max="75" id="qaeGoal" value="${p.studyPlan.dailyQaeGoal || 10}"></label><label>Session duration<input type="number" min="15" max="180" id="sessionDuration" value="${p.studyPlan.sessionDuration || 60}"></label></div>
-    <div class="domain-grid">${domains.map(d => `<div class="domain-card"><span style="--d:${d.color}">${d.id}</span><strong>${d.percent}%</strong><p>${escapeHtml(d.short)}</p><div class="progress"><i style="width:${d.percent}%;background:${d.color}"></i></div></div>`).join('')}</div>
-    <div class="button-row"><button class="secondary-button" data-action="add-pause">Add pause block</button><button class="secondary-button" data-action="mark-today-missed">Mark today missed</button><button class="primary-button" data-action="save-plan">Save plan changes</button></div>
-    <div class="roadmap-weeks">${Object.entries(weeks).map(([week,items]) => `<details class="week-card" ${items.some(i=>i.date>=todayISO())?'open':''}><summary><span>Week ${week}</span><strong>${items.filter(i => i.status==='done').length}/${items.length} days complete</strong></summary><div class="week-days">${items.map(dayCard).join('')}</div></details>`).join('')}</div>
-  </section>`;
-}
-
-function dayCard(r){
-  const status = state.profile.progress.roadmapStatus?.[r.date]?.status || r.status;
-  return `<article class="day-card ${status}"><div><p class="eyebrow">${formatDate(r.date,{weekday:true})} · ${r.domain.id}</p><h4>${escapeHtml(r.topic.title)}</h4><p>${escapeHtml(r.topic.focus)}</p></div><div class="task-chips">${r.topic.tasks.slice(0,3).map(t=>`<span>${escapeHtml(t)}</span>`).join('')}</div><div class="button-row"><button class="secondary-button small" data-day-status="done" data-day="${r.date}">Done</button><button class="secondary-button small" data-day-status="missed" data-day="${r.date}">Missed</button><button class="secondary-button small" data-open-day="${r.date}">Open</button></div></article>`;
-}
-
-function renderGuild(){
-  const p = state.profile;
-  const group = state.group;
-  return `<div class="guild-layout"><section class="panel"><div class="section-head"><div><p class="eyebrow">Study groups</p><h2>${group ? escapeHtml(group.name) : 'Create or join a guild'}</h2><p class="helper">Groups show high-level progress only. Private mistake logs, flashcards, and personal settings stay in each user profile.</p></div>${icon('group')}</div>
-    ${group ? renderActiveGroup(group) : '<p class="empty-line">No active group yet. Create one or join with a group ID and invite code.</p>'}
-  </section><section class="panel"><h3>Create a study group</h3><div class="inline-stack"><label>Group name<input id="newGroupName" placeholder="Example: Ty & Comply Guild"></label><button class="primary-button" data-action="create-group">Create group</button></div><hr><h3>Join a study group</h3><div class="inline-stack"><label>Group ID<input id="joinGroupId" placeholder="group-id"></label><label>Invite code<input id="joinGroupCode" placeholder="ABC123"></label><button class="secondary-button" data-action="join-group">Join group</button></div></section></div>`;
-}
-
-function renderActiveGroup(group){
-  const members = Object.values(group.memberSummaries || {});
-  return `<div class="invite-card"><div><p class="eyebrow">Invite details</p><h3>${escapeHtml(group.id)}</h3><p>Invite code: <strong>${escapeHtml(group.joinCode)}</strong></p></div><button class="secondary-button" data-action="copy-invite">Copy invite</button></div>
-  <div class="guild-members">${members.map(m => `<article class="guild-member"><div class="tiny-avatar">${renderMiniAvatar(m.avatar)}</div><div><h4>${escapeHtml(m.displayName)}</h4><p>Level ${m.level || 1} · ${m.streak || 0}-day streak · ${m.totalQae || 0} QAE</p><div class="progress"><span style="width:${m.progressPercent || 0}%"></span></div><small>${m.progressPercent || 0}% roadmap · ${m.behindDays || 0} days behind</small></div></article>`).join('')}</div>
-  <div class="catchup-box"><h3>Buddy catch-up ideas</h3>${members.sort((a,b)=>(b.behindDays||0)-(a.behindDays||0)).slice(0,3).map(m => `<p><strong>${escapeHtml(m.displayName)}</strong>: ${catchupAdvice(m.behindDays || 0)}</p>`).join('')}</div>
-  <div class="button-row"><button class="secondary-button" data-action="sync-summary">Sync my summary</button><button class="danger-button" data-action="leave-group">Leave group</button></div>`;
-}
-
-function renderCalendar(){
-  const p = state.profile, g = state.group;
-  const days = p.studyPlan.sessionDays || [1,2,3,4,5];
-  return `<section class="panel"><div class="section-head"><div><p class="eyebrow">Personal + group calendar</p><h2>Build study sessions without locking yourself in</h2></div>${icon('calendar')}</div>
-    <div class="calendar-grid"><div class="panel nested"><h3>Personal study calendar</h3><label>Time<input type="time" id="personalTime" value="${p.studyPlan.sessionTime || '07:00'}"></label><label>Duration minutes<input type="number" id="personalDuration" value="${p.studyPlan.sessionDuration || 60}"></label><div class="days-picker">${weekdayPicker(days,'personalDay')}</div><button class="primary-button full" data-action="download-personal-ics">Download recurring personal .ics</button></div>
-    <div class="panel nested"><h3>Group shared calendar</h3>${g ? `<label>Group time<input type="time" id="groupTime" value="${g.schedule?.time || '07:00'}"></label><label>Duration minutes<input type="number" id="groupDuration" value="${g.schedule?.duration || 60}"></label><div class="days-picker">${weekdayPicker(g.schedule?.days || [1,2,3,4,5],'groupDay')}</div><button class="primary-button full" data-action="save-group-schedule">Save group schedule</button><button class="secondary-button full" data-action="download-group-ics">Download group .ics</button>` : '<p class="helper">Join a group to manage shared sessions.</p>'}</div>
-    <div class="panel nested"><h3>Extra session</h3><label>Title<input id="extraTitle" value="Weekend QAE Power Hour"></label><label>Date<input type="date" id="extraDate" value="${todayISO()}"></label><label>Time<input type="time" id="extraTime" value="10:00"></label><label>Minutes<input type="number" id="extraDuration" value="60"></label><button class="secondary-button full" data-action="download-extra-ics">Download one-off .ics</button></div></div>
-  </section>`;
-}
-function weekdayPicker(selected,name){
-  const labels = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
-  return labels.map((l,i)=>`<label class="day-pill"><input type="checkbox" name="${name}" value="${i}" ${selected.includes(i)?'checked':''}>${l}</label>`).join('');
-}
-
-function renderQae(){
-  const logs = state.profile.progress.qaeLogs || [];
-  const byDomain = DOMAINS.map(d => {
-    const arr = logs.filter(l => l.domain === d.id);
-    const correct = arr.reduce((a,l)=>a+(Number(l.correct)||0),0), total = arr.reduce((a,l)=>a+(Number(l.total)||0),0);
-    return { ...d, total, correct, pct: total ? Math.round(correct/total*100) : 0 };
-  });
-  return `<section class="panel"><div class="section-head"><div><p class="eyebrow">QAE Arena</p><h2>Practice like it is a scoreboard</h2></div>${icon('target')}</div>
-    <div class="settings-grid compact"><label>Domain<select id="qaeDomain">${DOMAINS.map(d=>`<option value="${d.id}">${d.id} · ${d.short}</option>`).join('')}<option value="MIX">MIX · Mixed</option></select></label><label>Correct<input type="number" id="qaeCorrect" min="0" value="8"></label><label>Total<input type="number" id="qaeTotal" min="1" value="10"></label><label>Notes<input id="qaeNotes" placeholder="Trap or theme"></label></div><button class="primary-button" data-action="log-qae">Log QAE round</button>
-    <div class="domain-grid">${byDomain.map(d => `<div class="domain-card"><span style="--d:${d.color}">${d.id}</span><strong>${d.pct}%</strong><p>${d.total} questions</p><div class="progress"><i style="width:${d.pct}%;background:${d.color}"></i></div></div>`).join('')}</div>
-    <div class="log-list">${logs.slice(0,12).map(l=>`<div class="log-row"><span>${formatDate(l.date)}</span><strong>${l.domain}</strong><em>${l.correct}/${l.total}</em><p>${escapeHtml(l.notes || '')}</p></div>`).join('') || '<p class="helper">No QAE rounds logged yet.</p>'}</div>
-  </section>`;
-}
-
-function renderMistakes(){
-  const mistakes = state.profile.progress.mistakes || [];
-  return `<section class="panel"><div class="section-head"><div><p class="eyebrow">Mistake Forge</p><h2>Turn wrong answers into rules</h2></div>${icon('forge')}</div>
-    <div class="settings-grid"><label>Domain<select id="mistakeDomain">${DOMAINS.map(d=>`<option value="${d.id}">${d.id} · ${d.short}</option>`).join('')}<option value="MIX">MIX</option></select></label><label>Trap<input id="mistakeTrap" placeholder="Example: jumped to remediation too early"></label><label>Correct CISA logic<textarea id="mistakeLogic" placeholder="The auditor should first determine cause and impact..."></textarea></label><label>Retest date<input type="date" id="mistakeRetest" value="${addDays(todayISO(),7)}"></label></div><button class="primary-button" data-action="add-mistake">Forge mistake lesson</button>
-    <div class="card-list">${mistakes.slice(0,20).map(m=>`<article class="memory-card"><p class="eyebrow">${m.domain} · retest ${formatDate(m.retestDate)}</p><h4>${escapeHtml(m.trap)}</h4><p>${escapeHtml(m.logic)}</p><button class="secondary-button small" data-mark-retested="${m.id}">Mark reviewed</button></article>`).join('') || '<p class="helper">No mistakes forged yet.</p>'}</div>
-  </section>`;
-}
-
-function renderFlashcards(){
-  const cards = state.profile.progress.flashcards || [];
-  return `<section class="panel"><div class="section-head"><div><p class="eyebrow">Memory Deck</p><h2>Quizlet-ready cards</h2></div>${icon('cards')}</div>
-    <div class="settings-grid"><label>Front<input id="cardFront" placeholder="What does RPO mean?"></label><label>Back<textarea id="cardBack" placeholder="The acceptable amount of data loss measured in time."></textarea></label><label>Domain<select id="cardDomain">${DOMAINS.map(d=>`<option value="${d.id}">${d.id}</option>`).join('')}<option value="MIX">MIX</option></select></label></div><button class="primary-button" data-action="add-card">Add flashcard</button><button class="secondary-button" data-action="export-quizlet">Export Quizlet TSV</button>
-    <div class="card-list flip-list">${cards.slice(0,24).map(c=>`<article class="flip-card" data-flip><div class="front"><p class="eyebrow">${c.domain}</p><h4>${escapeHtml(c.front)}</h4></div><div class="back"><p>${escapeHtml(c.back)}</p></div></article>`).join('') || '<p class="helper">No flashcards yet.</p>'}</div>
-  </section>`;
-}
-
-function renderGames(){
-  const q = state.activeGame || GAME_QUESTIONS.filter(x=>x.mode==='bestFirst')[Math.floor(Math.random()*5)];
-  state.activeGame = q;
-  const terms = GAME_QUESTIONS.filter(x=>x.mode==='termMatch').slice(0,5);
-  return `<div class="games-grid"><section class="panel game-panel"><div class="section-head"><div><p class="eyebrow">Best / First Blitz</p><h2>Think like ISACA</h2></div>${icon('arcade')}</div><p class="game-prompt">${escapeHtml(q.prompt)}</p><div class="choice-grid">${q.choices.map((c,i)=>`<button class="choice" data-game-choice="${i}">${escapeHtml(c)}</button>`).join('')}</div><p class="helper" id="gameWhy"></p></section>
-  <section class="panel"><h3>Term Match warm-up</h3>${terms.map(t => `<details class="term-card"><summary>${escapeHtml(t.term)}</summary><p>${escapeHtml(t.definition)}</p><button class="secondary-button small" data-term-xp="${t.term}">I knew this</button></details>`).join('')}</section>
-  <section class="panel"><h3>Weekend boost ideas</h3><p>Complete one extra QAE block, one visual map, or one teach-back recording on the weekend to earn bonus XP without messing up the weekday plan.</p><button class="primary-button" data-action="weekend-boost">Log weekend boost</button></section></div>`;
-}
-
-function renderAvatarCloset(){
-  const p = state.profile;
-  const a = p.avatar;
-  return `<section class="panel"><div class="section-head"><div><p class="eyebrow">Avatar Closet</p><h2>Make your audit buddy yours</h2></div>${renderAvatar(p,'medium')}</div>
-    <h3>Base color</h3><div class="color-row">${AVATAR_ITEMS.baseColors.map(c=>`<button class="color-swatch ${a.baseColor===c?'active':''}" style="background:${c}" data-avatar-color="${c}"></button>`).join('')}</div>
-    ${avatarItemSection('capes','cape')}${avatarItemSection('glasses','glasses')}${avatarItemSection('accessories','accessory')}
-  </section>`;
-}
-function avatarItemSection(type, prop){
-  const p = state.profile;
-  return `<h3>${type[0].toUpperCase()+type.slice(1)}</h3><div class="closet-grid">${AVATAR_ITEMS[type].map(item => { const unlocked = isAvatarItemUnlocked(p,type,item.id); return `<button class="closet-item ${p.avatar[prop]===item.id?'active':''} ${unlocked?'':'locked'}" data-avatar-prop="${prop}" data-avatar-value="${item.id}" ${unlocked?'':'disabled'}><strong>${escapeHtml(item.name)}</strong><span>${unlocked?'Unlocked':`Unlock: ${item.unlock}`}</span></button>`; }).join('')}</div>`;
-}
-
-function renderProfile(){
-  const p = state.profile;
-  return `<div class="profile-grid"><section class="panel"><div class="section-head"><div><p class="eyebrow">Profile</p><h2>${escapeHtml(p.displayName)}</h2></div>${renderAvatar(p,'small')}</div><label>Display name<input id="displayName" value="${escapeAttr(p.displayName)}"></label><label>Timezone<input id="timezone" value="${escapeAttr(p.preferences.timezone || '')}"></label><button class="primary-button" data-action="save-profile">Save profile</button><button class="secondary-button" data-action="show-tutorial">Replay tutorial</button><button class="secondary-button" data-action="export-backup">Export my profile JSON</button></section>
-  <section class="panel"><h3>Danger zone</h3><p class="helper">Deleting your profile first creates a backup under <code>deletedProfiles/{your uid}/backups</code>. This protects you from accidental deletion.</p><button class="danger-button" data-action="delete-profile">Delete profile</button></section>
-  <section class="panel"><h3>How this site stores data</h3><p>Your private roadmap, QAE logs, mistakes, flashcards, exam date, streak, avatar, and settings live in your private user profile. Study groups only store high-level member summaries and live session data.</p></section></div>`;
-}
-
-function bindView(){
-  $$('[data-action]').forEach(btn => btn.addEventListener('click', () => handleAction(btn.dataset.action, btn)));
-  $$('[data-complete-challenge]').forEach(btn => btn.addEventListener('click', () => completeChallenge(btn.dataset.completeChallenge)));
-  $$('[data-live]').forEach(btn => btn.addEventListener('click', () => handleLive(btn.dataset.live)));
-  $$('[data-live-task]').forEach(cb => cb.addEventListener('change', () => updateLiveTask(cb.dataset.liveTask, cb.checked)));
-  $$('[data-checkin]').forEach(btn => btn.addEventListener('click', () => liveCheckin(btn.dataset.checkin)));
-  $('#liveNotes')?.addEventListener('change', async e => { state.group.liveSession.notes = e.target.value; await saveGroup(state.group); });
-  $$('[data-day-status]').forEach(btn => btn.addEventListener('click', () => markRoadmapDay(btn.dataset.day, btn.dataset.dayStatus)));
-  $$('[data-open-day]').forEach(btn => btn.addEventListener('click', () => openDayModal(btn.dataset.openDay)));
-  $$('[data-mark-retested]').forEach(btn => btn.addEventListener('click', () => markMistakeRetested(btn.dataset.markRetested)));
-  $$('[data-flip]').forEach(card => card.addEventListener('click', () => card.classList.toggle('flipped')));
-  $$('[data-game-choice]').forEach(btn => btn.addEventListener('click', () => answerGame(Number(btn.dataset.gameChoice))));
-  $$('[data-term-xp]').forEach(btn => btn.addEventListener('click', () => { awardXp(state.profile, 10, `Term reviewed: ${btn.dataset.termXp}`); saveProfileDebounced(true); toast('+10 XP. Term reviewed.'); }));
-  $$('[data-avatar-color]').forEach(btn => btn.addEventListener('click', () => { state.profile.avatar.baseColor = btn.dataset.avatarColor; saveProfileDebounced(true); renderApp(); }));
-  $$('[data-avatar-prop]').forEach(btn => btn.addEventListener('click', () => { state.profile.avatar[btn.dataset.avatarProp] = btn.dataset.avatarValue; awardXp(state.profile, 5, 'Avatar customized'); saveProfileDebounced(true); renderApp(); }));
-}
-
-async function handleAction(action){
-  try{
-    if(action === 'go-live') { state.activeView='live'; renderApp(); }
-    if(action === 'go-roadmap') { state.activeView='roadmap'; renderApp(); }
-    if(action === 'go-guild') { state.activeView='guild'; renderApp(); }
-    if(action === 'use-freeze') { if(useStreakFreeze(state.profile)) { await saveProfileNow(); toast('Streak freeze used. No shame. Keep moving.'); } else toast('No streak freezes available.', 'warn'); }
-    if(action === 'save-plan') await savePlanInputs();
-    if(action === 'add-pause') await addPauseBlock();
-    if(action === 'mark-today-missed') await markRoadmapDay(todayISO(),'missed');
-    if(action === 'create-group') await createStudyGroup();
-    if(action === 'join-group') await joinStudyGroup();
-    if(action === 'copy-invite') copyInvite();
-    if(action === 'sync-summary') { await syncSummary(); toast('Your high-level group summary is synced.'); }
-    if(action === 'leave-group') await doLeaveGroup();
-    if(action === 'download-personal-ics') downloadPersonalIcs();
-    if(action === 'save-group-schedule') await saveGroupSchedule();
-    if(action === 'download-group-ics') downloadGroupIcs();
-    if(action === 'download-extra-ics') downloadExtraIcs();
-    if(action === 'log-qae') await logQae();
-    if(action === 'add-mistake') await addMistake();
-    if(action === 'add-card') await addFlashcard();
-    if(action === 'export-quizlet') exportQuizlet();
-    if(action === 'weekend-boost') { awardXp(state.profile, 75, 'Weekend boost completed'); updateStreak(state.profile); await saveProfileNow(); toast('Weekend boost logged. +75 XP.'); }
-    if(action === 'save-profile') await saveProfileSettings();
-    if(action === 'show-tutorial') showTutorial(true);
-    if(action === 'export-backup') exportProfileBackup(state.profile);
-    if(action === 'delete-profile') showDeleteProfileModal();
-    if(action === 'add-homework') await addHomework();
-  }catch(error){ toast(error.message, 'error'); }
-}
-
-async function completeChallenge(key){
-  const ch = dailyChallenges(state.profile).find(c=>c.key===key);
-  if(!ch) return;
-  const evidence = prompt(`${ch.title}\n\n${ch.description}\n\nWhat did you complete?`, '');
-  if(evidence === null) return;
-  if(completeDailyChallenge(state.profile,ch,evidence)){
-    await saveProfileNow();
-    toast(`${ch.title} complete. +${ch.xp} XP.`);
-    renderApp();
-  } else toast('Already completed today.');
-}
-
-async function savePlanInputs(){
-  state.profile.studyPlan.startDate = $('#startDate').value;
-  state.profile.studyPlan.examDate = $('#examDate').value;
-  state.profile.studyPlan.dailyQaeGoal = Number($('#qaeGoal').value || 10);
-  state.profile.studyPlan.sessionDuration = Number($('#sessionDuration').value || 60);
-  await saveProfileNow();
-  toast('Personal roadmap recalculated.');
-  renderApp();
-}
-async function addPauseBlock(){
-  const start = prompt('Pause start date (YYYY-MM-DD):', todayISO()); if(!start) return;
-  const end = prompt('Pause end date (YYYY-MM-DD):', start); if(!end) return;
-  const reason = prompt('Reason for pause:', 'Travel / client work / PTO') || 'Pause block';
-  state.profile.studyPlan.pauseBlocks = state.profile.studyPlan.pauseBlocks || [];
-  state.profile.studyPlan.pauseBlocks.push({ id:crypto.randomUUID(), start, end, reason });
-  await saveProfileNow();
-  toast('Pause block added. Roadmap now skips those days.');
-}
-async function markRoadmapDay(date,status){
-  const day = generateRoadmap(state.profile).find(r=>r.date===date);
-  state.profile.progress.roadmapStatus[date] = { status, domain:day?.domain?.id || 'MIX', topic:day?.topic?.title || '', updatedAt:new Date().toISOString() };
-  if(status === 'done'){
-    awardXp(state.profile, 80, `Roadmap day complete: ${day?.topic?.title || date}`);
-    updateStreak(state.profile, date);
-  }
-  await saveProfileNow();
-  toast(`Roadmap day marked ${status}.`);
-  renderApp();
-}
-
-function openDayModal(date){
-  const day = generateRoadmap(state.profile).find(r=>r.date===date);
-  if(!day) return;
-  showModal(`<div class="modal-card big"><button class="modal-close" data-close-modal>×</button><p class="eyebrow">${formatDate(date,{weekday:true,year:true})} · ${day.domain.id}</p><h2>${escapeHtml(day.topic.title)}</h2><p>${escapeHtml(day.topic.focus)}</p><h3>Session plan</h3>${day.sessionFlow.map(s=>`<p class="task-line"><strong>${escapeHtml(s.label)} · ${s.minutes} min</strong><span>${escapeHtml(s.prompt)}</span></p>`).join('')}<h3>Day tasks</h3>${day.checklist.map(t=>`<p class="task-line"><strong>${escapeHtml(t.label)}</strong><span>${escapeHtml(t.detail)}</span></p>`).join('')}<button class="primary-button" data-day-status="done" data-day="${date}">Mark day complete</button></div>`);
-  bindView();
-}
-
-async function createStudyGroup(){
-  const name = $('#newGroupName').value.trim() || 'CISA Study Guild';
-  const group = defaultGroup(state.user.uid, state.profile, name);
-  await createGroup(group);
-  state.profile.groups = [...new Set([...(state.profile.groups || []), group.id])];
-  state.profile.activeGroupId = group.id;
-  await saveProfileNow();
-  attachGroup(group.id);
-  toast('Study group created. Share the group ID and invite code.');
-}
-async function joinStudyGroup(){
-  const id = $('#joinGroupId').value.trim();
-  const code = $('#joinGroupCode').value.trim();
-  if(!id || !code) return toast('Enter both group ID and invite code.', 'warn');
-  const group = await joinGroup(id, code, state.profile);
-  state.profile.groups = [...new Set([...(state.profile.groups || []), id])];
-  state.profile.activeGroupId = id;
-  await saveProfileNow();
-  attachGroup(id);
-  toast(`Joined ${group.name}.`);
-}
-function copyInvite(){
-  const g = state.group;
-  const text = `Join my ControlQuest study group\nGroup ID: ${g.id}\nInvite code: ${g.joinCode}`;
-  navigator.clipboard?.writeText(text);
-  toast('Invite copied.');
-}
-async function syncSummary(){ await updateMemberSummary(state.group.id, state.profile); }
-async function doLeaveGroup(){
-  if(!confirm('Leave this study group? Your personal profile and progress will stay intact.')) return;
-  await leaveGroup(state.group.id, state.profile);
-  state.profile.groups = (state.profile.groups || []).filter(g=>g!==state.group.id);
-  state.profile.activeGroupId = state.profile.groups[0] || null;
-  await saveProfileNow();
-  state.group = null;
-  toast('Left group.');
-}
-
-function normalizedLiveSession(group, profile){
-  if(!group.liveSession || group.liveSession.date !== todayISO()){
-    group.liveSession = emptyLiveSession();
-    group.liveSession.durationMinutes = group.schedule?.duration || profile.studyPlan.sessionDuration || 60;
-    group.liveSession.title = group.schedule?.label || 'Live Study Session';
-  }
-  return group.liveSession;
-}
-async function handleLive(action){
-  const live = normalizedLiveSession(state.group, state.profile);
-  if(action === 'start'){
-    if(!live.active){ live.active = true; live.startedAt = new Date().toISOString(); live.pausedAt = null; }
-  }
-  if(action === 'pause'){
-    if(live.active){ live.accumulatedSeconds = elapsedSeconds(live); live.active = false; live.pausedAt = new Date().toISOString(); }
-  }
-  if(action === 'reset'){
-    if(!confirm('Reset the shared live timer and checklist for everyone in this group?')) return;
-    state.group.liveSession = emptyLiveSession();
-    state.group.liveSession.durationMinutes = state.group.schedule?.duration || state.profile.studyPlan.sessionDuration || 60;
-  }
-  if(action === 'complete'){
-    live.active = false; live.accumulatedSeconds = live.durationMinutes * 60;
-    state.group.liveSession = live;
-    state.profile.stats.totalSessions = (state.profile.stats.totalSessions || 0) + 1;
-    awardXp(state.profile, 120, 'Live group session completed'); updateStreak(state.profile);
-    await saveProfileNow();
-  }
-  state.group.liveSession.updatedAt = new Date().toISOString();
-  await saveGroup(state.group);
-  renderApp();
-}
-async function updateLiveTask(id, checked){
-  const live = normalizedLiveSession(state.group, state.profile);
-  live.checklist[id] = checked;
-  live.updatedAt = new Date().toISOString();
-  if(checked){ awardXp(state.profile, 8, `Live checklist: ${id}`); await saveProfileNow(); }
-  await saveGroup(state.group);
-}
-async function liveCheckin(uid){
-  const live = normalizedLiveSession(state.group, state.profile);
-  if(uid !== state.user.uid && !confirm('Check in this person? Usually each person should check themselves in.')) return;
-  live.checkins[uid] = !live.checkins[uid];
-  if(live.checkins[uid] && uid === state.user.uid){ awardXp(state.profile, 15, 'Live room check-in'); updateStreak(state.profile); await saveProfileNow(); }
-  await saveGroup(state.group);
-}
-async function addHomework(){
-  const value = $('#homeworkInput').value.trim(); if(!value) return;
-  state.profile.progress.homework.unshift({ id:crypto.randomUUID(), title:value, date:todayISO(), status:'open', source:'live-room' });
-  awardXp(state.profile, 10, 'Homework planned');
-  await saveProfileNow();
-  $('#homeworkInput').value = '';
-  toast('Homework added to your profile.');
-}
-function elapsedSeconds(live){
-  const base = live.accumulatedSeconds || 0;
-  if(!live.active || !live.startedAt) return base;
-  return base + Math.floor((Date.now() - new Date(live.startedAt).getTime()) / 1000);
-}
-function timerText(live){
-  const duration = (live.durationMinutes || 60) * 60;
-  const remaining = Math.max(0, duration - elapsedSeconds(live));
-  const m = Math.floor(remaining / 60), s = remaining % 60;
-  return `${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
-}
-function startTimerTick(){
-  if(state.timerTick) return;
-  state.timerTick = setInterval(() => { const el = $('#liveTimer'); if(el && state.group?.liveSession) el.textContent = timerText(state.group.liveSession); }, 1000);
-}
-function stopTimerTick(){ if(state.timerTick){ clearInterval(state.timerTick); state.timerTick = null; } }
-
-function selectedDays(name){ return $$(`input[name="${name}"]:checked`).map(x=>Number(x.value)); }
-function downloadPersonalIcs(){
-  const time = $('#personalTime').value, duration = Number($('#personalDuration').value || 60), days = selectedDays('personalDay');
-  downloadIcs({ title:'ControlQuest Personal CISA Study', description:'Personal ControlQuest CISA study block.', startDate:state.profile.studyPlan.startDate, time, durationMinutes:duration, recurrence:recurrenceRuleForDays(days,state.profile.studyPlan.examDate), attendees:[state.profile.email] });
-}
-async function saveGroupSchedule(){
-  state.group.schedule.time = $('#groupTime').value;
-  state.group.schedule.duration = Number($('#groupDuration').value || 60);
-  state.group.schedule.days = selectedDays('groupDay');
-  await saveGroup(state.group);
-  toast('Group schedule saved.');
-}
-function downloadGroupIcs(){
-  const g = state.group;
-  const emails = Object.values(g.memberSummaries || {}).map(m=>m.email).filter(Boolean);
-  downloadIcs({ title:`${g.name} Study Session`, description:'Shared ControlQuest CISA study session.', startDate:state.profile.studyPlan.startDate, time:g.schedule.time, durationMinutes:g.schedule.duration, recurrence:recurrenceRuleForDays(g.schedule.days,state.profile.studyPlan.examDate), attendees:emails });
-}
-function downloadExtraIcs(){
-  downloadIcs({ title:$('#extraTitle').value, description:'Extra ControlQuest study session.', startDate:$('#extraDate').value, time:$('#extraTime').value, durationMinutes:Number($('#extraDuration').value || 60), attendees:[state.profile.email] });
-}
-
-async function logQae(){
-  const total = Number($('#qaeTotal').value || 0), correct = Number($('#qaeCorrect').value || 0);
-  if(!total || correct > total) return toast('Enter a valid QAE score.', 'warn');
-  const log = { id:crypto.randomUUID(), date:todayISO(), domain:$('#qaeDomain').value, correct, total, notes:$('#qaeNotes').value.trim() };
-  state.profile.progress.qaeLogs.unshift(log);
-  state.profile.stats.totalQae = (state.profile.stats.totalQae || 0) + total;
-  awardXp(state.profile, Math.max(20, Math.round(total * 4 + correct)), `QAE round: ${correct}/${total}`); updateStreak(state.profile);
-  await saveProfileNow(); toast('QAE round logged.'); renderApp();
-}
-async function addMistake(){
-  const trap = $('#mistakeTrap').value.trim(), logic = $('#mistakeLogic').value.trim(); if(!trap || !logic) return toast('Add both the trap and the correct CISA logic.', 'warn');
-  state.profile.progress.mistakes.unshift({ id:crypto.randomUUID(), date:todayISO(), domain:$('#mistakeDomain').value, trap, logic, retestDate:$('#mistakeRetest').value, reviewed:false });
-  state.profile.stats.totalMistakes = (state.profile.stats.totalMistakes || 0) + 1;
-  awardXp(state.profile, 55, 'Mistake lesson forged'); updateStreak(state.profile);
-  await saveProfileNow(); toast('Mistake forged.'); renderApp();
-}
-async function markMistakeRetested(id){
-  const m = state.profile.progress.mistakes.find(x=>x.id===id); if(!m) return;
-  m.reviewed = true; m.reviewedAt = new Date().toISOString(); awardXp(state.profile, 20, 'Mistake retested'); await saveProfileNow(); renderApp();
-}
-async function addFlashcard(){
-  const front = $('#cardFront').value.trim(), back = $('#cardBack').value.trim(); if(!front || !back) return toast('Add both front and back.', 'warn');
-  state.profile.progress.flashcards.unshift({ id:crypto.randomUUID(), date:todayISO(), domain:$('#cardDomain').value, front, back });
-  state.profile.stats.totalFlashcards = (state.profile.stats.totalFlashcards || 0) + 1;
-  awardXp(state.profile, 25, 'Flashcard created'); await saveProfileNow(); toast('Flashcard added.'); renderApp();
-}
-function exportQuizlet(){
-  const rows = (state.profile.progress.flashcards || []).map(c => `${c.front.replace(/\t/g,' ')}\t${c.back.replace(/\t/g,' ')}`).join('\n');
-  const blob = new Blob([rows], {type:'text/tab-separated-values'}); const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href=url; a.download='controlquest-quizlet.tsv'; document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
-}
-function answerGame(choice){
-  const q = state.activeGame;
-  const ok = choice === q.answer;
-  $$('.choice').forEach((b,i)=>b.classList.toggle(i===q.answer?'correct':'wrong', i===choice || i===q.answer));
-  $('#gameWhy').textContent = `${ok ? 'Correct.' : 'Not quite.'} ${q.why}`;
-  if(ok){ awardXp(state.profile, 35, 'Arcade answer correct'); state.profile.stats.arcadeWins = (state.profile.stats.arcadeWins || 0) + 1; saveProfileDebounced(true); }
-  setTimeout(() => { state.activeGame = null; renderApp(); }, 2600);
-}
-
-async function saveProfileSettings(){
-  state.profile.displayName = $('#displayName').value.trim() || state.profile.displayName;
-  state.profile.preferences.timezone = $('#timezone').value.trim() || state.profile.preferences.timezone;
-  await saveProfileNow(); toast('Profile saved.'); renderApp();
-}
-function showDeleteProfileModal(){
-  showModal(`<div class="modal-card"><button class="modal-close" data-close-modal>×</button><p class="eyebrow">Danger zone</p><h2>Delete profile</h2><p>This will create a backup in Firestore first, then remove your ControlQuest profile data and group membership summaries. Type <strong>DELETE MY PROFILE</strong> to continue.</p><input id="deletePhrase" placeholder="DELETE MY PROFILE"><label class="check-row"><input type="checkbox" id="deleteAuthToo"> Also delete my Firebase Auth login</label><label>Password required only if deleting Auth login<input type="password" id="deletePassword"></label><button class="danger-button full" id="confirmDelete1">Continue deletion</button></div>`);
-  $('#confirmDelete1').addEventListener('click', () => {
-    if($('#deletePhrase').value !== 'DELETE MY PROFILE') return toast('Phrase did not match.', 'warn');
-    if(!confirm('Second check: this removes your active profile after making a backup. Continue?')) return;
-    if(!confirm('Final check: are you absolutely sure?')) return;
-    archiveAndDeleteProfile(state.profile, $('#deletePassword').value, $('#deleteAuthToo').checked).then(id => { toast(`Profile archived and deleted. Backup: ${id}`); closeModal(); }).catch(err => toast(err.message, 'error'));
-  });
-}
-
-function showTutorial(force=false){
-  if(!force && state.profile?.onboarding?.completed) return;
-  const steps = [
-    ['Welcome to ControlQuest', 'This is your CISA study operating system. Your private profile stores your roadmap, exam date, streak, QAE logs, mistakes, flashcards, and avatar.'],
-    ['Join a study guild', 'Use Study Guild to create or join a group. The group only shows high-level summaries, so buddies can see pace without seeing private notes.'],
-    ['Run the Live Study Room', 'The Live Study Room syncs the timer, checklist, check-ins, and shared notes across everyone in the group in real time.'],
-    ['Follow your adaptive roadmap', 'Your exam date is personal. If you push the exam back or add a pause block, your roadmap recalculates without affecting anyone else.'],
-    ['Use the game loop', 'Complete daily challenges, QAE rounds, Mistake Forge entries, flashcards, and arcade games to earn XP, badges, streak freezes, and avatar gear.']
-  ];
-  state.tutorialStep = 0;
-  const draw = () => {
-    const [title, text] = steps[state.tutorialStep];
-    showModal(`<div class="modal-card tutorial"><img src="assets/mascots/ollie.svg" alt="Ollie"><p class="eyebrow">Step ${state.tutorialStep+1} of ${steps.length}</p><h2>${title}</h2><p>${text}</p><div class="button-row"><button class="secondary-button" id="tutorialSkip">Skip</button><button class="primary-button" id="tutorialNext">${state.tutorialStep === steps.length-1 ? 'Start questing' : 'Next'}</button></div></div>`);
-    $('#tutorialSkip').addEventListener('click', completeTutorial);
-    $('#tutorialNext').addEventListener('click', () => { if(state.tutorialStep < steps.length-1){ state.tutorialStep += 1; draw(); } else completeTutorial(); });
-  };
-  draw();
-}
-async function completeTutorial(){ state.profile.onboarding.completed = true; state.profile.preferences.tutorialSeen = true; await saveProfileNow(); closeModal(); }
-
-async function saveProfileDebounced(immediate=false){
-  if(immediate) return saveProfileNow();
-  clearTimeout(state.pendingProfileSave);
-  state.pendingProfileSave = setTimeout(saveProfileNow, 600);
-}
-async function saveProfileNow(){
-  state.profile.updatedAt = new Date().toISOString();
-  await saveProfile(state.profile);
-  if(state.profile.activeGroupId) await updateMemberSummary(state.profile.activeGroupId, state.profile).catch(()=>{});
-}
-function applyTheme(){ document.body.className = `${state.profile?.preferences?.theme === 'light' ? 'theme-light' : 'theme-dark'}${document.body.classList.contains('nav-open') ? ' nav-open' : ''}`; }
-
-function showModal(html){
-  closeModal();
-  const wrap = document.createElement('div'); wrap.className = 'modal-layer'; wrap.innerHTML = html; document.body.appendChild(wrap);
-  $$('[data-close-modal]', wrap).forEach(b => b.addEventListener('click', closeModal));
-  wrap.addEventListener('click', e => { if(e.target === wrap) closeModal(); });
-}
-function closeModal(){ $('.modal-layer')?.remove(); }
-function toast(message,type='ok'){
-  const layer = $('#toastLayer'); const el = document.createElement('div'); el.className = `toast ${type}`; el.textContent = message; layer.appendChild(el); setTimeout(()=>el.remove(), 4200);
-}
-function friendlyFirebaseError(error){
-  const msg = error?.code || error?.message || String(error);
-  if(msg.includes('auth/invalid-credential')) return 'That email/password combination did not work.';
-  if(msg.includes('auth/email-already-in-use')) return 'That email already has an account. Try logging in.';
-  if(msg.includes('auth/weak-password')) return 'Use a password with at least 6 characters.';
-  if(msg.includes('permission')) return 'Firebase permissions blocked this action. Check Firestore rules.';
-  return msg;
-}
-function groupBy(arr, fn){ return arr.reduce((a,x)=>{ const k=fn(x); (a[k]=a[k]||[]).push(x); return a; },{}); }
-function catchupAdvice(days){ if(days<=0) return 'On pace. Keep the normal rhythm.'; if(days<=2) return 'Do one 25-minute catch-up quest or add 5 QAE questions to tomorrow.'; if(days<=5) return 'Use two compressed catch-up blocks and skip perfection.'; return 'Add a pause block or push the exam date so the plan resets realistically.'; }
-function renderMiniAvatar(avatar){ return renderAvatar({ avatar, stats:{xp:0,streak:0}, progress:{qaeLogs:[]}}, 'tiny'); }
-function icon(name){
-  const paths = {
-    dashboard:'M4 13h7V4H4v9Zm9 7h7V4h-7v16ZM4 20h7v-5H4v5Z', live:'M12 3a9 9 0 1 0 9 9h-3a6 6 0 1 1-6-6V3Zm1 4h-2v6l5 3 1-2-4-2V7Z', roadmap:'M4 6l5-2 6 2 5-2v14l-5 2-6-2-5 2V6Zm5 0v10m6-8v10', group:'M8 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8Zm8-1a3 3 0 1 0 0-6 3 3 0 0 0 0 6ZM2 20c1-4 4-6 6-6s5 2 6 6H2Zm11 0c.5-2 2-4 4-4 1.7 0 3.3 1.2 4 4h-8Z', calendar:'M7 2h2v3H7V2Zm8 0h2v3h-2V2ZM4 5h16v15H4V5Zm2 6h12V8H6v3Z', qae:'M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20Zm0 4a6 6 0 0 1 6 6h-4a2 2 0 1 0-2 2v4a6 6 0 0 1 0-12Z', target:'M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20Zm0 3a7 7 0 1 1 0 14 7 7 0 0 1 0-14Zm0 3a4 4 0 1 0 0 8 4 4 0 0 0 0-8Z', forge:'M4 18h16v3H4v-3Zm3-2 6-12 4 6-4 2 4 4H7Z', cards:'M5 3h10a2 2 0 0 1 2 2v14H5V3Zm3 4h6M8 11h6M19 7h2v14H9v-2h10V7Z', arcade:'M5 8h14l2 9a3 3 0 0 1-5 2l-2-2h-4l-2 2a3 3 0 0 1-5-2l2-9Zm3 4h2v-2H8v2Zm1 3h2v-2H9v2Zm6-3h2v-2h-2v2Zm3 3h2v-2h-2v2Z', avatar:'M12 12a5 5 0 1 0 0-10 5 5 0 0 0 0 10ZM3 22c1-5 5-8 9-8s8 3 9 8H3Z', settings:'M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8Zm9 4-2 1 1 2-2 3-2-1-2 1-1 2H9l-1-2-2-1-2 1-2-3 1-2-2-1V9l2-1-1-2 2-3 2 1 2-1 1-2h4l1 2 2 1 2-1 2 3-1 2 2 1v3Z', menu:'M3 6h18v2H3V6Zm0 5h18v2H3v-2Zm0 5h18v2H3v-2Z', logout:'M10 4H4v16h6v-2H6V6h4V4Zm5 3 5 5-5 5v-3H9v-4h6V7Z', sun:'M12 4V1m0 22v-3M4 12H1m22 0h-3M5 5 3 3m8 8 3 3m0-14-3 3M8 16l-3 3M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8Z', moon:'M21 14a8 8 0 0 1-11-11 9 9 0 1 0 11 11Z', flame:'M13 2s3 5-1 8c3-1 5-3 5-3 2 3 3 6 1 10-2 4-7 6-11 3-4-3-3-8 0-11 0 3 2 5 4 5-2-5 2-12 2-12Z', level:'M12 2l3 6 7 1-5 5 1 7-6-3-6 3 1-7-5-5 7-1 3-6Z', spark:'M12 2l2 7 7 3-7 3-2 7-2-7-7-3 7-3 2-7Z', compass:'M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20Zm4 6-2 6-6 2 2-6 6-2Z', check:'M20 6 9 17l-5-5 2-2 3 3 9-9 2 2Z', list:'M4 6h2v2H4V6Zm4 0h12v2H8V6Zm-4 5h2v2H4v-2Zm4 0h12v2H8v-2Zm-4 5h2v2H4v-2Zm4 0h12v2H8v-2Z', notes:'M5 3h11l3 3v15H5V3Zm10 1v4h4M8 11h8M8 15h8', "badge-rocket":'M12 2c4 2 6 6 5 11l4 4-4 1-1 4-4-4c-5 1-9-1-11-5 4 0 7-3 7-7 1-2 2-3 4-4Z', "badge-sun":'M12 4V1m0 22v-3M4 12H1m22 0h-3M12 7a5 5 0 1 0 0 10 5 5 0 0 0 0-10Z', "badge-shield":'M12 2l8 3v6c0 5-3 9-8 11-5-2-8-6-8-11V5l8-3Z', "badge-target":'M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20Zm0 5a5 5 0 1 1 0 10 5 5 0 0 1 0-10Z', "badge-forge":'M4 19h16v3H4v-3Zm4-2 5-12 5 12H8Z', "badge-scroll":'M6 4h11a3 3 0 0 1 0 6H9v10H6V4Zm11 0a3 3 0 0 0 0 6', "badge-star":'M12 2l3 7 7 1-5 5 1 7-6-4-6 4 1-7-5-5 7-1 3-7'
-  };
-  return `<svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="${paths[name] || paths.spark}"/></svg>`;
-}
-function escapeHtml(str){ return String(str ?? '').replace(/[&<>'"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c])); }
-function escapeAttr(str){ return escapeHtml(str).replace(/`/g,'&#96;'); }
+async function init(){renderBoot('Connecting to Firebase...'); await initFirebase(handleAuth,msg=>console.log(msg)); if(!firebaseEnabled()) renderFirebaseSetup(); window.addEventListener('resize',()=>document.body.classList.toggle('mobile-size',innerWidth<760));}
+async function handleAuth(user){ state.user=user; if(!user){state.profile=null;state.group=null;stopTimer();renderLogin();return;} renderBoot('Loading your quest profile...'); try{ state.profile=await loadProfile(user.uid); migrateProfile(state.profile); applyTheme(); subscribeProfile(user.uid,p=>{state.profile=p;migrateProfile(state.profile);applyTheme(); if(p.activeGroupId) attachGroup(p.activeGroupId); renderApp();}); if(state.profile.activeGroupId) attachGroup(state.profile.activeGroupId); renderApp(); if(!state.profile.onboarding?.completed) showOnboarding(); }catch(e){toast(e.message,'error'); renderLogin();}}
+function migrateProfile(p){ p.progress=p.progress||{}; ['xpLog','qaeLogs','mistakes','flashcards','homework','calendarEvents','notes','chests','purchases','weekendLogs','decks'].forEach(k=>p.progress[k]=p.progress[k]||[]); p.progress.dailyChallenges=p.progress.dailyChallenges||{}; p.progress.dayCompletion=p.progress.dayCompletion||{}; p.stats.coins=p.stats.coins||0; p.avatar.owned=p.avatar.owned||['#7c4dff','#00a7ff','none','round','clipboard','focused']; }
+function attachGroup(id){ if(state.group?.id===id&&state.groupAttached===id)return; state.groupAttached=id; subscribeGroup(id,g=>{state.group=g; renderApp();});}
+function renderBoot(msg){ app.className='boot-screen'; app.innerHTML=`<div class="boot-card"><img src="assets/mascots/ollie.svg" alt="Ollie"><h1>ControlQuest Studio</h1><p>${esc(msg)}</p></div>`; }
+function renderFirebaseSetup(){ app.className='auth-shell'; app.innerHTML=`<section class="auth-card wide"><div class="auth-visual"><img src="assets/mascots/ollie.svg"><h1>Almost ready.</h1><p>Enable Firebase in <code>config/firebase-config.js</code> and refresh.</p></div><div class="auth-form"><h2>Setup checklist</h2><ol class="setup-list"><li>Paste Firebase web config values.</li><li>Set <code>enabled: true</code>.</li><li>Enable Email/Password Auth.</li><li>Create Firestore and publish rules.</li></ol></div></section>`;}
+function renderLogin(){ app.className='auth-shell'; app.innerHTML=`<section class="auth-card float-in"><div class="auth-visual"><img src="assets/mascots/ollie.svg"><p class="eyebrow">Gamified CISA prep</p><h1>ControlQuest Studio</h1><p>Build your streak, run live study rooms, join a guild, and turn CISA prep into daily quests.</p><div class="mini-proof"><span>Firebase sync</span><span>Study guilds</span><span>Quest XP</span><span>Adaptive roadmap</span></div></div><div class="auth-form"><div class="tab-row"><button class="tab active" data-auth-tab="login">Log in</button><button class="tab" data-auth-tab="create">Create account</button></div><form id="loginForm" class="auth-tab active"><h2>Welcome back</h2><label>Email<input type="email" id="loginEmail" autocomplete="email" required></label><label>Password<input type="password" id="loginPassword" autocomplete="current-password" required></label><button class="primary-button full" type="submit">Log in</button><button class="text-button" id="resetPasswordBtn" type="button">Send password reset</button><p class="helper">Your browser stays signed in using Firebase Auth persistence.</p></form><form id="createForm" class="auth-tab"><h2>Create your quest profile</h2><label>Display name<input id="createName" required></label><label>Email<input type="email" id="createEmail" required></label><label>Password<input type="password" id="createPassword" minlength="6" required></label><button class="primary-button full" type="submit">Create account</button></form></div></section>`; $$('[data-auth-tab]').forEach(b=>b.onclick=()=>switchAuthTab(b.dataset.authTab)); $('#loginForm').onsubmit=async e=>{e.preventDefault();try{await login($('#loginEmail').value.trim(),$('#loginPassword').value);toast('Logged in.');}catch(err){toast(friendly(err),'error')}}; $('#createForm').onsubmit=async e=>{e.preventDefault();try{await register($('#createEmail').value.trim(),$('#createPassword').value,$('#createName').value.trim());toast('Account created.');}catch(err){toast(friendly(err),'error')}}; $('#resetPasswordBtn').onclick=async()=>{const email=$('#loginEmail').value.trim(); if(!email)return toast('Enter your email first.','warn'); await sendPasswordReset(email); toast('Password reset sent.');};}
+function switchAuthTab(tab){$$('[data-auth-tab]').forEach(b=>b.classList.toggle('active',b.dataset.authTab===tab)); $$('.auth-tab').forEach(el=>el.classList.toggle('active',el.id.startsWith(tab)));}
+function renderApp(){ if(!state.profile)return; const p=state.profile,lvl=levelFromXp(p.stats.xp||0),sum=progressSummary(p); app.className='app-shell'; app.innerHTML=`<aside class="sidebar"><div class="brand"><img src="assets/icons/logo-mark.svg"><div><p class="eyebrow">ControlQuest</p><h1>Studio</h1></div></div><button class="mobile-close" id="closeNavBtn">Close</button><nav class="nav-list">${nav('dashboard','Command Center','dashboard')}${nav('live','Live Study Room','live')}${nav('roadmap','Roadmap','roadmap')}${nav('guild','Study Guild','guild')}${nav('calendar','Calendar','calendar')}${nav('lessons','Lessons + Homework','quest')}${nav('qae','QAE Arena','qae')}${nav('mistakes','Mistake Forge','forge')}${nav('flashcards','Memory Deck','cards')}${nav('games','Arcade','arcade')}${nav('activity','Activity','activity')}${nav('notebook','Notebook','notebook')}${nav('shop','Quest Shop','shop')}${nav('avatar','Avatar Closet','avatar')}${nav('profile','Profile + Settings','settings')}</nav><div class="side-player">${renderAvatar(p,'small')}<div><strong>${esc(p.displayName)}</strong><span>Level ${lvl.level} · ${p.stats.streak||0}-day streak</span></div></div></aside><main class="main"><header class="topbar"><button class="hamburger" id="openNavBtn">${icon('menu')}</button><div><p class="eyebrow">${state.group?esc(state.group.name):'Solo quest mode'}</p><h2>${title(state.activeView)}</h2></div><div class="top-actions"><button class="ghost-button" id="tourBtn">Guide</button><button class="ghost-button" id="themeToggle">${p.preferences.theme==='light'?'Dark':'Light'}</button><button class="ghost-button" id="logoutBtn">Log out</button></div></header><section class="status-strip"><div><span>${sum.daysLeft}</span><small>days to exam</small></div><div><span>${sum.percent}%</span><small>roadmap</small></div><div><span>${p.stats.streak||0}</span><small>streak</small></div><div><span>${p.stats.streakFreezes||0}</span><small>freezes</small></div><div><span>${p.stats.coins||0}</span><small>audit coins</small></div></section><div id="viewMount"></div></main>`; bindShell(); renderView();}
+function nav(v,l,i){return `<button class="nav-btn ${state.activeView===v?'active':''}" data-view="${v}">${icon(i)}<span>${l}</span></button>`}
+function title(v){return {dashboard:'Command Center',live:'Live Study Room',roadmap:'Adaptive Roadmap',guild:'Study Guild',calendar:'Calendar',lessons:'Lessons + Homework',qae:'QAE Arena',mistakes:'Mistake Forge',flashcards:'Memory Deck',games:'Arcade',activity:'Activity Log',notebook:'Notebook',shop:'Quest Shop',avatar:'Avatar Closet',profile:'Profile + Settings'}[v]||'ControlQuest';}
+function bindShell(){ $$('.nav-btn').forEach(b=>b.onclick=()=>{state.activeView=b.dataset.view;document.body.classList.remove('nav-open');renderApp();}); $('#themeToggle').onclick=async()=>{state.profile.preferences.theme=state.profile.preferences.theme==='light'?'dark':'light';applyTheme();await saveAll();renderApp();}; $('#logoutBtn').onclick=async()=>logout(); $('#tourBtn').onclick=()=>showTour(); $('#openNavBtn')?.addEventListener('click',()=>document.body.classList.add('nav-open')); $('#closeNavBtn')?.addEventListener('click',()=>document.body.classList.remove('nav-open'));}
+function renderView(){const m=$('#viewMount'); const map={dashboard:renderDashboard,live:renderLive,roadmap:renderRoadmap,guild:renderGuild,calendar:renderCalendar,lessons:renderLessons,qae:renderQae,mistakes:renderMistakes,flashcards:renderFlashcards,games:renderGames,activity:renderActivity,notebook:renderNotebook,shop:renderShop,avatar:renderAvatarCloset,profile:renderProfile}; m.innerHTML=(map[state.activeView]||renderDashboard)(); bindView(); startTimer();}
+function renderDashboard(){const p=state.profile,lvl=levelFromXp(p.stats.xp||0),sum=progressSummary(p),day=currentRoadmapDay(p),ch=dailyChallenges(p),done=p.progress.dailyChallenges[todayISO()]||{},catchups=catchUpPlan(p),pending=(p.progress.chests||[]).filter(c=>!c.opened).slice(0,3);return `<div class="dashboard-grid"><section class="hero panel glow-card feature-dashboard"><div class="hero-copy"><p class="eyebrow">Today’s audit quest</p><h2>${day?esc(day.topic.title):'Build your plan'}</h2><p>${day?esc(day.topic.focus):'Set your exam date and start the roadmap.'}</p><div class="hero-actions"><button class="primary-button" data-go="live">Open Live Room</button><button class="secondary-button" data-go="roadmap">View Roadmap</button></div></div><div class="mascot-stage">${renderAvatar(p,'large')}</div></section><section class="panel xp-panel feature-xp"><div class="section-head"><div><p class="eyebrow">Level ${lvl.level}</p><h3>XP + Rewards</h3></div><button class="ghost-button" data-go="activity">Activity</button></div><div class="progress"><span style="width:${lvl.progress}%"></span></div><div class="reward-row"><span>${p.stats.xp||0} XP</span><span>${p.stats.coins||0} coins</span><span>${p.stats.streakFreezes||0} freezes</span></div>${pending.length?`<div class="chest-row">${pending.map(c=>`<button class="chest-card" data-open-chest="${c.id}">${icon('chest')}<span>${c.type} chest</span></button>`).join('')}</div>`:'<p class="helper">Complete quests to earn coins, XP, and treasure chests.</p>'}</section><section class="panel daily-card feature-daily"><div class="section-head"><div><p class="eyebrow">Streak requires all 3</p><h3>Daily Quests</h3></div><span class="pill">${Object.values(done).filter(x=>x.done).length}/3 done</span></div>${ch.map(c=>questCard(c,done[c.key]?.done)).join('')}<p class="helper">Streak freezes are automatic. If you miss an eligible weekday without a pause block, one freeze is consumed if available.</p></section><section class="panel"><h3>Group Pulse</h3>${renderGroupPulse()}</section><section class="panel"><h3>Catch-up Compass</h3><p>${adaptiveMessage(p)}</p>${catchups.length?catchups.slice(0,3).map(c=>`<div class="mini-task"><strong>${esc(c.title)}</strong><span>${esc(c.detail)}</span></div>`).join(''):'<p class="helper">No catch-up items right now.</p>'}</section><section class="panel"><h3>Today’s Lesson Snapshot</h3>${day?renderDayPlan(day,false):'<p>Set an exam date first.</p>'}</section></div>`;}
+function questCard(c,done=false){return `<div class="quest-card ${done?'done':''}"><div class="quest-art">${icon(c.type==='qae'?'qae':c.type==='mistake'?'forge':c.type==='flashcards'?'cards':c.type==='arcade'?'arcade':'quest')}</div><div><strong>${esc(c.title)}</strong><p>${esc(c.description)}</p><small>${c.xp} XP · ${c.coins||0} coins</small></div><button class="${done?'ghost-button':'primary-button'}" data-complete-challenge="${c.key}" ${done?'disabled':''}>${done?'Done':'Complete'}</button></div>`}
+function renderGroupPulse(){ if(!state.group)return `<p class="helper">Join or create a study guild to see buddy progress.</p>`; const members=Object.values(state.group.memberSummaries||{}); return `<div class="guild-mini">${members.map(m=>`<div class="guild-member"><div>${renderMiniAvatar(m.avatar)}</div><strong>${esc(m.displayName)}</strong><span>Lvl ${m.level} · ${m.streak} streak · ${m.totalQae||0} QAE</span></div>`).join('')}</div>`;}
+function renderLive(){const p=state.profile,g=state.group,day=currentRoadmapDay(p),session=g?.liveSession||emptyLiveSession(p),elapsed=timerSeconds(session),duration=session.durationMinutes||p.studyPlan.sessionDuration||60,remaining=Math.max(0,duration*60-elapsed),items=liveChecklist(day);return `<div class="two-col"><section class="panel feature-live"><div class="section-head"><div><p class="eyebrow">Live-synced for your guild</p><h3>${esc(session.title||'Live Study Session')}</h3></div><span class="pill">${g?'Group sync':'Solo preview'}</span></div><div class="timer-orb"><strong id="timerText">${fmtTime(remaining)}</strong><span>${duration} min session</span></div><div class="button-row"><button class="primary-button" data-live="start">Start/Resume</button><button class="secondary-button" data-live="pause">Pause</button><button class="ghost-button" data-live="reset">Reset</button></div><div class="form-grid"><label>Session time<input type="time" id="sessionTime" value="${p.studyPlan.sessionTime||'07:00'}"></label><label>Duration minutes<input type="number" id="sessionDuration" value="${duration}" min="15" max="240"></label></div><button class="secondary-button" data-save-session-settings>Save session settings</button><h4>Shared Session Flow</h4><p class="helper">These large checkboxes save to the live guild session, so everyone sees progress together.</p>${items.map((it,i)=>`<label class="big-check"><input type="checkbox" data-live-check="${i}" ${session.checklist?.[i]?'checked':''}><span><strong>${esc(it.title)}</strong><small>${esc(it.detail)}</small></span></label>`).join('')}</section><section class="panel"><h3>Today’s Plan</h3>${day?renderDayPlan(day,true):'<p>No study day today.</p>'}<h3>Homework Builder</h3><p class="helper">Pick homework now; tomorrow it appears as a verification checkpoint.</p><div class="homework-options">${(day?.topic.homework||[]).map(h=>`<button class="chip" data-add-homework="${escAttr(h)}">${esc(h)}</button>`).join('')}</div><textarea id="sharedNotes" rows="8" placeholder="Shared group notes...">${esc(session.notes||'')}</textarea><button class="secondary-button" data-save-live-notes>Save shared notes</button></section></div>`;}
+function liveChecklist(day){return [{title:'Warm-up recall',detail:'Each person shares one thing from yesterday and one open question.'},{title:'Watch/listen segment',detail:'Use today’s topic and keep passive video under 15 minutes.'},{title:'Draw the concept',detail:'Create a visual map, process flow, timeline, or ownership ladder.'},{title:'QAE practice',detail:`Answer ${state.profile.studyPlan.dailyQaeGoal||10} questions and review explanations.`},{title:'Mistake/flashcard capture',detail:'Log misses and convert them into reusable cards or notes.'},{title:'Homework handoff',detail:'Choose 1–3 follow-up tasks before ending.'}];}
+function renderDayPlan(day,links=false){const tasks=day.topic.tasks||[]; return `<div class="lesson-card"><p class="eyebrow">${esc(day.domain.short)} · ${formatDate(day.date)}</p><h4>${esc(day.topic.title)}</h4><p>${esc(day.topic.focus)}</p><ul class="task-list">${tasks.map(t=>`<li>${esc(t)} ${links?quickLinkFor(t):''}</li>`).join('')}</ul></div>`;}
+function quickLinkFor(t){if(/qae/i.test(t))return '<button class="tiny-link" data-go="qae">Log QAE</button>'; if(/mistake|trap/i.test(t))return '<button class="tiny-link" data-go="mistakes">Mistake Forge</button>'; if(/card|flash/i.test(t))return '<button class="tiny-link" data-go="flashcards">Cards</button>'; if(/note|map|teach/i.test(t))return '<button class="tiny-link" data-go="notebook">Notebook</button>'; return '';}
+function renderRoadmap(){const p=state.profile, weeks=groupByWeek(generateRoadmap(p)),sum=progressSummary(p);return `<div class="panel"><div class="section-head"><div><p class="eyebrow">Personal adaptive plan</p><h3>${sum.done}/${sum.total} study days complete</h3></div><span class="pill">${sum.percent}%</span></div><div class="form-grid"><label>Start date<input type="date" id="planStart" value="${p.studyPlan.startDate}"></label><label>Exam date<input type="date" id="planExam" value="${p.studyPlan.examDate}"></label><label>QAE/day goal<input type="number" id="dailyQaeGoal" value="${p.studyPlan.dailyQaeGoal||10}"></label></div><button class="primary-button" data-save-plan>Recalculate Roadmap</button><button class="secondary-button" data-add-pause>+ Add pause day/block</button><button class="secondary-button" data-add-weekend>+ Log weekend activity</button><h4>Pause blocks</h4><div class="pause-list">${(p.studyPlan.pauseBlocks||[]).map((b,i)=>`<div class="mini-task"><strong>${formatDate(b.start)} – ${formatDate(b.end)}</strong><span>${esc(b.reason||'Pause block')}</span><button class="text-button" data-remove-pause="${i}">Remove</button></div>`).join('')||'<p class="helper">No pause blocks yet.</p>'}</div><div class="roadmap-weeks">${weeks.map(w=>`<details class="week-card" open><summary>Week ${w.week} · ${formatShort(w.start)} – ${formatShort(w.end)}</summary>${w.days.map(d=>roadmapDayCard(d)).join('')}</details>`).join('')}</div></div>`;}
+function roadmapDayCard(d){return `<div class="road-day ${d.status} ${d.type}"><div class="day-dot" style="--dot:${d.domain.color}"></div><div><strong>${formatShort(d.date)} · ${esc(d.topic.title)}</strong><p>${esc(d.topic.focus)}</p>${d.type==='study'?`<details><summary>Daily tasks</summary><ul>${(d.topic.tasks||[]).map(t=>`<li>${esc(t)} ${quickLinkFor(t)}</li>`).join('')}</ul></details>`:''}</div><span class="pill">${d.status}</span></div>`;}
+function renderGuild(){const p=state.profile,g=state.group;return `<div class="two-col"><section class="panel"><h3>Your Study Guild</h3>${g?renderActiveGroup(g):'<p>You are not in a guild yet. Create one or join with an invite code.</p>'}</section><section class="panel"><h3>Create or Join</h3><label>New guild name<input id="newGroupName" placeholder="Example: CISA Lock-In Crew"></label><button class="primary-button" data-create-group>Create Guild</button><hr><label>Group ID<input id="joinGroupId"></label><label>Invite code<input id="joinCode"></label><button class="secondary-button" data-join-group>Join Guild</button></section></div>`;}
+function renderActiveGroup(g){const members=Object.values(g.memberSummaries||{}); return `<p><strong>Group ID:</strong> <code>${esc(g.id)}</code></p><p><strong>Invite code:</strong> <code>${esc(g.joinCode)}</code></p><div class="guild-grid">${members.map(m=>`<div class="member-card">${renderMiniAvatar(m.avatar)}<h4>${esc(m.displayName)}</h4><p>Level ${m.level} · ${m.streak}-day streak</p><p>${m.totalQae||0} QAE · ${m.totalMistakes||0} mistakes</p></div>`).join('')}</div><button class="ghost-button" data-leave-group>Leave Guild</button>`;}
+function renderCalendar(){const p=state.profile,g=state.group,events=[...(p.progress.calendarEvents||[]),...(g?.sharedCalendar||[])].sort((a,b)=>(a.date||'').localeCompare(b.date||''));const base=todayISO().slice(0,7);return `<div class="panel"><div class="section-head"><div><p class="eyebrow">Personal + shared events</p><h3>Calendar</h3></div><button class="primary-button" data-new-event>+ Create event</button></div><div class="calendar-grid">${renderMonth(base,events)}</div><h3>Upcoming</h3>${events.slice(0,12).map(e=>`<div class="mini-task"><strong>${formatDate(e.date)} ${esc(e.time||'')}</strong><span>${esc(e.title)} · ${esc(e.scope||'personal')}</span><button class="text-button" data-download-ics="${e.id}">ICS</button></div>`).join('')||'<p class="helper">No events yet.</p>'}</div>`;}
+function renderMonth(ym,events){const [y,m]=ym.split('-').map(Number), first=new Date(y,m-1,1), start=new Date(first); start.setDate(1-first.getDay()); let out='<div class="month-view">'; ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'].forEach(d=>out+=`<b>${d}</b>`); for(let i=0;i<42;i++){const d=new Date(start); d.setDate(start.getDate()+i); const iso=d.toISOString().slice(0,10); const ev=events.filter(e=>e.date===iso); out+=`<button class="cal-cell ${iso===todayISO()?'today':''}" data-cal-date="${iso}"><span>${d.getDate()}</span>${ev.map(e=>`<small>${esc(e.title)}</small>`).join('')}</button>`;} return out+'</div>';}
+function renderLessons(){const day=currentRoadmapDay(state.profile); const hw=state.profile.progress.homework||[]; return `<div class="two-col"><section class="panel"><h3>Current Lesson Plan</h3>${day?renderDayPlan(day,true):'<p>No current lesson.</p>'}<button class="primary-button" data-complete-day>Mark Today Complete After 3 Daily Quests</button></section><section class="panel"><h3>Homework Checkpoints</h3>${hw.map((h,i)=>`<div class="mini-task ${h.done?'done':''}"><strong>${esc(h.title)}</strong><span>${esc(h.source||'Homework')}</span><button class="secondary-button" data-complete-homework="${i}" ${h.done?'disabled':''}>${h.done?'Done':'Verify done'}</button></div>`).join('')||'<p class="helper">Add homework from Live Study Room.</p>'}</section></div>`;}
+function renderQae(){const logs=state.profile.progress.qaeLogs||[];return `<div class="two-col"><section class="panel"><h3>Log a QAE Practice Block</h3><p class="helper">Use this after practicing in official ISACA QAE or another legitimate study source. Log the result, not proprietary question text.</p><div class="form-grid"><label>Domain<select id="qaeDomain">${DOMAINS.map(d=>`<option value="${d.id}">${d.short}</option>`).join('')}<option value="MIX">Mixed</option></select></label><label>Questions<input id="qaeCount" type="number" value="10"></label><label>Correct<input id="qaeCorrect" type="number" value="0"></label></div><label>Notes<textarea id="qaeNotes" rows="7" placeholder="What patterns/traps did you notice?"></textarea></label><button class="primary-button" data-log-qae>Log QAE block</button></section><section class="panel"><h3>Recent QAE Logs</h3>${logs.slice(0,10).map(l=>`<div class="mini-task"><strong>${esc(l.domain)} · ${l.correct}/${l.count} (${Math.round(l.correct/l.count*100)}%)</strong><span>${esc(l.notes||'')}</span></div>`).join('')||'<p class="helper">No logs yet.</p>'}</section></div>`;}
+function renderMistakes(){const arr=state.profile.progress.mistakes||[];return `<div class="two-col"><section class="panel"><h3>Mistake Forge</h3><p class="helper">Use this when you miss or guess a question. Capture the concept in your own words.</p><label>Topic / trap<input id="mistakeTopic" placeholder="Example: Jumped to remediation too early"></label><label>Correct CISA logic<textarea id="mistakeLogic" rows="6"></textarea></label><label>Retest date<input type="date" id="mistakeRetest" value="${addDays(todayISO(),3)}"></label><button class="primary-button" data-add-mistake>Add mistake</button></section><section class="panel"><h3>Review Queue</h3>${arr.map((m,i)=>`<div class="mini-task"><strong>${esc(m.topic)}</strong><span>${esc(m.logic)} · Retest ${formatDate(m.retest)}</span><button class="secondary-button" data-close-mistake="${i}">Reviewed</button></div>`).join('')||'<p>No mistakes logged yet.</p>'}</section></div>`;}
+function renderFlashcards(){const p=state.profile; const decks=[...STARTER_DECKS,...(p.progress.decks||[])];return `<div class="two-col"><section class="panel"><h3>Memory Deck Library</h3><p class="helper">Starter decks are original CISA study cards. You can create personal decks and share guild/public decks later.</p>${decks.map(d=>`<div class="deck-card"><h4>${esc(d.title)}</h4><p>${esc(d.domain)} · ${d.cards.length} cards · ${esc(d.scope||'personal')}</p><button class="primary-button" data-study-deck="${d.id}">Study</button><button class="secondary-button" data-export-deck="${d.id}">Quizlet TSV</button></div>`).join('')}</section><section class="panel"><h3>Create Card</h3><label>Deck title<input id="deckTitle" value="My CISA Cards"></label><label>Front<input id="cardFront"></label><label>Back<textarea id="cardBack" rows="5"></textarea></label><button class="primary-button" data-add-card>Add card</button><div id="deckStudy"></div></section></div>`;}
+function renderGames(){return `<div class="three-col"><section class="panel game-card"><h3>Best/First Blitz</h3><p>Answer CISA judgment prompts.</p><button class="primary-button" data-game="bestFirst">Play</button></section><section class="panel game-card"><h3>Term Match</h3><p>Match terms to definitions.</p><button class="primary-button" data-game="termMatch">Play</button></section><section class="panel game-card"><h3>Control Sorter</h3><p>Sort controls into categories.</p><button class="primary-button" data-game="sort">Play</button></section><section class="panel wide-game" id="gameMount"><h3>Game Table</h3><p class="helper">Pick a game to start. Wins award XP and coins.</p></section></div>`;}
+function renderActivity(){const log=state.profile.progress.xpLog||[];return `<div class="panel"><h3>XP + Coin Activity</h3><p class="helper">Every reward is logged here so XP is earned through real actions, not mystery clicks.</p>${log.map(l=>`<div class="activity-row"><span>+${l.xp} XP · +${l.coins||0} coins</span><strong>${esc(l.reason)}</strong><small>${new Date(l.at).toLocaleString()}</small></div>`).join('')||'<p>No activity yet.</p>'}</div>`;}
+function renderNotebook(){const notes=state.profile.progress.notes||[];return `<div class="two-col"><section class="panel"><h3>Notebook</h3><label>Title<input id="noteTitle" placeholder="Example: RTO vs RPO"></label><label>Note<textarea id="noteBody" rows="10"></textarea></label><label>Share scope<select id="noteScope"><option value="private">Private</option><option value="guild">Guild</option><option value="public">Public-ready</option></select></label><button class="primary-button" data-add-note>Add note</button><button class="secondary-button" data-export-notes>Download notes</button></section><section class="panel"><h3>Your Notes</h3>${notes.map((n,i)=>`<details class="note-card"><summary>${esc(n.title)} · ${esc(n.scope)}</summary><p>${esc(n.body)}</p><button class="text-button" data-delete-note="${i}">Delete</button></details>`).join('')||'<p class="helper">No notes yet.</p>'}</section></div>`;}
+function renderShop(){return `<div class="shop-grid"><section class="panel"><h3>Quest Shop</h3><p>You have <strong>${state.profile.stats.coins||0}</strong> audit coins.</p>${SHOP_ITEMS.map(i=>`<div class="shop-item"><div class="quest-art">${icon(i.type==='chest'?'chest':i.type==='streakFreeze'?'flame':'quest')}</div><div><strong>${esc(i.title)}</strong><p>${esc(i.description)}</p></div><button class="primary-button" data-buy-shop="${i.id}">${i.cost} coins</button></div>`).join('')}</section><section class="panel"><h3>Treasure Chests</h3>${(state.profile.progress.chests||[]).map(c=>`<div class="shop-item"><div class="quest-art">${icon('chest')}</div><div><strong>${esc(c.type)} chest</strong><p>${esc(c.reason||'Reward chest')} ${c.opened?'· opened':''}</p></div><button class="secondary-button" data-open-chest="${c.id}" ${c.opened?'disabled':''}>Open</button></div>`).join('')||'<p>No chests yet.</p>'}</section></div>`;}
+function renderAvatarCloset(){const p=state.profile;return `<div class="two-col"><section class="panel avatar-display">${renderAvatar(p,'large')}<h3>${esc(p.displayName)}</h3><p>Use unlocks or audit coins to customize Ollie-style flair.</p></section><section class="panel"><h3>Customize</h3>${Object.entries(AVATAR_ITEMS).map(([type,items])=>`<h4>${type}</h4><div class="closet-grid">${items.map(it=>{const owned=p.avatar.owned?.includes(it.id),unlocked=isAvatarItemUnlocked(p,type,it.id);return `<button class="closet-item ${p.avatar[type]===it.id?'active':''}" data-avatar-type="${type}" data-avatar-id="${it.id}"><strong>${esc(it.label)}</strong><span>${owned||unlocked?'Use':`${it.cost||0} coins`}</span><small>${esc(it.unlock)}</small></button>`}).join('')}</div>`).join('')}</section></div>`;}
+function renderProfile(){const p=state.profile;return `<div class="two-col"><section class="panel"><h3>Profile Settings</h3><label>Display name<input id="displayName" value="${escAttr(p.displayName)}"></label><label>Preferred theme<select id="prefTheme"><option value="dark" ${p.preferences.theme==='dark'?'selected':''}>Dark</option><option value="light" ${p.preferences.theme==='light'?'selected':''}>Light</option></select></label><label>Exam date<input type="date" id="profileExam" value="${p.studyPlan.examDate}"></label><label>Daily QAE goal<input type="number" id="profileQaeGoal" value="${p.studyPlan.dailyQaeGoal||10}"></label><button class="primary-button" data-save-profile-settings>Save settings</button></section><section class="panel danger-zone"><h3>Testing + Danger Zone</h3><p class="helper">Reset creates a backup under your profile before clearing stats. Delete archives profile backup in Firestore before deletion.</p><button class="secondary-button" data-reset-profile>Reset stats for testing</button><button class="danger-button" data-delete-profile>Delete profile</button><button class="ghost-button" data-export-profile>Download profile backup</button></section></div>`;}
+function bindView(){ $$('[data-go]').forEach(b=>b.onclick=()=>{state.activeView=b.dataset.go;renderApp();}); $$('[data-complete-challenge]').forEach(b=>b.onclick=()=>completeChallenge(b.dataset.completeChallenge)); $$('[data-open-chest]').forEach(b=>b.onclick=()=>{const r=openChest(state.profile,b.dataset.openChest); if(r){celebrate(`Chest opened: +${r.xp} XP, +${r.coins} coins`); saveAll(); renderApp();}}); if($('[data-save-session-settings]')) $('[data-save-session-settings]').onclick=saveSessionSettings; $$('[data-live]').forEach(b=>b.onclick=()=>liveAction(b.dataset.live)); $$('[data-live-check]').forEach(cb=>cb.onchange=()=>saveLiveCheck(cb)); if($('[data-save-live-notes]')) $('[data-save-live-notes]').onclick=saveLiveNotes; $$('[data-add-homework]').forEach(b=>b.onclick=()=>addHomework(b.dataset.addHomework)); if($('[data-save-plan]')) $('[data-save-plan]').onclick=savePlan; if($('[data-add-pause]')) $('[data-add-pause]').onclick=addPauseModal; $$('[data-remove-pause]').forEach(b=>b.onclick=()=>{state.profile.studyPlan.pauseBlocks.splice(+b.dataset.removePause,1);saveAll();renderApp();}); if($('[data-add-weekend]')) $('[data-add-weekend]').onclick=addWeekendModal; if($('[data-create-group]')) $('[data-create-group]').onclick=createNewGroup; if($('[data-join-group]')) $('[data-join-group]').onclick=joinExistingGroup; if($('[data-leave-group]')) $('[data-leave-group]').onclick=leaveCurrentGroup; if($('[data-new-event]')) $('[data-new-event]').onclick=eventModal; $$('[data-cal-date]').forEach(b=>b.ondblclick=()=>eventModal(b.dataset.calDate)); $$('[data-download-ics]').forEach(b=>b.onclick=()=>downloadEventIcs(b.dataset.downloadIcs)); if($('[data-complete-day]')) $('[data-complete-day]').onclick=()=>{evaluateDailyCompletion(state.profile,todayISO());saveAll();renderApp();}; $$('[data-complete-homework]').forEach(b=>b.onclick=()=>completeHomework(+b.dataset.completeHomework)); if($('[data-log-qae]')) $('[data-log-qae]').onclick=logQae; if($('[data-add-mistake]')) $('[data-add-mistake]').onclick=addMistake; $$('[data-close-mistake]').forEach(b=>b.onclick=()=>closeMistake(+b.dataset.closeMistake)); if($('[data-add-card]')) $('[data-add-card]').onclick=addCard; $$('[data-export-deck]').forEach(b=>b.onclick=()=>exportDeck(b.dataset.exportDeck)); $$('[data-study-deck]').forEach(b=>b.onclick=()=>studyDeck(b.dataset.studyDeck)); $$('[data-game]').forEach(b=>b.onclick=()=>playGame(b.dataset.game)); if($('[data-add-note]')) $('[data-add-note]').onclick=addNote; if($('[data-export-notes]')) $('[data-export-notes]').onclick=exportNotes; $$('[data-delete-note]').forEach(b=>b.onclick=()=>{state.profile.progress.notes.splice(+b.dataset.deleteNote,1);saveAll();renderApp();}); $$('[data-buy-shop]').forEach(b=>b.onclick=()=>{try{const item=buyShopItem(state.profile,b.dataset.buyShop);celebrate(`Purchased ${item.title}`);saveAll();renderApp();}catch(e){toast(e.message,'warn')}}); $$('[data-avatar-type]').forEach(b=>b.onclick=()=>{try{buyAvatarItem(state.profile,b.dataset.avatarType,b.dataset.avatarId);saveAll();renderApp();}catch(e){toast(e.message,'warn')}}); if($('[data-save-profile-settings]')) $('[data-save-profile-settings]').onclick=saveProfileSettings; if($('[data-reset-profile]')) $('[data-reset-profile]').onclick=resetProfile; if($('[data-delete-profile]')) $('[data-delete-profile]').onclick=deleteProfileFlow; if($('[data-export-profile]')) $('[data-export-profile]').onclick=()=>exportProfileBackup(state.profile);}
+async function completeChallenge(key){const c=dailyChallenges(state.profile).find(x=>x.key===key); if(!c)return; const evidence=prompt(c.evidenceLabel||'What did you complete?')||''; const ok=completeDailyChallenge(state.profile,c,evidence); if(ok){celebrate(`+${c.xp} XP · +${c.coins} coins`); await saveAll(); renderApp();} }
+async function saveAll(){ await saveProfile(state.profile); if(state.group?.id){ await updateMemberSummary(state.group.id,state.profile).catch(()=>{}); }}
+async function saveSessionSettings(){state.profile.studyPlan.sessionTime=$('#sessionTime').value;state.profile.studyPlan.sessionDuration=Number($('#sessionDuration').value||60); if(state.group){state.group.schedule.time=state.profile.studyPlan.sessionTime;state.group.schedule.duration=state.profile.studyPlan.sessionDuration; state.group.liveSession.durationMinutes=state.profile.studyPlan.sessionDuration; await saveGroup(state.group);} await saveAll(); toast('Session settings saved.');}
+async function liveAction(action){ if(!state.group)return toast('Join a guild to use live sync.','warn'); const s=state.group.liveSession||emptyLiveSession(state.profile); const now=new Date().toISOString(); if(action==='start'){s.active=true;s.startedAt=now;s.pausedAt=null;s.date=todayISO();} if(action==='pause'){s.accumulatedSeconds=timerSeconds(s);s.active=false;s.pausedAt=now;} if(action==='reset'){s.active=false;s.startedAt=null;s.accumulatedSeconds=0;s.checklist={};} state.group.liveSession=s; await saveGroup(state.group);}
+async function saveLiveCheck(cb){ if(!state.group)return; state.group.liveSession=state.group.liveSession||emptyLiveSession(state.profile); state.group.liveSession.checklist=state.group.liveSession.checklist||{}; state.group.liveSession.checklist[cb.dataset.liveCheck]=cb.checked; await saveGroup(state.group); const done=Object.values(state.group.liveSession.checklist).filter(Boolean).length; state.profile.progress.dayCompletion[todayISO()]=state.profile.progress.dayCompletion[todayISO()]||{}; state.profile.progress.dayCompletion[todayISO()].liveChecklistDone=done; if(done>=6){ award(state.profile,{xp:70,coins:20,reason:'Completed live session checklist',source:'live-session'}); state.profile.stats.totalSessions=(state.profile.stats.totalSessions||0)+1; celebrate('+70 XP live session complete'); } await saveAll();}
+async function saveLiveNotes(){ if(!state.group)return; state.group.liveSession.notes=$('#sharedNotes').value; await saveGroup(state.group); toast('Shared notes saved.');}
+function addHomework(title){state.profile.progress.homework.unshift({id:crypto.randomUUID(),title,source:'Live Study Room',createdAt:new Date().toISOString(),due:addDays(todayISO(),1),done:false}); saveAll(); toast('Homework added.');}
+function savePlan(){state.profile.studyPlan.startDate=$('#planStart').value;state.profile.studyPlan.examDate=$('#planExam').value;state.profile.studyPlan.dailyQaeGoal=Number($('#dailyQaeGoal').value||10);saveAll();renderApp();}
+function addPauseModal(){modal('Add pause day/block',`<label>Start<input type="date" id="pauseStart" value="${todayISO()}"></label><label>End<input type="date" id="pauseEnd" value="${todayISO()}"></label><label>Reason<input id="pauseReason" placeholder="Vacation, client travel, PTO..."></label>`,()=>{state.profile.studyPlan.pauseBlocks.push({start:$('#pauseStart').value,end:$('#pauseEnd').value,reason:$('#pauseReason').value||'Pause block'});saveAll();renderApp();});}
+function addWeekendModal(){modal('Log weekend/bonus study',`<label>Date<input type="date" id="weekendDate" value="${todayISO()}"></label><label>Title<input id="weekendTitle" value="Weekend bonus session"></label><label>Description<textarea id="weekendDesc" rows="4">Catch up on weak areas, complete QAE practice, and update notes.</textarea></label>`,()=>{const item={id:crypto.randomUUID(),date:$('#weekendDate').value,title:$('#weekendTitle').value,description:$('#weekendDesc').value,tasks:['Review weak area','Answer QAE questions','Update Mistake Forge','Add notebook summary']}; state.profile.progress.weekendLogs.push(item); award(state.profile,{xp:60,coins:20,reason:'Logged weekend bonus study',source:'weekend'}); saveAll();renderApp();});}
+async function createNewGroup(){const name=$('#newGroupName').value.trim()||`${state.profile.displayName}'s Study Guild`; const g=defaultGroup(state.user.uid,state.profile,name); await createGroup(g); state.profile.activeGroupId=g.id; state.profile.groups=[...new Set([...(state.profile.groups||[]),g.id])]; await saveAll(); attachGroup(g.id); toast('Guild created.');}
+async function joinExistingGroup(){try{const g=await joinGroup($('#joinGroupId').value.trim(),$('#joinCode').value.trim(),state.profile); state.profile.activeGroupId=g.id; state.profile.groups=[...new Set([...(state.profile.groups||[]),g.id])]; await saveAll(); attachGroup(g.id); toast('Joined guild.');}catch(e){toast(e.message,'error')}}
+async function leaveCurrentGroup(){if(!state.group)return; if(confirm('Leave this study guild?')){await leaveGroup(state.group.id,state.profile); state.profile.activeGroupId=null; state.group=null; await saveAll(); renderApp();}}
+function eventModal(date=todayISO()){modal('Create calendar event',`<label>Title<input id="eventTitle" value="Study session"></label><label>Date<input type="date" id="eventDate" value="${date}"></label><label>Time<input type="time" id="eventTime" value="${state.profile.studyPlan.sessionTime||'07:00'}"></label><label>Duration minutes<input type="number" id="eventDuration" value="${state.profile.studyPlan.sessionDuration||60}"></label><label>Scope<select id="eventScope"><option value="personal">Personal</option><option value="guild">Guild shared</option><option value="both">Both</option></select></label><label>Description<textarea id="eventDesc" rows="4">ControlQuest study session.</textarea></label><label><input type="checkbox" id="eventPlanMe"> Plan me a study session and add it to roadmap as extra activity</label>`,async()=>{const e={id:crypto.randomUUID(),title:$('#eventTitle').value,date:$('#eventDate').value,time:$('#eventTime').value,duration:Number($('#eventDuration').value||60),scope:$('#eventScope').value,description:$('#eventDesc').value}; if(e.scope==='personal'||e.scope==='both')state.profile.progress.calendarEvents.push(e); if((e.scope==='guild'||e.scope==='both')&&state.group){state.group.sharedCalendar.push(e);await saveGroup(state.group);} if($('#eventPlanMe').checked){state.profile.progress.weekendLogs.push({id:e.id,date:e.date,title:e.title,description:e.description,tasks:['Warm-up recall','Review weak area','Complete QAE practice','Log notes and mistakes']});} await saveAll();renderApp();});}
+function downloadEventIcs(id){const all=[...(state.profile.progress.calendarEvents||[]),...(state.group?.sharedCalendar||[])]; const e=all.find(x=>x.id===id); if(!e)return; const start=`${e.date}T${e.time||'07:00'}:00`; const endDate=new Date(new Date(start).getTime()+(e.duration||60)*60000).toISOString().slice(0,19); downloadIcs({title:e.title,start,end:endDate,description:e.description||'',location:'Virtual'});}
+function completeHomework(i){const h=state.profile.progress.homework[i]; if(!h)return; h.done=true; h.completedAt=new Date().toISOString(); award(state.profile,{xp:45,coins:12,reason:`Homework completed: ${h.title}`,source:'homework'}); celebrate('+45 XP homework complete'); saveAll();renderApp();}
+function logQae(){const count=Number($('#qaeCount').value||0),correct=Number($('#qaeCorrect').value||0); if(!count)return; const domain=$('#qaeDomain').value, notes=$('#qaeNotes').value; state.profile.progress.qaeLogs.unshift({id:crypto.randomUUID(),domain,count,correct,notes,at:new Date().toISOString()}); state.profile.stats.totalQae=(state.profile.stats.totalQae||0)+count; award(state.profile,{xp:Math.round(count*3+(correct/count)*40),coins:Math.round(count),reason:`QAE block: ${domain} ${correct}/${count}`,source:'qae'}); if(correct/count>=.8) state.profile.progress.chests.unshift({id:crypto.randomUUID(),type:'silver',reason:'80%+ QAE block',opened:false,at:new Date().toISOString()}); celebrate('QAE block logged'); saveAll();renderApp();}
+function addMistake(){const topic=$('#mistakeTopic').value.trim(), logic=$('#mistakeLogic').value.trim(); if(!topic||!logic)return toast('Add topic and logic.','warn'); state.profile.progress.mistakes.unshift({id:crypto.randomUUID(),topic,logic,retest:$('#mistakeRetest').value,createdAt:new Date().toISOString(),status:'open'}); state.profile.stats.totalMistakes=(state.profile.stats.totalMistakes||0)+1; award(state.profile,{xp:35,coins:10,reason:`Mistake forged: ${topic}`,source:'mistake'}); saveAll();renderApp();}
+function closeMistake(i){const m=state.profile.progress.mistakes[i]; m.status='reviewed';m.reviewedAt=new Date().toISOString(); award(state.profile,{xp:25,coins:8,reason:`Mistake reviewed: ${m.topic}`,source:'mistake-review'}); saveAll();renderApp();}
+function addCard(){const title=$('#deckTitle').value||'My CISA Cards'; let deck=state.profile.progress.decks.find(d=>d.title===title); if(!deck){deck={id:crypto.randomUUID(),title,domain:'CUSTOM',scope:'personal',cards:[]}; state.profile.progress.decks.push(deck);} deck.cards.push([$('#cardFront').value,$('#cardBack').value]); state.profile.stats.totalFlashcards=(state.profile.stats.totalFlashcards||0)+1; award(state.profile,{xp:20,coins:5,reason:'Flashcard created',source:'flashcard'}); saveAll();renderApp();}
+function allDecks(){return [...STARTER_DECKS,...(state.profile.progress.decks||[])];}
+function exportDeck(id){const d=allDecks().find(x=>x.id===id); const text=d.cards.map(c=>`${c[0]}\t${c[1]}`).join('\n'); downloadText(`${d.title.replace(/[^a-z0-9]+/gi,'-')}.tsv`,text);}
+function studyDeck(id){const d=allDecks().find(x=>x.id===id); const card=d.cards[Math.floor(Math.random()*d.cards.length)]; $('#deckStudy').innerHTML=`<div class="study-card"><h4>${esc(card[0])}</h4><details><summary>Show answer</summary><p>${esc(card[1])}</p></details><button class="primary-button" data-card-reviewed>Reviewed +10 XP</button></div>`; $('[data-card-reviewed]').onclick=()=>{award(state.profile,{xp:10,coins:3,reason:`Reviewed card in ${d.title}`,source:'flashcard-review'});celebrate('+10 XP');saveAll();};}
+function playGame(mode){const mount=$('#gameMount'); const qs=GAME_QUESTIONS.filter(q=>q.mode===mode); const q=qs[Math.floor(Math.random()*qs.length)]; if(mode==='bestFirst'){mount.innerHTML=`<h3>${esc(q.prompt)}</h3>${q.options.map((o,i)=>`<button class="answer-btn" data-answer="${i}">${esc(o)}</button>`).join('')}`; $$('.answer-btn').forEach(b=>b.onclick=()=>gameAnswer(+b.dataset.answer===q.answer,q.explain));} else if(mode==='termMatch'){const wrong=GAME_QUESTIONS.filter(x=>x.mode==='termMatch'&&x.term!==q.term).slice(0,3).map(x=>x.answer); const opts=shuffle([q.answer,...wrong]); mount.innerHTML=`<h3>Match: ${esc(q.term)}</h3>${opts.map(o=>`<button class="answer-btn" data-correct="${o===q.answer}">${esc(o)}</button>`).join('')}`; $$('.answer-btn').forEach(b=>b.onclick=()=>gameAnswer(b.dataset.correct==='true',q.answer));} else {mount.innerHTML=`<h3>Sort this item</h3><p>${esc(q.item)}</p>${['Preventive','Detective','Corrective/Recovery'].map(o=>`<button class="answer-btn" data-correct="${o===q.bucket}">${o}</button>`).join('')}`; $$('.answer-btn').forEach(b=>b.onclick=()=>gameAnswer(b.dataset.correct==='true',`Correct bucket: ${q.bucket}`));}}
+function gameAnswer(ok,msg){ if(ok){state.profile.stats.arcadeWins=(state.profile.stats.arcadeWins||0)+1; award(state.profile,{xp:35,coins:10,reason:'Arcade win',source:'arcade'}); celebrate('Correct! +35 XP');} else toast(`Not quite. ${msg}`,'warn'); saveAll(); renderView();}
+function addNote(){const n={id:crypto.randomUUID(),title:$('#noteTitle').value||'Untitled Note',body:$('#noteBody').value,scope:$('#noteScope').value,createdAt:new Date().toISOString()}; state.profile.progress.notes.unshift(n); award(state.profile,{xp:25,coins:8,reason:`Notebook note: ${n.title}`,source:'note'}); saveAll();renderApp();}
+function exportNotes(){downloadText(`controlquest-notes-${todayISO()}.md`,(state.profile.progress.notes||[]).map(n=>`# ${n.title}\n\n${n.body}\n`).join('\n---\n'));}
+function saveProfileSettings(){const p=state.profile;p.displayName=$('#displayName').value;p.preferences.theme=$('#prefTheme').value;p.studyPlan.examDate=$('#profileExam').value;p.studyPlan.dailyQaeGoal=Number($('#profileQaeGoal').value||10);applyTheme();saveAll();renderApp();}
+async function resetProfile(){if(!confirm('Reset testing stats? This creates a backup first.'))return; if(!confirm('Second warning: this clears XP, coins, logs, roadmap status, notes, and decks. Continue?'))return; const typed=prompt('Type RESET to confirm.'); if(typed!=='RESET')return; const fresh=resetProfileForTesting(state.profile); state.profile=fresh; await saveAll(); toast('Profile reset with backup.'); renderApp();}
+async function deleteProfileFlow(){if(!confirm('Delete profile? A Firestore backup will be created first.'))return; if(!confirm('Second warning: active profile data will be removed.'))return; const typed=prompt('Type DELETE PROFILE to continue.'); if(typed!=='DELETE PROFILE')return; try{const id=await archiveAndDeleteProfile(state.profile,'',false);toast(`Profile archived and deleted. Backup ${id}`);await logout();}catch(e){toast(e.message,'error')}}
+function showOnboarding(){modal('Welcome to ControlQuest Studio',`<p>Let’s set up your CISA quest.</p><label>Theme<select id="obTheme"><option value="dark">Dark</option><option value="light">Light</option></select></label><label>Exam date<input type="date" id="obExam" value="${state.profile.studyPlan.examDate}"></label><label>Normal study time<input type="time" id="obTime" value="${state.profile.studyPlan.sessionTime}"></label><label>Session length<input type="number" id="obDuration" value="${state.profile.studyPlan.sessionDuration}"></label><label>Daily QAE goal<input type="number" id="obQae" value="${state.profile.studyPlan.dailyQaeGoal}"></label>`,()=>{const p=state.profile;p.preferences.theme=$('#obTheme').value;p.studyPlan.examDate=$('#obExam').value;p.studyPlan.sessionTime=$('#obTime').value;p.studyPlan.sessionDuration=Number($('#obDuration').value);p.studyPlan.dailyQaeGoal=Number($('#obQae').value);p.onboarding.completed=true;saveAll();applyTheme();renderApp();showTour();});}
+function showTour(){const steps=[['Command Center','This is your home base: daily quests, XP, coins, chests, streak health, group pulse, and today’s lesson.'],['Daily Quests','Complete all three daily quests on scheduled study days to protect the streak.'],['Live Study Room','Start a synced group timer, check off the session flow, and add homework for tomorrow.'],['Roadmap','Your exam date, pause blocks, and weekend logs reshape your personal roadmap.'],['QAE + Mistakes','Log official practice results and convert every miss into a reusable lesson.'],['Memory Deck + Arcade','Use cards and games for quick review and extra XP.'],['Shop + Avatar','Spend audit coins on streak freezes, boosts, chests, and avatar customizations.']]; let i=0; const next=()=>{if(i>=steps.length)return; modal(`Tour ${i+1}/${steps.length}: ${steps[i][0]}`,`<p>${steps[i][1]}</p>`,()=>{i++;next();},i===steps.length-1?'Finish':'Next');}; next();}
+function modal(title,body,onOk,ok='Save'){const wrap=document.createElement('div');wrap.className='modal-backdrop';wrap.innerHTML=`<div class="modal-card"><h2>${title}</h2>${body}<div class="button-row"><button class="secondary-button" data-cancel>Cancel</button><button class="primary-button" data-ok>${ok}</button></div></div>`;document.body.appendChild(wrap);wrap.querySelector('[data-cancel]').onclick=()=>wrap.remove();wrap.querySelector('[data-ok]').onclick=()=>{onOk?.();wrap.remove();};}
+function celebrate(msg){toast(msg); confetti();}
+function confetti(){for(let i=0;i<24;i++){const el=document.createElement('i');el.className='confetti';el.style.left=Math.random()*100+'vw';el.style.background=`hsl(${Math.random()*360},80%,60%)`;el.style.animationDelay=Math.random()*.25+'s';document.body.appendChild(el);setTimeout(()=>el.remove(),1400);}}
+function toast(message,type='success'){let layer=$('#toastLayer'); if(!layer){layer=document.createElement('div');layer.id='toastLayer';layer.className='toast-layer';document.body.appendChild(layer);} const el=document.createElement('div');el.className=`toast ${type}`;el.textContent=message;layer.appendChild(el);setTimeout(()=>el.remove(),3600);}
+function applyTheme(){document.documentElement.dataset.theme=state.profile?.preferences?.theme||'dark';}
+function timerSeconds(s){if(!s)return 0; let sec=s.accumulatedSeconds||0; if(s.active&&s.startedAt)sec+=Math.floor((Date.now()-new Date(s.startedAt).getTime())/1000); return sec;}
+function startTimer(){stopTimer(); state.timerTick=setInterval(()=>{const s=state.group?.liveSession;if(!s)return; const el=$('#timerText'); if(el){const rem=Math.max(0,(s.durationMinutes||60)*60-timerSeconds(s));el.textContent=fmtTime(rem);}},1000)} function stopTimer(){if(state.timerTick)clearInterval(state.timerTick);}
+function fmtTime(s){const m=Math.floor(s/60),sec=s%60;return `${String(m).padStart(2,'0')}:${String(sec).padStart(2,'0')}`}
+function renderMiniAvatar(a){return renderAvatar({avatar:a||{},stats:{},progress:{}},'tiny');}
+function icon(name){return `<span class="app-icon ${name}"></span>`}
+function esc(s=''){return String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]))} function escAttr(s=''){return esc(s).replace(/'/g,'&#39;')} function friendly(e){return e?.message||String(e)}
+function downloadText(filename,text){const blob=new Blob([text],{type:'text/plain'}),url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download=filename;a.click();URL.revokeObjectURL(url);} function shuffle(a){return a.map(v=>[Math.random(),v]).sort((x,y)=>x[0]-y[0]).map(x=>x[1]);}

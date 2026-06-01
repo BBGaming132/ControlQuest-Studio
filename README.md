@@ -1,46 +1,37 @@
-# ControlQuest Studio v2
+# ControlQuest Studio v2.2
 
-ControlQuest Studio is a Firebase-backed, GitHub Pages-friendly CISA study platform with login, private profiles, study groups, live shared sessions, adaptive roadmaps, QAE tracking, daily challenges, XP, streaks, avatar customization, calendars, mini-games, flashcards, and mistake logging.
+Gamified CISA study platform with Firebase Auth/Firestore sync, study guilds, live study room, adaptive roadmap, daily quests, XP/coins/chests, streak freezes, QAE logging, Mistake Forge, Memory Deck, Arcade, Calendar, Notebook, Shop, Avatar Closet, and safer profile reset/delete flows.
 
-## Important upgrade note
+## Upgrade safely
 
-If you already connected Firebase, keep your existing file:
+1. Back up your current GitHub repo.
+2. Copy this package into your repo.
+3. Preserve your working `config/firebase-config.js` or re-paste your Firebase config and keep `enabled: true`.
+4. Publish the included `firebase.rules` in Firestore Rules.
+5. Commit and push to GitHub Pages.
+6. Hard refresh the live site.
 
-```txt
-config/firebase-config.js
-```
+## Important
 
-When uploading this v2 package, replace the website files but preserve your real Firebase config values. The included config file is a placeholder.
+- GitHub stores code only.
+- Firebase stores user data.
+- Do not store proprietary/copyrighted exam questions in the public repo.
+- The built-in practice prompts and starter flashcards are original study content.
 
-## Folder structure
+## Major v2.2 additions
 
-```txt
-index.html
-assets/
-css/styles.css
-js/
-config/firebase-config.js
-firebase.rules
-docs/
-README.md
-```
-
-## Fast setup
-
-1. Upload the contents of this folder to your GitHub Pages repo root.
-2. Copy your real Firebase config values into `config/firebase-config.js` and set `enabled: true`.
-3. In Firebase Authentication, enable Email/Password.
-4. In Firestore, paste `firebase.rules` into the Rules tab and publish.
-5. Open the GitHub Pages URL.
-6. Log in or create an account.
-7. Create a study group or join one by group ID + invite code.
-
-## Data model
-
-- `/users/{uid}` stores private user data: exam date, roadmap, QAE logs, mistakes, flashcards, avatar, streak, XP, preferences.
-- `/groups/{groupId}` stores group-level data: member summaries, invite code, live session, shared schedule, shared calendar.
-- `/deletedProfiles/{uid}/backups/{backupId}` stores a backup before a profile is deleted.
-
-## No npm required
-
-This is a static HTML/CSS/JavaScript app. Firebase is loaded through browser module imports from Google CDN. Do not run `npm install firebase` unless you decide to convert the project to a build-tool app later.
+- Reset stats for testing with multiple warnings and backup
+- Deeper onboarding with theme, exam date, session length, QAE goal
+- Guided tour with feature explanations
+- Activity log for XP/coin history
+- XP popups, confetti, coins, treasure chests
+- Automatic streak freeze logic
+- Quest Shop
+- Live Study Room checkbox persistence and larger controls
+- Day-level roadmap with pause blocks and weekend bonus logs
+- Physical month calendar with event creation
+- Lesson + Homework page
+- Notebook page
+- Starter Memory Decks
+- Expanded Arcade
+- Mobile-friendly touch targets
