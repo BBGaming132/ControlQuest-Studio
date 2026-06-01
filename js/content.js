@@ -1,123 +1,189 @@
+export const OFFICIAL_LINKS = {
+  cisaOverview:'https://www.isaca.org/credentialing/cisa',
+  cisaOutline:'https://www.isaca.org/credentialing/cisa/cisa-exam-content-outline',
+  qae:'https://store.isaca.org/s/store#/store/browse/detail/a2S4w000004Ko9qEAC',
+  udemy:'https://www.udemy.com/'
+};
+
 export const DOMAINS = [
-  { id:'D1', name:'Information Systems Auditing Process', short:'Audit Process', weight:18, color:'#7c4dff' },
-  { id:'D2', name:'Governance and Management of IT', short:'Governance', weight:18, color:'#00a7ff' },
-  { id:'D3', name:'Information Systems Acquisition, Development and Implementation', short:'Acquisition + SDLC', weight:12, color:'#ff9f1c' },
-  { id:'D4', name:'Information Systems Operations and Business Resilience', short:'Operations + Resilience', weight:26, color:'#18c29c' },
-  { id:'D5', name:'Protection of Information Assets', short:'Asset Protection', weight:26, color:'#ff5c8a' }
+  { id:'D1', short:'Domain 1', title:'Information Systems Auditing Process', weight:18, color:'#7C4DFF', icon:'audit' },
+  { id:'D2', short:'Domain 2', title:'Governance And Management Of IT', weight:18, color:'#00A7FF', icon:'governance' },
+  { id:'D3', short:'Domain 3', title:'IS Acquisition, Development And Implementation', weight:12, color:'#18C29C', icon:'build' },
+  { id:'D4', short:'Domain 4', title:'IS Operations And Business Resilience', weight:26, color:'#FFB347', icon:'resilience' },
+  { id:'D5', short:'Domain 5', title:'Protection Of Information Assets', weight:26, color:'#FF5C8A', icon:'security' },
+  { id:'MIX', short:'Mixed Review', title:'Mixed Review And Mock Exam Readiness', weight:0, color:'#9B5CFF', icon:'mixed' }
 ];
 
 export const TOPICS = [
-  { domain:'D1', title:'CISA mindset: auditor evaluates, management owns', focus:'Learn the language of first, best, primary, greatest risk, and sufficient evidence.', tasks:['Watch/listen: CISA audit mindset overview','Draw: auditor vs management responsibility ladder','Practice: 8–10 Domain 1 QAE questions','Create: 3 flashcards from traps you saw'], homework:['Record a 2-minute teach-back on auditor independence','Review 5 missed or guessed questions','Add 2 notes to your notebook'] },
-  { domain:'D1', title:'Audit charter, standards, ethics, and independence', focus:'Understand authority, scope, ethics, and independence threats.', tasks:['Sketch the audit charter purpose','Compare independence in fact vs appearance','Practice 8 independence/standards questions','Log one “auditor should not own remediation” trap'], homework:['Make a one-page charter/standards cheat sheet','Teach back why independence matters'] },
-  { domain:'D1', title:'Risk-based audit planning', focus:'Prioritize audit work based on business risk and assurance value.', tasks:['Draw audit universe → risk ranking → audit plan','Identify inherent and residual risk examples','Practice 10 QAE questions','Add one Mistake Forge entry'], homework:['Build 5 flashcards on audit planning','Write a mini scenario for highest-risk audit area'] },
-  { domain:'D1', title:'Audit execution and evidence', focus:'Evidence must be sufficient, reliable, relevant, and useful.', tasks:['Compare inquiry, observation, inspection, reperformance','Rank evidence reliability examples','Practice 10 QAE questions','Add evidence notes to notebook'], homework:['Review your evidence hierarchy','Add 2 examples from EY-style audit work'] },
-  { domain:'D1', title:'Sampling, testing, and data analytics', focus:'Know what sampling and analytics can prove and what they cannot prove.', tasks:['Define compliance vs substantive testing','Draw sample selection → test → evaluate results','Practice 8–10 QAE questions','Create 4 sampling cards'], homework:['Make a quick controls testing cheat sheet','Review one old miss'] },
-  { domain:'D1', title:'Reporting, findings, and follow-up', focus:'A strong finding includes criteria, condition, cause, effect, and recommendation.', tasks:['Draft a sample audit finding','Map report → management response → follow-up','Practice 10 QAE questions','Add one finding template to notes'], homework:['Record a 2-minute finding walkthrough','Review 3 finding/reporting flashcards'] },
-  { domain:'D2', title:'IT governance structure and accountability', focus:'Board and senior management set direction; IT executes; auditors assure.', tasks:['Draw governance ownership ladder','Map board vs steering committee vs IT management','Practice 10 QAE questions','Log ownership traps'], homework:['Make 5 ownership flashcards','Write a “who owns this?” mini-drill'] },
-  { domain:'D2', title:'IT strategy, policies, standards, and procedures', focus:'Strategy aligns IT to business; policies state intent; standards define rules.', tasks:['Create examples of policy/standard/procedure','Explain IT-business alignment','Practice 8 QAE questions','Create 3 cards'], homework:['Review policy hierarchy','Add notebook summary'] },
-  { domain:'D2', title:'Risk management and control frameworks', focus:'Risk appetite, KRIs, monitoring, and ownership drive governance.', tasks:['Draw risk lifecycle','Define inherent/residual risk','Practice 10 QAE questions','Teach-back risk ownership'], homework:['Make a risk terms deck','Review missed QAE explanations'] },
-  { domain:'D2', title:'Data governance, privacy, and classification', focus:'Data owners classify; custodians protect; privacy requires lawful, limited handling.', tasks:['Map data owner vs custodian','Define classification/retention','Practice 10 QAE questions','Log one privacy trap'], homework:['Create a privacy/data governance visual map','Add 4 cards'] },
-  { domain:'D2', title:'Third-party/vendor management', focus:'Contracts, SLAs, monitoring, SOC reports, and exit strategies reduce vendor risk.', tasks:['Sketch vendor lifecycle','List key contract clauses','Practice 8 QAE questions','Write vendor risk checklist'], homework:['Review SOC report concepts','Make a 6-card vendor deck'] },
-  { domain:'D3', title:'Project governance and business case', focus:'Projects need sponsorship, feasibility, scope, controls, and benefits tracking.', tasks:['Draw project governance roles','Review business case logic','Practice 8 QAE questions','Create 2 cards'], homework:['Write PIR questions','Review SDLC overview'] },
-  { domain:'D3', title:'SDLC, Agile, and control design', focus:'Controls should be built in early, not bolted on later.', tasks:['Compare waterfall vs agile audit concerns','Draw SDLC phases','Practice 10 QAE questions','Teach-back control design'], homework:['Create SDLC phase flashcards','Write one agile audit risk example'] },
-  { domain:'D3', title:'Testing, UAT, data conversion, and migration', focus:'Business users approve UAT; data conversion needs reconciliation and completeness.', tasks:['Map testing levels','List migration risks','Practice 10 QAE questions','Log implementation traps'], homework:['Create UAT/migration checklist','Review conversion control cards'] },
-  { domain:'D3', title:'Post-implementation review and benefits realization', focus:'After go-live, assess whether objectives and controls are working.', tasks:['Draft PIR questions','Explain benefits realization','Practice 8 QAE questions','Make 3 flashcards'], homework:['Review project closeout concepts','Record a short teach-back'] },
-  { domain:'D4', title:'IT operations overview and asset management', focus:'Operations controls keep services reliable, available, and recoverable.', tasks:['Draw operational control stack','Define asset inventory risks','Practice 10 QAE questions','Make a visual map'], homework:['Create asset management cards','Review one operational incident example'] },
-  { domain:'D4', title:'Incident vs problem vs change', focus:'Incident restores service; problem fixes root cause; change controls risk.', tasks:['Draw the incident/problem/change triangle','Practice 12 QAE questions','Write one scenario','Teach it out loud'], homework:['Make 5 ITSM cards','Review change control traps'] },
-  { domain:'D4', title:'Change, release, patch, and configuration management', focus:'Unauthorized or uncontrolled change is a major operational risk.', tasks:['Map normal/emergency change','List patch controls','Practice 12 QAE questions','Log one change trap'], homework:['Add CMDB/change notes','Build 5 cards'] },
-  { domain:'D4', title:'Backup, restoration, and job scheduling', focus:'Backups matter only if restoration is tested and aligned to RPO/RTO.', tasks:['Draw backup types','Explain restore testing','Practice 10 QAE questions','Make 3 cards'], homework:['Create restore-test checklist','Review RPO/RTO terms'] },
-  { domain:'D4', title:'BIA, RTO, RPO, MTD/MAO', focus:'BIA drives recovery priorities and recovery requirements.', tasks:['Build BIA/RTO/RPO timeline','Practice 12 QAE questions','Explain RTO vs RPO','Log one timeline trap'], homework:['Make a disaster recovery visual','Create 6 BCP/DR cards'] },
-  { domain:'D4', title:'BCP, DRP, crisis management, and testing', focus:'Plans must be maintained, tested, and tied to business priorities.', tasks:['Compare tabletop/walkthrough/full test','Draw BCP vs DRP','Practice 12 QAE questions','Record 2-minute summary'], homework:['Review one business resilience scenario','Add one mistake/flashcard'] },
-  { domain:'D5', title:'Security governance and asset protection basics', focus:'Security starts with governance, classification, policies, and risk.', tasks:['Draw security governance model','Define classification','Practice 10 QAE questions','Make 3 cards'], homework:['Create security governance cards','Review owner/custodian roles'] },
-  { domain:'D5', title:'Identity and access management', focus:'Least privilege, owner approval, periodic reviews, and timely removal are key.', tasks:['Map user access lifecycle','Practice 12 QAE questions','Explain privileged access risk','Log access traps'], homework:['Create IAM lifecycle flashcards','Review termination control scenario'] },
-  { domain:'D5', title:'Network, endpoint, and infrastructure security', focus:'Layered controls reduce exposure and support monitoring.', tasks:['Sketch defense-in-depth','Compare preventive/detective controls','Practice 10 QAE questions','Make visual map'], homework:['Create control type cards','Review network monitoring notes'] },
-  { domain:'D5', title:'Encryption, PKI, and data protection', focus:'Know what encryption protects and what key management risks remain.', tasks:['Draw symmetric vs asymmetric','Explain PKI high level','Practice 10 QAE questions','Make 3 cards'], homework:['Create encryption/PKI cards','Review key management risks'] },
-  { domain:'D5', title:'Cloud, mobile, wireless, and emerging tech risks', focus:'Audit responsibilities remain even when technology shifts to vendors/cloud.', tasks:['Map shared responsibility','List cloud audit evidence','Practice 10 QAE questions','Teach-back cloud risk'], homework:['Review cloud responsibility cards','Add 2 examples to notebook'] },
-  { domain:'D5', title:'Security monitoring, incident response, and forensics', focus:'Response requires detection, containment, evidence handling, and lessons learned.', tasks:['Draw incident response lifecycle','Practice 12 QAE questions','Explain chain of custody','Log one incident trap'], homework:['Create IR/forensics flashcards','Review one old miss'] },
-  { domain:'MIX', title:'Mixed CISA judgment drill', focus:'Switch domains quickly and defend why each answer is best.', tasks:['Do 20 mixed QAE questions','Review every missed explanation','Update Mistake Forge','Record 3 CISA rules'], homework:['Build a weak-area list','Review old flashcards'] },
-  { domain:'MIX', title:'Mock block and remediation', focus:'Timed practice plus careful review matters more than raw speed.', tasks:['Complete one timed block','Sort misses by domain','Create catch-up quests','Review old flashcards'], homework:['Build final cheat sheet','Schedule next mock block'] }
+  { domain:'D1', title:'Audit Mindset And ISACA Question Logic', focus:'Learn how CISA asks FIRST, BEST, MOST, PRIMARY, and GREATEST risk questions.', tasks:['Watch one Domain 1 overview video or Udemy section.', 'Write five CISA answer-choice rules in your notebook.', 'Do 8 Domain 1 QAE questions and explain every answer out loud.'], homework:['Create 8 flashcards from the answer-choice rules.', 'Record a 2-minute voice memo explaining the CISA auditor mindset.'], links:['cisaOutline','qae'] },
+  { domain:'D1', title:'Audit Charter, Independence, And Standards', focus:'Understand authority, independence, ethics, and professional standards.', tasks:['Review audit charter purpose and independence requirements.', 'Map who owns audit, controls, remediation, and evidence.', 'Do 10 QAE questions focused on audit governance and independence.'], homework:['Make a visual ownership map.', 'Log one Mistake Forge entry for any missed independence question.'], links:['cisaOverview','qae'] },
+  { domain:'D1', title:'Risk-Based Audit Planning', focus:'Audit resources should focus on areas with the greatest risk to business objectives.', tasks:['Draw the audit universe to risk assessment to audit plan flow.', 'Identify common planning traps: convenience, equal coverage, and low-risk distractions.', 'Do 10 QAE questions on risk-based planning.'], homework:['Build a mini cheat sheet: risk-based audit planning.', 'Add three examples from EY-style ITGC work.'], links:['qae'] },
+  { domain:'D1', title:'Evidence, Sampling, And Testing', focus:'Evidence should be sufficient, reliable, relevant, and useful.', tasks:['Compare inquiry, observation, inspection, reperformance, and data analytics.', 'Review compliance testing versus substantive testing.', 'Do 12 QAE questions on evidence and testing.'], homework:['Create a table of evidence types and reliability.', 'Make 10 flashcards on testing terms.'], links:['qae'] },
+  { domain:'D1', title:'Audit Reporting And Follow-Up', focus:'Findings need criteria, condition, cause, effect, and recommendation.', tasks:['Create a finding structure map.', 'Discuss why auditors validate cause and impact before recommending remediation.', 'Do 10 QAE questions on reporting and follow-up.'], homework:['Write one sample finding using condition, criteria, cause, effect, recommendation.', 'Review all missed Domain 1 questions so far.'], links:['qae'] },
+
+  { domain:'D2', title:'IT Governance Structure And Accountability', focus:'Boards and senior management govern; management operates; auditors provide assurance.', tasks:['Draw governance layers from board to process owners.', 'Review ownership of risk, data, access, policies, and controls.', 'Do 10 QAE governance questions.'], homework:['Make an ownership flashcard deck.', 'Explain governance in a 2-minute audio summary.'], links:['qae'] },
+  { domain:'D2', title:'Strategy, Policies, Standards, And Procedures', focus:'Distinguish policy, standard, procedure, baseline, and guideline.', tasks:['Build the policy hierarchy.', 'Review how IT strategy aligns with business objectives.', 'Do 10 QAE questions on governance documents.'], homework:['Create flashcards for policy hierarchy terms.', 'Add one notebook note summarizing strategy alignment.'], links:['qae'] },
+  { domain:'D2', title:'Risk Management, KRIs, KPIs, And Compliance', focus:'Understand risk appetite, risk tolerance, monitoring, and reporting.', tasks:['Review risk appetite versus tolerance.', 'Map KPI/KRI examples.', 'Do 12 QAE questions on risk management.'], homework:['Create three KRI examples for ITGC topics.', 'Add one Mistake Forge entry if needed.'], links:['qae'] },
+  { domain:'D2', title:'Third-Party, Vendor, And Outsourcing Risk', focus:'Contracts, SLAs, right-to-audit, monitoring, and exit strategy matter.', tasks:['Map vendor lifecycle controls.', 'Discuss what should be reviewed before outsourcing critical IT services.', 'Do 10 QAE questions on third-party risk.'], homework:['Create a vendor risk checklist.', 'Review SOC report purpose and limitations.'], links:['qae'] },
+  { domain:'D2', title:'Data Governance And Privacy Basics', focus:'Data owners classify data and approve access based on business need.', tasks:['Review data classification, retention, privacy, and ownership.', 'Create a data lifecycle map.', 'Do 10 QAE questions on data governance.'], homework:['Create flashcards on data owner/custodian/user responsibilities.', 'Write a quick note on privacy-by-design.'], links:['qae'] },
+
+  { domain:'D3', title:'Project Governance And Business Case', focus:'Auditors evaluate whether projects are justified, governed, and controlled.', tasks:['Review business case, feasibility, and approval gates.', 'Map steering committee and sponsor responsibilities.', 'Do 8 QAE questions on project governance.'], homework:['Create a project governance visual map.', 'Make 8 SDLC flashcards.'], links:['qae'] },
+  { domain:'D3', title:'Requirements, Design, And Control Integration', focus:'Controls should be designed early, not bolted on at the end.', tasks:['Review requirements traceability and control design.', 'Compare functional, technical, security, and control requirements.', 'Do 10 QAE questions on requirements and controls.'], homework:['Create a requirements traceability mini diagram.', 'Add one note about control design in Agile.'], links:['qae'] },
+  { domain:'D3', title:'Testing, UAT, And Quality Assurance', focus:'Business users own UAT; independent QA provides assurance over quality.', tasks:['Compare unit, system, integration, UAT, regression, and parallel testing.', 'Discuss why UAT is not an IT-only activity.', 'Do 10 QAE questions on testing.'], homework:['Make a testing pyramid or lifecycle chart.', 'Create flashcards for testing types.'], links:['qae'] },
+  { domain:'D3', title:'Implementation, Migration, And Post-Implementation Review', focus:'Data conversion, cutover, approval, rollback, and PIR are key risks.', tasks:['Map implementation readiness and go-live approval.', 'Review data conversion controls.', 'Do 10 QAE questions on implementation.'], homework:['Create a cutover checklist.', 'Write one note on why restoration/rollback plans matter.'], links:['qae'] },
+
+  { domain:'D4', title:'IT Operations, Scheduling, And Monitoring', focus:'Operations controls keep systems reliable, complete, accurate, and available.', tasks:['Review job scheduling, monitoring, logging, and exception handling.', 'Create an operations control map.', 'Do 12 QAE questions on operations.'], homework:['Make flashcards for batch processing, interfaces, and monitoring.', 'Log one operations-related mistake if missed.'], links:['qae'] },
+  { domain:'D4', title:'Change, Release, Configuration, And Patch Management', focus:'Controlled change reduces the risk of unauthorized or untested production changes.', tasks:['Compare change, release, configuration, and patch management.', 'Map emergency change approval and follow-up.', 'Do 12 QAE questions on change management.'], homework:['Create a change lifecycle diagram.', 'Summarize patch risk in 5 bullets.'], links:['qae'] },
+  { domain:'D4', title:'Incident, Problem, And Service Management', focus:'Incidents restore service; problems address root cause.', tasks:['Build an incident versus problem comparison.', 'Review SLA, escalation, and root-cause concepts.', 'Do 12 QAE questions on service management.'], homework:['Create flashcards for ITIL-style terms.', 'Add one scenario note: outage repeats every week.'], links:['qae'] },
+  { domain:'D4', title:'Backup, Recovery, BIA, BCP, And DRP', focus:'BIA drives priorities; RTO/RPO define recovery requirements; testing proves readiness.', tasks:['Draw BIA to BCP to DRP to testing flow.', 'Compare RTO, RPO, MTD/MAO, hot/warm/cold sites.', 'Do 15 QAE questions on resilience.'], homework:['Create a recovery timeline diagram.', 'Memorize RTO/RPO/MTD with flashcards.'], links:['qae'] },
+  { domain:'D4', title:'Business Resilience Testing And Maintenance', focus:'Plans are only useful if they are updated, tested, and understood.', tasks:['Review walkthrough, tabletop, simulation, parallel, and full interruption tests.', 'Discuss test evidence and lessons learned.', 'Do 12 QAE questions on BCP/DR testing.'], homework:['Build a BCP test-type comparison table.', 'Log any missed resilience questions in Mistake Forge.'], links:['qae'] },
+
+  { domain:'D5', title:'Security Governance And Control Types', focus:'Security controls must align to risk, ownership, and business requirements.', tasks:['Compare preventive, detective, corrective, deterrent, compensating, and recovery controls.', 'Review security policies and baseline expectations.', 'Do 12 QAE questions on control types.'], homework:['Make a control-type flashcard deck.', 'Add 10 examples of preventive/detective/corrective controls.'], links:['qae'] },
+  { domain:'D5', title:'Identity And Access Management', focus:'Least privilege, owner approval, timely removal, privileged access, and periodic review.', tasks:['Map joiner, mover, leaver access lifecycle.', 'Discuss privileged access risks and compensating controls.', 'Do 15 QAE questions on access.'], homework:['Create an IAM lifecycle diagram.', 'Make flashcards for RBAC, MFA, SSO, and PAM.'], links:['qae'] },
+  { domain:'D5', title:'Network, Endpoint, Cloud, And Mobile Security', focus:'Technical controls should be understood through the lens of risk and assurance.', tasks:['Review network segmentation, firewalls, IDS/IPS, endpoint controls, and cloud shared responsibility.', 'Compare configuration baselines and vulnerability management.', 'Do 12 QAE questions on technical security.'], homework:['Create a cloud shared responsibility note.', 'Build a network controls cheat sheet.'], links:['qae'] },
+  { domain:'D5', title:'Encryption, PKI, Data Protection, And DLP', focus:'Encryption is only as strong as key management and implementation.', tasks:['Review encryption at rest/in transit, hashing, digital signatures, PKI, and key management.', 'Discuss data loss prevention and classification ties.', 'Do 12 QAE questions on data protection.'], homework:['Create a PKI concept map.', 'Make 10 flashcards on encryption terms.'], links:['qae'] },
+  { domain:'D5', title:'Security Monitoring, Incident Response, And Forensics', focus:'Detection, containment, evidence integrity, chain of custody, and lessons learned matter.', tasks:['Map incident response phases.', 'Review log monitoring, SIEM, vulnerability scanning, penetration testing, and chain of custody.', 'Do 15 QAE questions on incident response.'], homework:['Create an incident response flowchart.', 'Add Mistake Forge entries for missed security questions.'], links:['qae'] },
+
+  { domain:'MIX', title:'Mixed Review Block 1', focus:'Switch domains quickly and explain why answers are right or wrong.', tasks:['Do a 25-question mixed QAE block.', 'Review every missed or guessed question.', 'Update Memory Deck and Mistake Forge.'], homework:['Create a top-10 missed-topic list.', 'Do a 10-minute flashcard sprint.'], links:['qae'] },
+  { domain:'MIX', title:'Mock Exam Strategy And Timing', focus:'Practice pacing, question logic, and stamina.', tasks:['Do a timed 50-question block or two 25-question blocks.', 'Track accuracy by domain.', 'Identify top three risks before exam week.'], homework:['Write an exam-day strategy note.', 'Review all open Mistake Forge items.'], links:['qae'] },
+  { domain:'MIX', title:'Final Weak Area Repair', focus:'Repair the domains/topics that are dragging down your score.', tasks:['Pick the weakest domain from QAE trend analysis.', 'Study one video, one visual map, and one QAE block.', 'Retest missed concepts.'], homework:['Create the final one-page cheat sheet.', 'Review flashcards before bed.'], links:['qae'] }
 ];
 
 export const DAILY_CHALLENGE_BANK = [
-  { key:'qae_sprint', title:'QAE Sprint', xp:60, coins:18, type:'qae', description:'Answer a focused set of QAE questions and log the score.', target:10, evidenceLabel:'How many questions did you answer?' },
-  { key:'teach_back', title:'Teach-Back Audio', xp:45, coins:12, type:'evidence', description:'Explain one concept out loud in two minutes like you are teaching a new staff.', evidenceLabel:'What concept did you teach back?' },
-  { key:'mistake_forge', title:'Mistake Forge', xp:50, coins:15, type:'mistake', description:'Convert one wrong or guessed answer into a reusable lesson.', evidenceLabel:'What trap did you catch?' },
-  { key:'visual_map', title:'Visual Map', xp:55, coins:15, type:'evidence', description:'Draw a visual map of today’s concept: process, timeline, ownership ladder, or control flow.', evidenceLabel:'What did your map cover?' },
-  { key:'flashcard_four', title:'Four-Card Forge', xp:40, coins:10, type:'flashcards', description:'Create or review four flashcards from today’s topic.', target:4, evidenceLabel:'Which cards/deck did you work on?' },
-  { key:'buddy_ping', title:'Buddy Accountability Ping', xp:25, coins:8, type:'evidence', description:'Post one useful insight, reminder, or encouragement to your guild.', evidenceLabel:'What did you share?' },
-  { key:'arcade_round', title:'Arcade Round', xp:35, coins:10, type:'arcade', description:'Play one mini-game round to reinforce CISA vocabulary and answer logic.', target:1, evidenceLabel:'Which game did you play?' },
-  { key:'review_old', title:'Old Miss Review', xp:45, coins:12, type:'mistake', description:'Review one past mistake and mark whether it finally makes sense.', evidenceLabel:'Which old miss did you review?' },
-  { key:'notebook_entry', title:'Notebook Build', xp:30, coins:8, type:'notes', description:'Add a useful note to your notebook from today’s topic.', evidenceLabel:'What did you write about?' },
-  { key:'homework_check', title:'Homework Keeper', xp:45, coins:12, type:'homework', description:'Complete and verify one homework item from a prior session.', evidenceLabel:'What homework did you finish?' }
+  { key:'qae-mini', title:'QAE Mini Block', detail:'Complete the daily QAE target and log the result in Practice Log.', xp:45, coins:12, icon:'qae', requiresEvidence:true },
+  { key:'teach-back', title:'Teach-Back Sprint', detail:'Explain one CISA concept out loud in two minutes.', xp:30, coins:8, icon:'voice', requiresEvidence:false },
+  { key:'memory-review', title:'Memory Deck Review', detail:'Review at least five flashcards in Study Tools.', xp:30, coins:8, icon:'cards', requiresEvidence:false },
+  { key:'mistake-forge', title:'Forge One Mistake', detail:'Turn one wrong or guessed answer into a Mistake Forge entry.', xp:35, coins:10, icon:'forge', requiresEvidence:false },
+  { key:'roadmap-task', title:'Lesson Checkpoint', detail:'Complete at least one task from today’s roadmap lesson.', xp:40, coins:10, icon:'roadmap', requiresEvidence:false },
+  { key:'note-capture', title:'Notebook Capture', detail:'Write a short note, diagram summary, or study takeaway.', xp:25, coins:6, icon:'notebook', requiresEvidence:false },
+  { key:'arcade-round', title:'Arcade Round', detail:'Win one game round in Study Tools.', xp:35, coins:10, icon:'arcade', requiresEvidence:false },
+  { key:'homework-cleanup', title:'Homework Cleanup', detail:'Complete one open homework item or catch-up task.', xp:40, coins:10, icon:'homework', requiresEvidence:false }
 ];
 
-export const BONUS_QUESTS = [
-  { key:'weekend_warrior', title:'Weekend Warrior', xp:90, coins:30, chest:'silver', description:'Complete a weekend study session and log it to the roadmap.' },
-  { key:'perfect_session', title:'Perfect Live Session', xp:120, coins:45, chest:'gold', description:'Complete every live session checklist item in one study room.' },
-  { key:'domain_boss', title:'Domain Boss Battle', xp:160, coins:60, chest:'gold', description:'Score 80%+ on a 25-question domain block.' },
-  { key:'mistake_master', title:'Mistake Master', xp:100, coins:35, chest:'silver', description:'Review and close five old mistake entries.' }
+export const HOMEWORK_IDEAS = [
+  { title:'Create 8 Flashcards', detail:'Turn today’s lesson into eight clean front/back cards.', type:'Memory Deck', xp:30, coins:8 },
+  { title:'Record A 2-Minute Voice Memo', detail:'Teach today’s topic like you are explaining it to a new staff.', type:'Audio Review', xp:25, coins:6 },
+  { title:'Do A 10-Question QAE Retest', detail:'Use the official QAE database and log the result in Practice Log.', type:'QAE', xp:45, coins:12 },
+  { title:'Build A One-Page Visual Map', detail:'Draw the flow, ownership model, or lifecycle from today’s topic.', type:'Visual', xp:35, coins:10 },
+  { title:'Update Mistake Forge', detail:'Convert every missed question into one “CISA logic” note.', type:'Mistakes', xp:35, coins:10 },
+  { title:'Watch One Short Video Segment', detail:'Watch a targeted video section and capture three takeaways.', type:'Video', xp:25, coins:6 },
+  { title:'Review Yesterday’s Cards', detail:'Do a fast flashcard pass before the next session.', type:'Memory Deck', xp:20, coins:5 },
+  { title:'Write One Scenario Example', detail:'Apply today’s concept to an EY-style IT audit scenario.', type:'Scenario', xp:30, coins:8 }
 ];
 
 export const STARTER_DECKS = [
-  { id:'deck-d1-audit-mindset', scope:'public', title:'D1 Audit Mindset Essentials', domain:'D1', cards:[
-    ['What is the auditor’s role?','Evaluate controls and provide assurance; management owns remediation and operations.'],
-    ['What does “FIRST” usually test?','Sequence. Identify what must happen before action, such as understanding impact or validating facts.'],
-    ['What does “BEST” usually test?','The most complete, risk-based answer that improves assurance or control effectiveness.'],
-    ['What makes audit evidence strong?','Evidence should be sufficient, reliable, relevant, and useful.'],
-    ['Who owns corrective action?','Management/process owner, not the auditor.'],
-    ['What drives audit planning?','Risk to business objectives and assurance priorities.']
+  { id:'public-d1-audit-process', scope:'public', title:'Domain 1: Audit Process Master Deck', domain:'D1', description:'Core audit process, evidence, planning, reporting, and CISA answer logic.', cards:[
+    ['Auditor Role','Evaluate controls, collect evidence, and provide assurance. Management owns operations and remediation.'],
+    ['Risk-Based Audit Planning','Prioritizing audit work based on areas of greatest risk to business objectives.'],
+    ['Audit Universe','The full population of auditable entities, processes, systems, locations, and risks.'],
+    ['Audit Charter','A formal document defining audit authority, responsibility, and scope.'],
+    ['Independence','Freedom from conditions that threaten objectivity or impartiality.'],
+    ['Sufficient Evidence','Enough evidence to support a finding or conclusion.'],
+    ['Reliable Evidence','Evidence from independent, objective, or directly obtained sources is generally stronger.'],
+    ['Relevant Evidence','Evidence that directly supports the audit objective or finding.'],
+    ['Useful Evidence','Evidence that helps the auditor reach a valid conclusion or recommendation.'],
+    ['Compliance Testing','Testing whether controls operate according to policies, standards, or procedures.'],
+    ['Substantive Testing','Testing transactions, data, or evidence to determine whether errors or issues exist.'],
+    ['Sampling Risk','Risk that the sample selected is not representative of the population.'],
+    ['CAATs','Computer-assisted audit techniques used to analyze large datasets or automate audit procedures.'],
+    ['Audit Finding Structure','Condition, criteria, cause, effect, and recommendation.'],
+    ['Follow-Up','Determining whether management’s corrective actions were implemented and effective.']
   ]},
-  { id:'deck-d2-governance', scope:'public', title:'D2 Governance + Ownership', domain:'D2', cards:[
-    ['Who is responsible for IT governance?','Board and senior management are accountable for governance and direction.'],
-    ['Who classifies data?','The data owner or business owner.'],
-    ['Policy vs standard','Policy states intent; standard defines mandatory requirements.'],
-    ['KRI','Key risk indicator used to monitor risk exposure.'],
-    ['Risk appetite','The level of risk an organization is willing to accept.'],
-    ['Third-party risk key control','Contracts, SLAs, right-to-audit, monitoring, and exit planning.']
+  { id:'public-d2-governance', scope:'public', title:'Domain 2: Governance And Management Deck', domain:'D2', description:'Governance, ownership, risk management, policies, vendors, and data governance.', cards:[
+    ['IT Governance','Leadership, structures, and processes that ensure IT sustains and extends business objectives.'],
+    ['Board Accountability','The board and senior management are accountable for governance and direction.'],
+    ['IT Steering Committee','A governance body that helps align IT projects, priorities, and resources with business goals.'],
+    ['Policy','High-level statement of management intent and required behavior.'],
+    ['Standard','Mandatory specific requirement that supports a policy.'],
+    ['Procedure','Step-by-step instructions for performing a process.'],
+    ['Guideline','Recommended but usually not mandatory guidance.'],
+    ['Risk Appetite','The level of risk an organization is willing to accept.'],
+    ['Risk Tolerance','Acceptable variation around risk appetite or objectives.'],
+    ['KRI','Key Risk Indicator used to monitor changes in risk exposure.'],
+    ['KPI','Key Performance Indicator used to monitor performance against objectives.'],
+    ['Data Owner','Business role accountable for data classification, access approval, and use.'],
+    ['Data Custodian','IT or operations role responsible for storing, processing, or safeguarding data.'],
+    ['Third-Party Risk Controls','Due diligence, contracts, SLAs, right-to-audit, monitoring, and exit strategy.'],
+    ['Right-To-Audit Clause','Contract language allowing the organization to audit or review vendor controls.']
   ]},
-  { id:'deck-d3-sdlc', scope:'public', title:'D3 SDLC + Implementation', domain:'D3', cards:[
-    ['UAT owner','Business users validate that the system meets business requirements.'],
-    ['Data conversion risk','Incomplete or inaccurate migration of data into the new system.'],
-    ['Post-implementation review','Determines whether objectives, benefits, and controls are working after go-live.'],
-    ['Agile audit focus','Governance, traceability, approvals, security, and control integration.'],
-    ['Business case','Justifies the project and expected business benefits.'],
-    ['Change control in SDLC','Prevents unauthorized or untested changes from entering production.']
+  { id:'public-d3-sdlc', scope:'public', title:'Domain 3: SDLC And Implementation Deck', domain:'D3', description:'Project governance, requirements, testing, migration, and post-implementation review.', cards:[
+    ['Business Case','Justification for a project based on benefits, costs, risks, and alignment.'],
+    ['Feasibility Study','Assessment of whether a project is technically, operationally, legally, and economically viable.'],
+    ['Requirements Traceability','Linking requirements to design, development, testing, and implementation evidence.'],
+    ['SDLC','Structured process for planning, building, testing, deploying, and maintaining systems.'],
+    ['Agile Audit Focus','Governance, control integration, traceability, approvals, and security within iterative delivery.'],
+    ['Unit Testing','Testing individual components or modules.'],
+    ['Integration Testing','Testing whether components work together.'],
+    ['System Testing','Testing the complete system against requirements.'],
+    ['Regression Testing','Testing to ensure changes did not break existing functionality.'],
+    ['UAT','Business users validate that the system supports business requirements.'],
+    ['Parallel Testing','Running old and new systems at the same time to compare results.'],
+    ['Data Conversion','Migration or transformation of data from old system to new system.'],
+    ['Rollback Plan','Plan for returning to a prior state if implementation fails.'],
+    ['Post-Implementation Review','Review after go-live to determine whether objectives and controls are achieved.'],
+    ['Change Control','Process to authorize, test, approve, and document modifications.']
   ]},
-  { id:'deck-d4-resilience', scope:'public', title:'D4 Operations + Resilience', domain:'D4', cards:[
-    ['Incident management','Restores service as quickly as possible.'],
-    ['Problem management','Identifies and resolves root cause.'],
-    ['Change management','Controls risk from modifications to systems.'],
+  { id:'public-d4-operations', scope:'public', title:'Domain 4: Operations And Resilience Deck', domain:'D4', description:'Operations, service management, change, backup, BCP, DR, and resilience testing.', cards:[
+    ['Incident Management','Restores service as quickly as possible after disruption.'],
+    ['Problem Management','Identifies and resolves root cause of incidents.'],
+    ['Change Management','Controls risk from changes to systems and production environments.'],
+    ['Release Management','Plans and controls movement of releases into production.'],
+    ['Configuration Management','Maintains accurate information about IT assets and configuration items.'],
+    ['Patch Management','Identifies, tests, approves, and deploys updates to reduce vulnerability risk.'],
+    ['Backup','A copy of data or systems used for recovery.'],
+    ['Restore Test','Proof that backups can actually be used to recover data or systems.'],
+    ['BIA','Business Impact Analysis identifies critical processes and disruption impact.'],
     ['RTO','Target time to restore a process or system after disruption.'],
-    ['RPO','Acceptable data loss measured in time.'],
-    ['BIA','Identifies critical processes and disruption impact; drives recovery priorities.']
+    ['RPO','Acceptable amount of data loss measured in time.'],
+    ['MTD/MAO','Maximum tolerable downtime or outage before unacceptable impact.'],
+    ['BCP','Business Continuity Plan for continuing critical business operations.'],
+    ['DRP','Disaster Recovery Plan for restoring IT systems and infrastructure.'],
+    ['Tabletop Test','Discussion-based walkthrough of a continuity or recovery scenario.']
   ]},
-  { id:'deck-d5-security', scope:'public', title:'D5 Asset Protection', domain:'D5', cards:[
-    ['Least privilege','Users get only the access necessary to perform their job.'],
-    ['Privileged access risk','High impact if misused; requires approval, monitoring, and review.'],
-    ['Preventive control','Stops an issue before it occurs.'],
-    ['Detective control','Identifies an issue after it occurs.'],
-    ['Encryption risk','Weak key management can undermine encryption effectiveness.'],
-    ['Chain of custody','Documentation showing evidence control, handling, and integrity.']
+  { id:'public-d5-security', scope:'public', title:'Domain 5: Protection Of Information Assets Deck', domain:'D5', description:'IAM, control types, technical security, encryption, monitoring, and forensics.', cards:[
+    ['Least Privilege','Users receive only the access necessary to perform job responsibilities.'],
+    ['Need To Know','Access should be based on legitimate business need.'],
+    ['Privileged Access','High-risk access requiring approval, monitoring, review, and restriction.'],
+    ['MFA','Multi-factor authentication uses two or more authentication factors.'],
+    ['RBAC','Role-based access control assigns access based on defined job roles.'],
+    ['Preventive Control','Control designed to stop an issue before it occurs.'],
+    ['Detective Control','Control designed to identify issues after they occur.'],
+    ['Corrective Control','Control designed to fix or recover from an issue.'],
+    ['Compensating Control','Alternate control used when the preferred control is not feasible.'],
+    ['Encryption At Rest','Protection of stored data through encryption.'],
+    ['Encryption In Transit','Protection of data moving across networks.'],
+    ['Key Management','Generation, storage, rotation, and protection of cryptographic keys.'],
+    ['DLP','Data Loss Prevention controls detect or prevent unauthorized data disclosure.'],
+    ['Chain Of Custody','Documentation of evidence handling to preserve integrity.'],
+    ['SIEM','Centralized logging and correlation for security monitoring and response.']
   ]}
 ];
 
-// Original practice prompts written for study reinforcement. Do not treat these as copied ISACA QAE items.
 export const GAME_QUESTIONS = [
-  { mode:'bestFirst', domain:'D1', prompt:'An auditor sees a control weakness during fieldwork. What should happen before recommending a fix?', options:['Implement a new control','Validate evidence, cause, and impact','Tell IT to stop the process','Update the audit charter'], answer:1, explain:'The auditor should understand and support the finding before recommending corrective action.' },
-  { mode:'bestFirst', domain:'D2', prompt:'Who should approve access to sensitive business data?', options:['The help desk','The data owner','The external auditor','Any system administrator'], answer:1, explain:'The data/business owner understands business need and owns access approval.' },
-  { mode:'bestFirst', domain:'D4', prompt:'Which activity proves backups can actually support recovery?', options:['Backup job completed log','Successful restoration test','Storage capacity report','Backup vendor invoice'], answer:1, explain:'A backup is only meaningful if restoration works and meets recovery needs.' },
-  { mode:'bestFirst', domain:'D4', prompt:'A recurring system outage keeps happening. Which process targets root cause?', options:['Incident management','Problem management','Capacity billing','User provisioning'], answer:1, explain:'Incident management restores service; problem management addresses root cause.' },
-  { mode:'bestFirst', domain:'D5', prompt:'What is the strongest control for excessive user access?', options:['Generic awareness email','Owner-approved least privilege and periodic review','Longer passwords only','Weekly screenshots'], answer:1, explain:'Access should be authorized by owners, limited to need, and reviewed.' },
-  { mode:'termMatch', term:'RTO', answer:'Maximum target time to restore service after disruption' },
-  { mode:'termMatch', term:'RPO', answer:'Acceptable amount of data loss measured in time' },
+  { mode:'bestFirst', domain:'D1', prompt:'An auditor sees a potential control weakness during fieldwork. What should happen before recommending a fix?', options:['Implement a new control immediately','Validate evidence, cause, and impact','Tell IT to shut down the process','Update the audit charter'], answer:1, explain:'The auditor should support the finding before recommending corrective action.' },
+  { mode:'bestFirst', domain:'D1', prompt:'Which factor should primarily drive the audit plan?', options:['The easiest systems to test','Management preference only','Risk to business objectives','The newest technology'], answer:2, explain:'CISA expects a risk-based audit approach.' },
+  { mode:'bestFirst', domain:'D2', prompt:'Who should approve access to sensitive business data?', options:['The help desk','The data owner','The external auditor','Any system administrator'], answer:1, explain:'The data owner understands the business need and owns access approval.' },
+  { mode:'bestFirst', domain:'D2', prompt:'What is the greatest concern when outsourcing a critical IT function?', options:['Vendor branding','Loss of control without adequate oversight','Lower internal headcount','New invoice format'], answer:1, explain:'Critical outsourcing requires oversight, monitoring, contractual rights, and risk management.' },
+  { mode:'bestFirst', domain:'D3', prompt:'Who should primarily perform user acceptance testing?', options:['Business users','Database administrators only','External auditors','The help desk'], answer:0, explain:'Business users validate whether the system meets business requirements.' },
+  { mode:'bestFirst', domain:'D3', prompt:'What is the best reason for a post-implementation review?', options:['Punish the project team','Determine whether objectives and controls are achieved','Replace UAT','Skip future approvals'], answer:1, explain:'PIR evaluates benefits, lessons learned, and control effectiveness after go-live.' },
+  { mode:'bestFirst', domain:'D4', prompt:'Which activity proves backups can actually support recovery?', options:['Backup job completed log','Successful restoration test','Storage capacity report','Vendor invoice'], answer:1, explain:'A backup is only meaningful if restoration works and meets recovery needs.' },
+  { mode:'bestFirst', domain:'D4', prompt:'A recurring outage keeps happening. Which process targets root cause?', options:['Incident management','Problem management','Capacity billing','User provisioning'], answer:1, explain:'Incident management restores service; problem management addresses root cause.' },
+  { mode:'bestFirst', domain:'D5', prompt:'What is the strongest control for excessive user access?', options:['Generic awareness email','Owner-approved least privilege and periodic review','Longer passwords only','Weekly screenshots'], answer:1, explain:'Access should be authorized by owners, limited to need, and periodically reviewed.' },
+  { mode:'bestFirst', domain:'D5', prompt:'What is the greatest risk with encryption?', options:['Too many icons','Weak key management','Long passwords','A larger database'], answer:1, explain:'Poor key management can undermine otherwise strong encryption.' },
+  { mode:'termMatch', term:'RTO', answer:'Target time to restore service after disruption' },
+  { mode:'termMatch', term:'RPO', answer:'Acceptable data loss measured in time' },
   { mode:'termMatch', term:'BIA', answer:'Analysis that identifies critical processes and disruption impact' },
-  { mode:'termMatch', term:'Substantive testing', answer:'Testing evidence to detect whether an error or issue exists' },
-  { mode:'termMatch', term:'Compliance testing', answer:'Testing whether controls operate as required' },
+  { mode:'termMatch', term:'Substantive Testing', answer:'Testing evidence to determine whether an error or issue exists' },
+  { mode:'termMatch', term:'Compliance Testing', answer:'Testing whether controls operate as required' },
+  { mode:'termMatch', term:'Data Owner', answer:'Business owner accountable for classification and access approval' },
+  { mode:'termMatch', term:'Problem Management', answer:'Process focused on root cause of incidents' },
+  { mode:'termMatch', term:'UAT', answer:'Business validation that the system meets requirements' },
   { mode:'sort', item:'Access approval by data owner', bucket:'Preventive' },
   { mode:'sort', item:'Log review', bucket:'Detective' },
-  { mode:'sort', item:'Backup restoration test', bucket:'Corrective/Recovery' },
+  { mode:'sort', item:'Backup restoration test', bucket:'Corrective / Recovery' },
   { mode:'sort', item:'Segregation of duties', bucket:'Preventive' },
-  { mode:'sort', item:'Incident postmortem', bucket:'Corrective/Recovery' }
+  { mode:'sort', item:'Incident postmortem', bucket:'Corrective / Recovery' },
+  { mode:'sort', item:'Exception report review', bucket:'Detective' }
 ];
 
 export const AVATAR_ITEMS = {
@@ -127,37 +193,45 @@ export const AVATAR_ITEMS = {
     { id:'#18c29c', label:'Control Green', unlock:'Level 2', cost:80 },
     { id:'#ff9f1c', label:'Gold Evidence', unlock:'Level 3', cost:120 },
     { id:'#ff5c8a', label:'Risk Rose', unlock:'Level 4', cost:140 },
-    { id:'#0f172a', label:'Night Review', unlock:'7-day streak', cost:200 }
+    { id:'#0f172a', label:'Night Review', unlock:'7-Day Streak', cost:200 },
+    { id:'#14b8a6', label:'Teal Test Mode', unlock:'Level 6', cost:260 },
+    { id:'#a855f7', label:'Purple Audit Aura', unlock:'Level 8', cost:340 }
   ],
   cape:[
     { id:'none', label:'No Cape', unlock:'Start', cost:0 },
     { id:'blue-cape', label:'Audit Cape', unlock:'Level 2', cost:120 },
     { id:'gold-cape', label:'Gold Reviewer Cape', unlock:'Level 5', cost:300 },
-    { id:'night-cape', label:'Night Study Cape', unlock:'3-day streak', cost:180 }
+    { id:'night-cape', label:'Night Study Cape', unlock:'3-Day Streak', cost:180 },
+    { id:'emerald-cape', label:'Control Champion Cape', unlock:'Level 7', cost:420 }
   ],
   glasses:[
     { id:'round', label:'Round Reviewer Glasses', unlock:'Start', cost:0 },
-    { id:'visor', label:'Data Visor', unlock:'5 QAE logs', cost:160 },
-    { id:'stars', label:'Star Focus', unlock:'Level 5', cost:250 }
+    { id:'visor', label:'Data Visor', unlock:'5 QAE Logs', cost:160 },
+    { id:'stars', label:'Star Focus', unlock:'Level 5', cost:250 },
+    { id:'audit-shades', label:'Audit Shades', unlock:'Arcade Ace', cost:300 }
   ],
   accessory:[
     { id:'clipboard', label:'Audit Clipboard', unlock:'Start', cost:0 },
-    { id:'coffee', label:'7 AM Coffee', unlock:'3-day streak', cost:120 },
-    { id:'shield', label:'Control Shield', unlock:'10 mistakes logged', cost:220 },
-    { id:'crown', label:'Domain Crown', unlock:'Perfect week', cost:400 }
+    { id:'coffee', label:'7 AM Coffee', unlock:'3-Day Streak', cost:120 },
+    { id:'shield', label:'Control Shield', unlock:'10 Mistakes Logged', cost:220 },
+    { id:'crown', label:'Domain Crown', unlock:'Perfect Week', cost:400 },
+    { id:'rocket', label:'Review Rocket', unlock:'Level 6', cost:360 }
   ],
   mood:[
     { id:'focused', label:'Focused', unlock:'Start', cost:0 },
     { id:'happy', label:'Happy', unlock:'Start', cost:0 },
-    { id:'locked-in', label:'Locked In', unlock:'Level 3', cost:120 }
+    { id:'locked-in', label:'Locked In', unlock:'Level 3', cost:120 },
+    { id:'victory', label:'Victory', unlock:'Level 7', cost:280 }
   ]
 };
 
 export const SHOP_ITEMS = [
-  { id:'freeze', title:'Streak Freeze', type:'streakFreeze', cost:120, description:'Automatically protects one eligible missed weekday.' },
-  { id:'xp-boost-small', title:'30-Min XP Boost', type:'xpBoost', cost:180, multiplier:1.25, minutes:30, description:'Earn 25% extra XP for the next 30 minutes.' },
-  { id:'silver-chest', title:'Silver Chest', type:'chest', cost:160, chest:'silver', description:'Open for a random coin/XP reward and chance at a cosmetic.' },
-  { id:'gold-chest', title:'Gold Chest', type:'chest', cost:350, chest:'gold', description:'Bigger random reward and higher cosmetic chance.' }
+  { id:'freeze', title:'Streak Freeze', type:'streakFreeze', cost:100, icon:'freeze', description:'Automatically protects one eligible missed scheduled study day.' },
+  { id:'bronze-chest', title:'Bronze Chest', type:'chest', cost:80, chest:'bronze', icon:'chest', description:'Small random XP/coin reward.' },
+  { id:'silver-chest', title:'Silver Chest', type:'chest', cost:170, chest:'silver', icon:'chest', description:'Medium random reward with better odds.' },
+  { id:'gold-chest', title:'Gold Chest', type:'chest', cost:360, chest:'gold', icon:'chest', description:'Large random reward and best cosmetic odds.' },
+  { id:'xp-boost-small', title:'30-Minute XP Boost', type:'xpBoost', cost:150, multiplier:1.25, minutes:30, icon:'boost', description:'Earn 25% extra XP for the next 30 minutes.' },
+  { id:'xp-boost-large', title:'60-Minute XP Boost', type:'xpBoost', cost:275, multiplier:1.5, minutes:60, icon:'boost', description:'Earn 50% extra XP for the next 60 minutes.' }
 ];
 
 export const BADGES = [
@@ -172,10 +246,3 @@ export const BADGES = [
   { id:'notetaker', title:'Notebook Builder', description:'Created 10 notes.' },
   { id:'arcade_5', title:'Arcade Ace', description:'Won five arcade rounds.' }
 ];
-
-export const ICONS = {
-  quest:'<svg viewBox="0 0 64 64"><path d="M12 34c13-2 18-9 20-22 2 13 7 20 20 22-13 2-18 9-20 22-2-13-7-20-20-22Z" fill="currentColor"/></svg>',
-  chest:'<svg viewBox="0 0 64 64"><rect x="10" y="24" width="44" height="28" rx="6" fill="currentColor" opacity=".82"/><path d="M14 24c1-9 8-14 18-14s17 5 18 14" fill="none" stroke="currentColor" stroke-width="6"/><rect x="27" y="30" width="10" height="12" rx="2" fill="#fff" opacity=".9"/></svg>',
-  flame:'<svg viewBox="0 0 64 64"><path d="M34 58c12-3 19-12 19-24 0-13-9-21-15-28 1 13-6 15-12 24-1-6-4-10-8-13 0 7-7 13-7 23 0 11 10 19 23 18Z" fill="currentColor"/></svg>',
-  owl:'<svg viewBox="0 0 64 64"><circle cx="32" cy="32" r="25" fill="currentColor" opacity=".88"/><circle cx="23" cy="28" r="9" fill="#fff"/><circle cx="41" cy="28" r="9" fill="#fff"/><circle cx="23" cy="29" r="4" fill="#111"/><circle cx="41" cy="29" r="4" fill="#111"/><path d="M28 38h8l-4 7-4-7Z" fill="#ffd166"/></svg>'
-};
