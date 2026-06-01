@@ -1,34 +1,46 @@
-# ControlQuest Studio
+# ControlQuest Studio v2
 
-ControlQuest Studio is a free, GitHub Pages + Firebase web app built for Bennett and Ty's CISA prep rhythm.
+ControlQuest Studio is a Firebase-backed, GitHub Pages-friendly CISA study platform with login, private profiles, study groups, live shared sessions, adaptive roadmaps, QAE tracking, daily challenges, XP, streaks, avatar customization, calendars, mini-games, flashcards, and mistake logging.
 
-## What it includes
+## Important upgrade note
 
-- Polished gamified dashboard
-- Light and dark mode
-- Ollie the Audit Owl mascot and avatar closet
-- XP, levels, streaks, streak freezes, badges, and unlockable gear
-- Live 7-8 AM study room
-- Dynamic roadmap that recalculates around exam date and pause blocks
-- Buddy progress comparison for Bennett and Ty
-- QAE tracker, error log foundation, homework quests, and mini games
-- Calendar .ics builder for Outlook/EY calendars
-- Firebase email/password login and Firestore live sync
-- Local demo mode if Firebase is disabled
+If you already connected Firebase, keep your existing file:
 
-## Quick setup
+```txt
+config/firebase-config.js
+```
 
-1. Create a GitHub repository.
-2. Upload everything in this folder.
-3. Make sure `index.html` is in the root.
-4. Enable GitHub Pages from the repository Settings > Pages screen.
-5. Create a free Firebase project using the Spark plan.
-6. Enable Authentication > Email/Password.
-7. Enable Firestore Database.
-8. Paste your Firebase web app config into `config/firebase-config.js` and set `enabled: true`.
-9. Paste `firebase.rules` into Firestore Rules and publish.
-10. Visit the GitHub Pages URL, create accounts, and start syncing.
+When uploading this v2 package, replace the website files but preserve your real Firebase config values. The included config file is a placeholder.
 
-## Safe update rule
+## Folder structure
 
-Do not store progress in GitHub files. GitHub should store code only. Firebase stores Bennett/Ty progress separately in Firestore documents.
+```txt
+index.html
+assets/
+css/styles.css
+js/
+config/firebase-config.js
+firebase.rules
+docs/
+README.md
+```
+
+## Fast setup
+
+1. Upload the contents of this folder to your GitHub Pages repo root.
+2. Copy your real Firebase config values into `config/firebase-config.js` and set `enabled: true`.
+3. In Firebase Authentication, enable Email/Password.
+4. In Firestore, paste `firebase.rules` into the Rules tab and publish.
+5. Open the GitHub Pages URL.
+6. Log in or create an account.
+7. Create a study group or join one by group ID + invite code.
+
+## Data model
+
+- `/users/{uid}` stores private user data: exam date, roadmap, QAE logs, mistakes, flashcards, avatar, streak, XP, preferences.
+- `/groups/{groupId}` stores group-level data: member summaries, invite code, live session, shared schedule, shared calendar.
+- `/deletedProfiles/{uid}/backups/{backupId}` stores a backup before a profile is deleted.
+
+## No npm required
+
+This is a static HTML/CSS/JavaScript app. Firebase is loaded through browser module imports from Google CDN. Do not run `npm install firebase` unless you decide to convert the project to a build-tool app later.

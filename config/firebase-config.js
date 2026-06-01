@@ -1,5 +1,5 @@
-// Copy your Firebase web app config here after creating the free Firebase project.
-// Leave enabled: false while testing locally. The app will still work in local demo mode.
+// Paste your Firebase web app config here.
+// Keep this file when upgrading the rest of the site so you do not disconnect Firebase.
 export const firebaseConfig = {
   enabled: true,
   apiKey: "AIzaSyCRAC_UP6SP1pM8QjgurD6emk50d6YHC1I",

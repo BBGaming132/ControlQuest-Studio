@@ -1,43 +1,67 @@
-# ControlQuest Firestore Schema
+# Firestore Schema
 
-The GitHub repository stores only the website code. Study progress is stored in Firebase so updating the site code does not overwrite study data.
+## users/{uid}
+Private to the signed-in user.
 
-## Collections
+```js
+{
+  uid,
+  email,
+  displayName,
+  activeGroupId,
+  groups: [],
+  avatar: { baseColor, cape, glasses, accessory, mood },
+  studyPlan: {
+    examDate,
+    startDate,
+    dailyQaeGoal,
+    sessionTime,
+    sessionDuration,
+    sessionDays,
+    pauseBlocks: []
+  },
+  progress: {
+    roadmapStatus: {},
+    dailyChallenges: {},
+    qaeLogs: [],
+    mistakes: [],
+    flashcards: [],
+    homework: [],
+    calendarEvents: []
+  },
+  stats: { xp, streak, bestStreak, streakFreezes, totalSessions, totalQae, totalMistakes, totalFlashcards, arcadeWins },
+  badges: [],
+  preferences: { theme, timezone, tutorialSeen },
+  onboarding: { completed, step }
+}
+```
 
-- `guilds/{guildId}`
-  - `guildName`
-  - `guildId`
-  - `memberEmails`
-  - `updatedAt`
+## groups/{groupId}
+Readable to signed-in users so invite-code joining can work without a server. Do not store sensitive private notes here.
 
-- `guilds/{guildId}/members/{uid}`
-  - `uid`
-  - `email`
-  - `displayName`
-  - `profile`
-    - `xp`
-    - `streak`
-    - `streakFreezes`
-    - `avatar`
-    - `stats`
-    - `badges`
-    - `studyDates`
-    - `excusedDates`
-  - `updatedAt`
+```js
+{
+  id,
+  name,
+  joinCode,
+  createdBy,
+  memberIds: { uid: true },
+  memberSummaries: {
+    uid: { displayName, email, avatar, xp, level, streak, progressPercent, behindDays, totalQae, totalMistakes, lastActive }
+  },
+  schedule: { days, time, duration, label },
+  liveSession: { date, title, active, startedAt, accumulatedSeconds, durationMinutes, checklist, checkins, notes },
+  sharedCalendar: []
+}
+```
 
-- `guilds/{guildId}/shared/appState`
-  - `settings`
-  - `sessions`
-  - `qaeLogs`
-  - `errors`
-  - `flashcards`
-  - `homework`
-  - `pauseBlocks`
-  - `roadmapStatus`
-  - `checkins`
-  - `liveNotes`
-  - `updatedAt`
+## deletedProfiles/{uid}/backups/{backupId}
+Created before profile deletion.
 
-## Update safety
-
-Code updates happen in GitHub. Study data remains in Firestore. Before a big site update, export a JSON backup from Settings & Sync.
+```js
+{
+  profile: { ...full user profile at deletion time },
+  archivedAt,
+  reason
+}
+```

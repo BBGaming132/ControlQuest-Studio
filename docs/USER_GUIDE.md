@@ -1,62 +1,129 @@
-# ControlQuest Studio User Guide
+# ControlQuest Studio v2 User Guide
 
-## Brand
+## 1. Log in or create an account
 
-Recommended site name: ControlQuest Studio.
+The site now starts with a full login page. Use Email/Password login through Firebase Authentication. If someone else wants to use the site, they can create their own account from the login page.
 
-Team/guild name: Ty & Comply Guild.
+## 2. Create or join a study group
 
-Mascot: Ollie the Audit Owl.
+Open **Study Guild**.
 
-Tagline: Master the audit mindset one quest at a time.
+To create a group:
+1. Enter a group name.
+2. Click **Create group**.
+3. Share the group ID and invite code with your study buddy.
 
-## Core loop
+To join a group:
+1. Enter the group ID.
+2. Enter the invite code.
+3. Click **Join group**.
 
-Every weekday morning, use the Live Study Room from 7:00-8:00 AM:
+Your private profile data remains private. Group members see only high-level summaries: level, streak, roadmap percent, QAE total, and behind-days.
 
-1. Check in.
-2. Run the timer.
-3. Complete the six-part session checklist.
-4. Watch/listen to the topic.
-5. Draw the concept.
-6. Answer QAE questions.
-7. Log the lesson learned.
-8. Assign after-session homework.
+## 3. Use the Command Center
 
-## Gamification
+The dashboard shows:
+- Today’s roadmap topic
+- Personal exam countdown
+- Personal roadmap progress
+- Streak and streak freezes
+- Three daily challenges
+- Catch-up suggestions
+- Study group pulse
 
-ControlQuest awards XP for helpful study actions:
+Daily challenges are separate from meetings. You can earn XP by doing QAE practice, teach-backs, Mistake Forge entries, visual maps, flashcards, accountability pings, or arcade rounds.
 
-- Session completion: 100 XP
-- Weekend bonus session: 120 XP
-- QAE practice: 4 XP per question plus a bonus for strong scores
-- Mini game correct answer: 35 XP
-- Mini game attempt: 8 XP
-- Homework quest: 35-90 XP
-- Daily quest: varies by task
-- Check-in: 15 XP
+## 4. Run a live study session
 
-Levels are calculated from XP. Avatar gear unlocks as XP and streaks increase.
+Open **Live Study Room** after joining a study group.
 
-## Streaks and streak freezes
+The live room syncs:
+- Timer start/pause/reset
+- Group check-ins
+- Session checklist
+- Shared notes
+- Completion status
 
-Streaks count completed weekday sessions. Weekends do not break the streak. Pause blocks and excused dates do not break the streak. Streak freezes can protect a missed weekday.
+The timer and checklist update through Firestore, so both screens stay aligned.
 
-## Adaptive roadmap
+## 5. Adjust your personal roadmap
 
-The roadmap is generated from the start date, exam date, weekday study schedule, pause blocks, and CISA domain weighting. If you push the exam back, the roadmap automatically creates more active study days and redistributes topics.
+Open **Roadmap**.
 
-## Buddy Guild
+Your exam date is personal. Changing it only updates your profile, not your study buddy’s. The roadmap recalculates around:
+- Start date
+- Exam date
+- QAE goal
+- Session duration
+- Pause blocks
+- Missed days
 
-The Buddy Guild compares Bennett and Ty by XP, streak, QAE volume, and accuracy. If one person falls behind, generate a catch-up quest rather than treating the gap as failure.
+Each roadmap day has its own topic, tasks, and session plan. Mark days **Done** or **Missed**. If you fall behind, the dashboard suggests catch-up quests.
 
-## Firebase sync
+## 6. Use the Calendar Builder
 
-Each person creates a Firebase Auth account. Progress is stored in Firestore:
+Open **Calendar**.
 
-- Individual user profile: `guilds/{guildId}/members/{uid}`
-- Shared study data: `guilds/{guildId}/shared/appState`
+You can create:
+- Personal recurring study blocks
+- Group recurring study sessions
+- One-off extra study sessions
 
-## Calendar Builder
+The site downloads `.ics` calendar files that can be imported into Outlook.
 
-The Calendar Builder creates Outlook-friendly .ics files. Download the weekday recurring file, open it in Outlook, review, and send it to Bennett and Ty.
+## 7. Track QAE progress
+
+Open **QAE Arena**.
+
+Log:
+- Domain
+- Correct answers
+- Total questions
+- Notes/trap
+
+The site tracks domain accuracy and awards XP.
+
+## 8. Use Mistake Forge
+
+Open **Mistake Forge**.
+
+Each wrong or guessed question should become a lesson:
+- Domain
+- Trap
+- Correct CISA logic
+- Retest date
+
+This is how you stop repeating the same mistakes.
+
+## 9. Build flashcards
+
+Open **Memory Deck**.
+
+Create cards and export them as a Quizlet TSV file.
+
+## 10. Play Arcade games
+
+Open **Arcade**.
+
+Mini-games reinforce CISA answer logic and terminology. Correct answers award XP.
+
+## 11. Customize your avatar
+
+Open **Avatar Closet**.
+
+Change colors and unlock gear based on:
+- XP level
+- Streak length
+- QAE logs
+- Mistake Forge progress
+- Perfect weeks
+
+## 12. Delete profile safely
+
+Open **Profile + Settings**.
+
+The delete flow requires multiple confirmations. Before deletion, the site writes a backup to:
+
+`deletedProfiles/{uid}/backups/{timestamp}`
+
+You can optionally delete your Firebase Auth account too, but Firebase requires recent reauthentication for security-sensitive actions.
