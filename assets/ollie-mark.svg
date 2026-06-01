@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 160 160" role="img" aria-label="Ollie the Audit Owl mark">
+  <defs><linearGradient id="g" x1="20" x2="140" y1="10" y2="150" gradientUnits="userSpaceOnUse"><stop stop-color="#73E0FF"/><stop offset="0.55" stop-color="#9D7CFF"/><stop offset="1" stop-color="#FFE66D"/></linearGradient></defs>
+  <circle cx="80" cy="80" r="72" fill="url(#g)"/>
+  <path d="M42 70c0-25 17-46 38-46s38 21 38 46v28c0 24-17 39-38 39s-38-15-38-39V70Z" fill="#11213A"/>
+  <path d="M48 55 31 34l33 6M112 55l17-21-33 6" fill="#11213A" stroke="#11213A" stroke-width="6" stroke-linejoin="round"/>
+  <circle cx="63" cy="76" r="17" fill="#F8FBFF"/><circle cx="97" cy="76" r="17" fill="#F8FBFF"/>
+  <circle cx="65" cy="78" r="7" fill="#12213A"/><circle cx="95" cy="78" r="7" fill="#12213A"/>
+  <path d="M80 88 68 104h24L80 88Z" fill="#FFE66D"/>
+  <path d="M58 120c14 10 30 10 44 0" stroke="#73E0FF" stroke-width="8" stroke-linecap="round" fill="none"/>
+</svg>

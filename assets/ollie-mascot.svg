@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 420 420" role="img" aria-label="Ollie the Audit Owl mascot">
+  <defs>
+    <linearGradient id="body" x1="93" x2="330" y1="51" y2="360" gradientUnits="userSpaceOnUse"><stop stop-color="#73E0FF"/><stop offset=".54" stop-color="#9D7CFF"/><stop offset="1" stop-color="#5A3FD8"/></linearGradient>
+    <linearGradient id="belly" x1="132" x2="282" y1="176" y2="340" gradientUnits="userSpaceOnUse"><stop stop-color="#F8FBFF"/><stop offset="1" stop-color="#DDE8FF"/></linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="150%"><feDropShadow dx="0" dy="18" stdDeviation="12" flood-opacity=".28"/></filter>
+  </defs>
+  <ellipse cx="210" cy="382" rx="118" ry="20" fill="#000" opacity=".18"/>
+  <g filter="url(#shadow)">
+    <path d="M108 168c0-74 45-124 102-124s102 50 102 124v83c0 67-45 113-102 113s-102-46-102-113v-83Z" fill="url(#body)"/>
+    <path d="m122 112-54-68 98 28M298 112l54-68-98 28" fill="url(#body)" stroke="#5A3FD8" stroke-width="8" stroke-linejoin="round"/>
+    <ellipse cx="210" cy="249" rx="68" ry="82" fill="url(#belly)" opacity=".96"/>
+    <circle cx="170" cy="161" r="43" fill="#F8FBFF"/><circle cx="250" cy="161" r="43" fill="#F8FBFF"/>
+    <circle cx="174" cy="165" r="15" fill="#10213D"/><circle cx="246" cy="165" r="15" fill="#10213D"/>
+    <circle cx="180" cy="157" r="5" fill="#fff"/><circle cx="252" cy="157" r="5" fill="#fff"/>
+    <path d="M210 181 184 219h52l-26-38Z" fill="#FFE66D" stroke="#FFBD2F" stroke-width="4" stroke-linejoin="round"/>
+    <path d="M158 300c31 28 73 28 104 0" fill="none" stroke="#73E0FF" stroke-width="12" stroke-linecap="round"/>
+    <path d="M122 241c-35 10-56 32-62 67" stroke="#73E0FF" stroke-width="22" stroke-linecap="round" fill="none"/>
+    <path d="M298 241c35 10 56 32 62 67" stroke="#9D7CFF" stroke-width="22" stroke-linecap="round" fill="none"/>
+    <rect x="255" y="264" width="70" height="88" rx="12" fill="#10213D"/>
+    <rect x="268" y="280" width="44" height="8" rx="4" fill="#73E0FF"/><rect x="268" y="300" width="34" height="8" rx="4" fill="#FFE66D"/><rect x="268" y="320" width="44" height="8" rx="4" fill="#9D7CFF"/>
+    <path d="M162 364h34M224 364h34" stroke="#FFE66D" stroke-width="14" stroke-linecap="round"/>
+  </g>
+</svg>

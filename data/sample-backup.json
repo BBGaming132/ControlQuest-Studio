@@ -1,0 +1,15 @@
+{
+  "currentPerson": "Bennett",
+  "settings": {
+    "appName": "ControlQuest Studio",
+    "guildName": "Ty & Comply Guild",
+    "guildId": "ty-comply",
+    "theme": "dark",
+    "startDate": "2026-06-01",
+    "examDate": "2026-09-18",
+    "sessionTime": "07:00",
+    "dailyQaeGoal": 15,
+    "bennettEmail": "bennett.j.kawas@ey.com",
+    "tyEmail": "ty.reeves@ey.com"
+  }
+}
