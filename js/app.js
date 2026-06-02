@@ -246,6 +246,17 @@ function renderCommand(){
     </div>
   </div>`;
 }
+function todayPlanDay(){
+  try {
+    const weeks = buildRoadmap();
+    const days = weeks.flatMap(w => w.days || []).filter(d => d && Array.isArray(d.tasks) && d.tasks.length && d.status !== 'Paused');
+    const today = localDateForProfile();
+    return days.find(d => d.iso === today) || days.find(d => d.iso >= today && !dayComplete(d)) || days.find(d => !dayComplete(d)) || days[0] || null;
+  } catch (error) {
+    console.warn('Unable to resolve today plan day', error);
+    return null;
+  }
+}
 function missionTitle(){ const d=todayPlanDay(); return d?.topic ? `Lock In: ${d.topic}` : 'Start Strong Today'; }
 function missionCopy(){ return 'Use the Study Room for your live session, then finish Daily Quests and Homework to keep progress honest without faking it.'; }
 function dailyMotivation(){ const opts=['Small wins compound.','Think like an auditor.','Evidence beats vibes.','Risk drives the plan.','Control the moment.']; return opts[new Date().getDate()%opts.length]; }

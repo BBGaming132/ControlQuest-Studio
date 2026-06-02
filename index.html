@@ -30,8 +30,12 @@
         '<p>' + body + '</p>' +
         '<div style="display:flex;gap:10px;justify-content:center;flex-wrap:wrap;margin-top:16px">' +
         '<button onclick="location.reload()" style="border:0;border-radius:14px;padding:10px 14px;background:#7c4dff;color:white;font-weight:800;cursor:pointer">Reload Site</button>' +
-        '<button onclick="alert('Open DevTools with F12 or Right Click → Inspect → Console. Copy any red error text.')" style="border:1px solid rgba(255,255,255,.22);border-radius:14px;padding:10px 14px;background:rgba(255,255,255,.08);color:white;font-weight:800;cursor:pointer">How To Check Console</button>' +
+        '<button id="cqConsoleHelpBtn" type="button" style="border:1px solid rgba(255,255,255,.22);border-radius:14px;padding:10px 14px;background:rgba(255,255,255,.08);color:white;font-weight:800;cursor:pointer">How To Check Console</button>' +
         '</div>';
+      var helpBtn = document.getElementById('cqConsoleHelpBtn');
+      if (helpBtn) {
+        helpBtn.onclick = function(){ alert('Open DevTools with F12 or Right Click → Inspect → Console. Copy any red error text.'); };
+      }
     }
     window.addEventListener('error', function(e){
       cqBootMessage('ControlQuest Hit A Loading Error', (e && e.message ? e.message : 'A script failed before the app could load.') + ' Check that js/app.js, js/firebase-service.js, css/styles.css, and config/firebase-config.js are all uploaded.');
