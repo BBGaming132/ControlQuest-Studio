@@ -154,9 +154,9 @@ function renderAuth(){
       </div>
     </div>`;
   $$('[data-auth-tab]').forEach(b=>b.onclick=()=>{state.activeAuthTab=b.dataset.authTab;renderAuth();});
-  $('#loginForm')?.addEventListener('submit',async e=>{e.preventDefault();try{await signIn($('#loginEmail').value.trim(),$('#loginPassword').value);}catch(err){toast(friendly(err),'error');}});
-  $('#createForm')?.addEventListener('submit',async e=>{e.preventDefault();try{await createAccount($('#createEmail').value.trim(),$('#createPassword').value);}catch(err){toast(friendly(err),'error');}});
-  $('#resetPasswordBtn')?.addEventListener('click',async()=>{const email=$('#loginEmail').value.trim(); if(!email)return toast('Enter your email first.','error'); try{await sendReset(email);toast('Password reset email sent.');}catch(err){toast(friendly(err),'error');}});
+  $('#loginForm')?.addEventListener('submit',async e=>{e.preventDefault(); if(!state.firebase?.enabled){return toast('Firebase is disabled. Your config/firebase-config.js file was likely overwritten. Restore your real Firebase config and set enabled: true.','error');} try{await signIn($('#loginEmail').value.trim(),$('#loginPassword').value);}catch(err){toast(friendly(err),'error');}});
+  $('#createForm')?.addEventListener('submit',async e=>{e.preventDefault(); if(!state.firebase?.enabled){return toast('Firebase is disabled. Your config/firebase-config.js file was likely overwritten. Restore your real Firebase config and set enabled: true.','error');} try{await createAccount($('#createEmail').value.trim(),$('#createPassword').value);}catch(err){toast(friendly(err),'error');}});
+  $('#resetPasswordBtn')?.addEventListener('click',async()=>{const email=$('#loginEmail').value.trim(); if(!email)return toast('Enter your email first.','error'); if(!state.firebase?.enabled){return toast('Firebase is disabled. Restore config/firebase-config.js before using password reset.','error');} try{await sendReset(email);toast('Password reset email sent.');}catch(err){toast(friendly(err),'error');}});
 }
 
 function renderApp(){
@@ -217,7 +217,7 @@ function renderView(){
 }
 
 function renderCommand(){
-  const lvl=levelInfo(), pct=Math.round(lvl.progress*100), recent=(state.profile.activity||[]).slice(0,5);
+  const lvl=levelInfo(), pct=Math.round(lvl.progress*100), recent=(state.profile.activity||[]).slice(0,5), daily=dailyQuestCount();
   return `<div class="dashboard-grid">
     <div class="panel hero span-8" data-tour="hero">
       <div><p class="eyebrow">Today’s Mission</p><h2>${missionTitle()}</h2><p>${missionCopy()}</p><div class="hero-actions"><button class="primary-button" data-go="room">Open Study Room</button><button class="secondary-button" data-go="plan">View Study Plan</button><button class="ghost-button" data-url="${RESOURCE_LINKS.qae}">Open ISACA QAE</button></div></div>
