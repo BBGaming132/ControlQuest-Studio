@@ -3,29 +3,21 @@ service cloud.firestore {
   match /databases/{database}/documents {
     function signedIn() { return request.auth != null; }
     function isSelf(uid) { return signedIn() && request.auth.uid == uid; }
-    function isGroupMember(groupId) {
-      return signedIn() && exists(/databases/$(database)/documents/groups/$(groupId)) &&
-        get(/databases/$(database)/documents/groups/$(groupId)).data.memberIds[request.auth.uid] == true;
-    }
 
     match /users/{uid} {
       allow read, create, update, delete: if isSelf(uid);
     }
 
-    match /deletedProfiles/{uid}/backups/{backupId} {
-      allow read, create: if isSelf(uid);
+    match /groups/{groupId} {
+      allow read: if signedIn();
+      allow create: if signedIn();
+      allow update: if signedIn();
+      allow delete: if signedIn() && request.resource.data.ownerUid == request.auth.uid;
     }
 
-    match /groups/{groupId} {
-      allow create: if signedIn();
-      // For a small study app, group metadata can be read by signed-in users so invite codes can work without a server.
-      // Do not store sensitive user notes in group documents; keep private study data in /users/{uid}.
-      allow read: if signedIn();
-      allow update: if signedIn() && (
-        resource.data.memberIds[request.auth.uid] == true ||
-        request.resource.data.memberIds[request.auth.uid] == true
-      );
-      allow delete: if signedIn() && resource.data.createdBy == request.auth.uid;
+    match /deletedProfiles/{uid}/backups/{backupId} {
+      allow read, create: if isSelf(uid);
+      allow update, delete: if false;
     }
   }
 }

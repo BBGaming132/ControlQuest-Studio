@@ -1,33 +1,30 @@
-# ControlQuest Studio v2.3
+# ControlQuest Studio v2.4
 
-A streamlined, Firebase-backed CISA study platform with multi-user study guilds, live study rooms, adaptive roadmap, practice logging, flashcards, arcade games, rewards, avatar customization, notes, and calendar planning.
+ControlQuest Studio is a Firebase-backed CISA study companion for individuals and study groups. It is designed to supplement ISACA QAE and study materials instead of replacing them.
 
 ## Upgrade Notes
 
-1. Back up your current GitHub repo.
-2. Copy the v2.3 files into your repo.
-3. Preserve your working `config/firebase-config.js` file.
-4. Publish the updated Firebase rules if your current rules are older than v2.
-5. Hard refresh your GitHub Pages site.
+1. Copy the contents of this folder to your GitHub Pages repository.
+2. Preserve your working `config/firebase-config.js` if you already connected Firebase.
+3. Replace your Firestore rules with `firebase.rules` if you are upgrading from an older version.
+4. Hard refresh the site after deployment.
 
-Do not overwrite your working Firebase config unless you are intentionally replacing your Firebase project values.
+## Important Integrations
 
-## Main UX Changes In v2.3
+- Google Calendar direct event creation requires an OAuth Web Client ID in `config/firebase-config.js` and the Google Calendar API enabled.
+- Apple Calendar/iCalendar support is handled through `.ics` downloads/imports in this browser-only version.
+- Goodnotes is linked through a Goodnotes Web share link.
+- Quizlet is linked and tracked; the site does not depend on a Quizlet API.
 
-- Streamlined navigation from many tabs into ten clearer areas.
-- Command Center now emphasizes Daily Quests, XP, Coins, recent activity, Group Pulse, and Catch-Up Compass.
-- Help button now shows a page-specific guided tour.
-- Onboarding now collects theme, timezone, exam date, start date, session time, session length, and QAE goal.
-- Study Room has a live animated timer, persistent synced checklist, shared notes, homework builder, and session history.
-- Study Plan now uses Sunday-Saturday weeks, week date ranges, styled pause block modal, visible pause blocks, bonus sessions, and expandable day details.
-- Practice Log combines QAE Arena and Mistake Forge with validation, editing, deleting, and trend charts.
-- Study Tools combines Memory Deck and Arcade with public starter decks, personal/guild deck creation, in-app card review, TSV export, Memory Match, Control Sorter, Best/First Blitz, and Avatar Sprint.
-- Calendar now has clickable month view events, event editing/deleting, personal/guild/both scopes, ICS downloads, and lesson-plan generation.
-- Rewards now combines XP activity, Audit Coins, Quest Shop, chests, level popups, confetti, and Avatar Closet.
-- Notebook supports Personal, Guild, and Public scopes, editing, deleting, and markdown/Word-compatible exports.
-- Profile adds reset testing stats with backup, onboarding redo, full tour, timezone support, and safer delete flow.
+## Core Tabs
 
-## Data Safety
-
-GitHub stores only website code. Firebase stores user and guild data. Replacing website files will not overwrite Firestore data unless you change database rules or manually delete data.
-
+- Command Center: daily overview, KPIs, Daily Quests, Guild snapshot, Catch-Up Compass.
+- Study Room: synced session timer, linked session flow, homework builder, Guild notes.
+- Study Plan: adaptive roadmap with pause blocks, bonus sessions, and daily tasks.
+- Practice Log: QAE result logging, trend chart, Mistake Review.
+- Study Tools: ISACA/Quizlet/Goodnotes links, Quizlet practice tracker, Arcade games.
+- Guild: members, metrics, invite code, shared events.
+- Calendar: month calendar, event creation/editing, ICS export, optional Google Calendar connection.
+- Notebook: personal/guild/public notes and exports.
+- Rewards: XP, Audit Coins, chests, boosts, shop, avatar closet.
+- Profile: preferences, timezone, onboarding, links, reset/delete tools.
