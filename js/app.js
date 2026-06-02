@@ -44,22 +44,41 @@ const NAV = [
 init();
 
 async function init(){
-  state.firebase = await initFirebase();
-  onAuth(async user => {
-    state.user = user;
-    if (!user) { state.profile = null; state.group = null; renderAuth(); return; }
-    let profile = await loadProfile(user.uid);
-    if (!profile) profile = defaultProfile(user);
-    profile = migrateProfile(profile, user);
-    state.profile = profile;
-    applyTheme();
-    await saveProfileDebounced(true);
-    if (profile.activeGroupId) await loadActiveGroup(profile.activeGroupId);
-    startClock();
-    renderApp();
-    if (!profile.preferences?.onboardingComplete) setTimeout(()=>showOnboarding(), 500);
-    else if (!profile.preferences?.pageTours?.command) setTimeout(()=>startTour('command', true), 500);
-  });
+  try {
+    state.firebase = await withTimeout(initFirebase(), 8000, { enabled:false, reason:'Firebase startup timed out. Check network access to gstatic.com or Firebase config.' });
+    onAuth(async user => {
+      try {
+        state.user = user;
+        if (!user) { state.profile = null; state.group = null; renderAuth(); return; }
+        let profile = await loadProfile(user.uid);
+        if (!profile) profile = defaultProfile(user);
+        profile = migrateProfile(profile, user);
+        state.profile = profile;
+        applyTheme();
+        await saveProfileDebounced(true);
+        if (profile.activeGroupId) await loadActiveGroup(profile.activeGroupId);
+        startClock();
+        renderApp();
+        if (!profile.preferences?.onboardingComplete) setTimeout(()=>showOnboarding(), 500);
+        else if (!profile.preferences?.pageTours?.command) setTimeout(()=>startTour('command', true), 500);
+      } catch (error) {
+        console.error('ControlQuest Auth/Profile Startup Failed', error);
+        renderBootFallback('Profile Startup Failed', friendly(error));
+      }
+    });
+  } catch (error) {
+    console.error('ControlQuest Startup Failed', error);
+    renderBootFallback('ControlQuest Startup Failed', friendly(error));
+  }
+}
+
+function withTimeout(promise, ms, fallback){
+  return Promise.race([promise, new Promise(resolve => setTimeout(() => resolve(fallback), ms))]);
+}
+
+function renderBootFallback(title, message){
+  app.className = 'auth-shell';
+  app.innerHTML = `<div class="auth-card"><div class="auth-visual"><img src="assets/icons/logo-mark.svg" alt="ControlQuest Studio Logo" style="width:92px;height:92px;border-radius:26px"><p class="eyebrow">Startup Diagnostic</p><h1>${esc(title)}</h1><p>${esc(message || 'The app could not finish loading.')}</p></div><div class="auth-form"><h2>What To Check</h2><p class="helper">Open DevTools → Console and look for the first red error. Also confirm these URLs work on your GitHub Pages site: <code>/js/app.js</code>, <code>/js/firebase-service.js</code>, <code>/config/firebase-config.js</code>, and <code>/css/styles.css</code>.</p><button class="primary-button" onclick="location.reload()">Reload Site</button></div></div>`;
 }
 
 function defaultProfile(user){
@@ -119,7 +138,7 @@ function renderAuth(){
       </div>
       <div class="auth-form">
         <div class="auth-tabs"><button class="${state.activeAuthTab==='login'?'active':''}" data-auth-tab="login">Log In</button><button class="${state.activeAuthTab==='create'?'active':''}" data-auth-tab="create">Create Account</button></div>
-        ${!state.firebase.enabled ? `<div class="soft"><strong>Firebase Is Not Enabled.</strong><p class="helper">Paste your Firebase values into <code>config/firebase-config.js</code> and set <code>enabled: true</code>.</p></div>` : ''}
+        ${!state.firebase.enabled ? `<div class="soft"><strong>Firebase Is Not Connected.</strong><p class="helper">${esc(state.firebase.reason || 'Paste your Firebase values into config/firebase-config.js and set enabled: true.')}</p></div>` : ''}
         <form id="loginForm" class="auth-panel ${state.activeAuthTab==='login'?'active':''}">
           <h2>Welcome Back</h2><p class="helper">Log in with your Firebase Authentication email and password.</p>
           <label><span>Email</span><input type="email" id="loginEmail" autocomplete="email" required></label>
