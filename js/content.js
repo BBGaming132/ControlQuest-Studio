@@ -3,8 +3,8 @@ export const RESOURCE_LINKS = {
   youtubePlaylist: "https://youtube.com/playlist?list=PL7XJSuT7Dq_UvA2knww9Rlzz2JHUpeOAb&si=24LkSCqxPR3-Qixd",
   isacaCisa: "https://www.isaca.org/credentialing/cisa",
   isacaOutline: "docs/CISA_Exam_Outline_ControlQuest.docx",
-  quizlet: "https://quizlet.com/",
-  goodnotes: "https://web.goodnotes.com/"
+  udemy: "",
+  cisaResources: "https://www.isaca.org/resources/isaca-journal/issues"
 };
 
 export const TIMEZONES = (typeof Intl !== 'undefined' && Intl.supportedValuesOf)
@@ -83,19 +83,19 @@ export const DECISION_PROMPTS = [
 
 export const HOMEWORK_SUGGESTIONS = [
   {id:'qae10',title:'Log 10 QAE Questions',details:'Complete a focused 10-question QAE set and log the score in Practice Log.',xp:35,coins:14,type:'Practice',links:[{label:'Open ISACA Learning/QAE',url:RESOURCE_LINKS.qae},{label:'Open Practice Log',go:'practice'}]},
-  {id:'watch20',title:'Watch 20 Minutes Of Video',details:'Use the selected Udemy/YouTube/ISACA module and write 3 takeaways.',xp:28,coins:10,type:'Video',links:[{label:'Open YouTube Playlist',url:RESOURCE_LINKS.youtubePlaylist},{label:'Open Notebook',go:'notebook'}]},
-  {id:'mistake3',title:'Forge 3 Mistakes',details:'Take three missed questions and convert them into audit rules in Mistake Review.',xp:30,coins:12,type:'Review',links:[{label:'Open Practice Log',go:'practice'}]},
+  {id:'udemy20',title:'Watch 20 Minutes Of Udemy',details:'Use the Udemy CISA course and write 3 exam-useful takeaways.',xp:28,coins:10,type:'Udemy',links:[{label:'Open Udemy Link',url:RESOURCE_LINKS.udemy},{label:'Open Notebook',go:'notebook'}]},
+  {id:'missed3',title:'Review 3 Missed Questions',details:'Take three missed QAE concepts and write the reusable CISA answer logic.',xp:30,coins:12,type:'Review',links:[{label:'Open Practice Log',go:'practice'},{label:'Open Study Tools',go:'tools'}]},
   {id:'voice2',title:'Record A 2-Minute Voice Memo',details:'Explain today’s concept like you are teaching a new staff. Summarize the CISA answer logic.',xp:20,coins:8,type:'Audio',links:[{label:'Open Notebook',go:'notebook'}]},
-  {id:'flash15',title:'Quizlet 15-Minute Drill',details:'Study a Quizlet deck and log your score/comfort level in Study Tools.',xp:25,coins:10,type:'Flashcards',links:[{label:'Open Quizlet',url:RESOURCE_LINKS.quizlet},{label:'Open Study Tools',go:'tools'}]},
+  {id:'flash15',title:'15-Minute Flashcard Drill',details:'Use ControlQuest flashcards built from notes and missed questions.',xp:25,coins:10,type:'Flashcards',links:[{label:'Open Study Tools',go:'tools'}]},
   {id:'map1',title:'Draw One Visual Map',details:'Create a simple flowchart or diagram for today’s topic and save a note about it.',xp:26,coins:10,type:'Visual',links:[{label:'Open Notebook',go:'notebook'}]},
-  {id:'arcade',title:'Play One Arcade Round',details:'Use Arcade mode to test audit judgment in a low-pressure game.',xp:22,coins:9,type:'Game',links:[{label:'Open Study Tools',go:'tools'}]},
+  {id:'arcade',title:'Play One Review Game',details:'Use Arcade mode to drill missed-question concepts and audit judgment.',xp:22,coins:9,type:'Game',links:[{label:'Open Study Tools',go:'tools'}]},
   {id:'teachback',title:'Teach-Back To Your Guild',details:'Write a concise teach-back note for the group explaining one concept and one trap.',xp:32,coins:13,type:'Guild',links:[{label:'Open Guild',go:'guild'},{label:'Open Notebook',go:'notebook'}]}
 ];
 
 export const DAILY_QUEST_TEMPLATES = [
   {id:'daily-qae',title:'QAE Warm-Up',details:'Log at least 10 QAE questions or a focused practice block.',xp:30,coins:12,icon:'qae'},
   {id:'daily-learn',title:'Learn One Concept',details:'Complete one roadmap lesson or watch at least 15 minutes of lesson content.',xp:25,coins:10,icon:'roadmap'},
-  {id:'daily-review',title:'Review And Retain',details:'Complete a mistake review, Quizlet review, or notebook teach-back.',xp:25,coins:10,icon:'notebook'}
+  {id:'daily-review',title:'Review And Retain',details:'Review missed questions, build flashcards, or complete one Arcade review round.',xp:25,coins:10,icon:'notebook'}
 ];
 
 export const SHOP_ITEMS = [
@@ -113,6 +113,8 @@ export const AVATAR_ITEMS = [
   {id:'base-green',type:'baseColor',title:'Control Green',value:'#18c29c',cost:70,unlockLevel:3},
   {id:'base-gold',type:'baseColor',title:'Gold Standard',value:'#ffb347',cost:150,unlockLevel:5},
   {id:'base-rose',type:'baseColor',title:'Risk Rose',value:'#ff7ad9',cost:170,unlockLevel:6},
+  {id:'base-navy',type:'baseColor',title:'Navy Night',value:'#1d3557',cost:190,unlockLevel:5},
+  {id:'base-mint',type:'baseColor',title:'Mint Control',value:'#77f7d2',cost:190,unlockLevel:5},
   {id:'eyes-normal',type:'eyes',title:'Bright Eyes',value:'normal',cost:0,unlockLevel:1},
   {id:'eyes-star',type:'eyes',title:'Star Eyes',value:'star',cost:90,unlockLevel:4},
   {id:'eyes-focus',type:'eyes',title:'Focus Eyes',value:'focus',cost:80,unlockLevel:3},
@@ -122,12 +124,16 @@ export const AVATAR_ITEMS = [
   {id:'cape-none',type:'cape',title:'No Cape',value:'none',cost:0,unlockLevel:1},
   {id:'cape-blue',type:'cape',title:'Blue Audit Cape',value:'blue',cost:120,unlockLevel:3},
   {id:'cape-gold',type:'cape',title:'Gold Assurance Cape',value:'gold',cost:220,unlockLevel:6},
+  {id:'cape-emerald',type:'cape',title:'Emerald Evidence Cape',value:'emerald',cost:190,unlockLevel:5},
+  {id:'cape-night',type:'cape',title:'Night Shift Cape',value:'night',cost:210,unlockLevel:6},
   {id:'hat-none',type:'hat',title:'No Hat',value:'none',cost:0,unlockLevel:1},
   {id:'hat-grad',type:'hat',title:'Graduate Cap',value:'grad',cost:140,unlockLevel:5},
   {id:'hat-crown',type:'hat',title:'Control Crown',value:'crown',cost:250,unlockLevel:8},
+  {id:'hat-headset',type:'hat',title:'Study Headset',value:'headset',cost:175,unlockLevel:4},
   {id:'badge-none',type:'badge',title:'No Badge',value:'none',cost:0,unlockLevel:1},
   {id:'badge-cisa',type:'badge',title:'CISA Trainee Badge',value:'cisa',cost:110,unlockLevel:4},
-  {id:'badge-fire',type:'badge',title:'Streak Flame Badge',value:'fire',cost:160,unlockLevel:7}
+  {id:'badge-fire',type:'badge',title:'Streak Flame Badge',value:'fire',cost:160,unlockLevel:7},
+  {id:'badge-coffee',type:'badge',title:'Cold Brew Badge',value:'coffee',cost:130,unlockLevel:3}
 ];
 
 export const GAME_CATALOG = [
@@ -135,5 +141,87 @@ export const GAME_CATALOG = [
   {id:'riskRank',title:'Risk Rank Rally',details:'Rank scenarios by business risk and impact. Trains greatest-risk thinking.',xp:28,coins:10,icon:'target'},
   {id:'sequence',title:'Audit Sequence Builder',details:'Put audit actions in the right order. Trains FIRST and NEXT questions.',xp:30,coins:11,icon:'roadmap'},
   {id:'controlMatch',title:'Control Match Arena',details:'Match risks to the strongest control response.',xp:24,coins:9,icon:'qae'},
-  {id:'duel',title:'Decision Duel',details:'Choose the CISA-best answer under time pressure.',xp:26,coins:10,icon:'timer'}
+  {id:'duel',title:'Decision Duel',details:'Choose the CISA-best answer under time pressure.',xp:26,coins:10,icon:'timer'},
+  {id:'missedSprint',title:'Missed-Question Sprint',details:'Race through concepts pulled from your missed-question bank.',xp:30,coins:12,icon:'qae'},
+  {id:'ruleRelay',title:'Rule Relay',details:'Convert a scenario into the reusable CISA rule before time runs out.',xp:28,coins:11,icon:'audit'}
+];
+
+// v2.6: Exact ISACA Perform/QAE study-plan structure supplied by Bennett.
+// Used for roadmap sequencing, topic dropdowns, and QAE paste import mapping.
+export const ISACA_STUDY_PLAN = [
+  {id:'d1',domain:'Domain 1',name:'Information Systems Auditing Process',knowledgePoints:358,time:'60+ Minutes',weight:18,topics:[
+    {id:'d1-t01',title:'IS Audit Standards, Guidelines, Functions, and Codes of Ethics',knowledgePoints:50,time:'30-60 Minutes'},
+    {id:'d1-t02',title:'Types of Audits, Assessments, and Reviews',knowledgePoints:20,time:'15-30 Minutes'},
+    {id:'d1-t03',title:'Risk-Based Audit Planning',knowledgePoints:68,time:'60+ Minutes'},
+    {id:'d1-t04',title:'Types of Controls and Considerations',knowledgePoints:36,time:'30-60 Minutes'},
+    {id:'d1-t05',title:'Audit Project Management',knowledgePoints:16,time:'15-30 Minutes'},
+    {id:'d1-t06',title:'Audit Testing and Sampling Methodology',knowledgePoints:42,time:'30-60 Minutes'},
+    {id:'d1-t07',title:'Audit Evidence Collection Techniques',knowledgePoints:40,time:'30-60 Minutes'},
+    {id:'d1-t08',title:'Audit Data Analytics',knowledgePoints:28,time:'15-30 Minutes'},
+    {id:'d1-t09',title:'Reporting and Communication Techniques',knowledgePoints:40,time:'30-60 Minutes'},
+    {id:'d1-t10',title:'Quality Assurance and Improvement of Audit Process',knowledgePoints:18,time:'15-30 Minutes'}
+  ]},
+  {id:'d2',domain:'Domain 2',name:'Governance and Management of IT',knowledgePoints:354,time:'60+ Minutes',weight:18,topics:[
+    {id:'d2-t01',title:'Laws, Regulations, and Industry Standards',knowledgePoints:6,time:'Less Than 15 Minutes'},
+    {id:'d2-t02',title:'Organizational Structure, IT Governance, and IT Strategy',knowledgePoints:84,time:'60+ Minutes'},
+    {id:'d2-t03',title:'IT Policies, Standards, Procedures and Guidelines',knowledgePoints:48,time:'30-60 Minutes'},
+    {id:'d2-t04',title:'Enterprise Architecture and Considerations',knowledgePoints:18,time:'15-30 Minutes'},
+    {id:'d2-t05',title:'Enterprise Risk Management',knowledgePoints:56,time:'30-60 Minutes'},
+    {id:'d2-t06',title:'Privacy Program and Principles',knowledgePoints:2,time:'Less Than 15 Minutes'},
+    {id:'d2-t07',title:'Data Governance and Classification',knowledgePoints:32,time:'30-60 Minutes'},
+    {id:'d2-t08',title:'IT Resource Management',knowledgePoints:30,time:'30-60 Minutes'},
+    {id:'d2-t09',title:'IT Vendor Management',knowledgePoints:44,time:'30-60 Minutes'},
+    {id:'d2-t10',title:'IT Performance Monitoring and Reporting',knowledgePoints:12,time:'Less Than 15 Minutes'},
+    {id:'d2-t11',title:'Quality Assurance and Quality Management of IT',knowledgePoints:22,time:'15-30 Minutes'}
+  ]},
+  {id:'d3',domain:'Domain 3',name:'Information Systems Acquisition, Development and Implementation',knowledgePoints:338,time:'60+ Minutes',weight:12,topics:[
+    {id:'d3-t01',title:'Project Governance and Management',knowledgePoints:66,time:'60+ Minutes'},
+    {id:'d3-t02',title:'Business Case and Feasibility Analysis',knowledgePoints:24,time:'15-30 Minutes'},
+    {id:'d3-t03',title:'System Development Methodologies',knowledgePoints:58,time:'30-60 Minutes'},
+    {id:'d3-t04',title:'Control Identification and Design',knowledgePoints:42,time:'30-60 Minutes'},
+    {id:'d3-t05',title:'System Readiness and Implementation Testing',knowledgePoints:54,time:'30-60 Minutes'},
+    {id:'d3-t06',title:'Implementation Configuration and Release Management',knowledgePoints:36,time:'30-60 Minutes'},
+    {id:'d3-t07',title:'System Migration, Infrastructure Deployment, and Data Conversion',knowledgePoints:24,time:'15-30 Minutes'},
+    {id:'d3-t08',title:'Postimplementation Review',knowledgePoints:34,time:'30-60 Minutes'}
+  ]},
+  {id:'d4',domain:'Domain 4',name:'Information Systems Operations and Business Resilience',knowledgePoints:522,time:'60+ Minutes',weight:26,topics:[
+    {id:'d4-t01',title:'IT Components',knowledgePoints:18,time:'15-30 Minutes'},
+    {id:'d4-t02',title:'IT Asset Management',knowledgePoints:14,time:'Less Than 15 Minutes'},
+    {id:'d4-t03',title:'Job Scheduling and Production Process Automation',knowledgePoints:8,time:'Less Than 15 Minutes'},
+    {id:'d4-t04',title:'System Interfaces',knowledgePoints:6,time:'Less Than 15 Minutes'},
+    {id:'d4-t05',title:'End-user Computing and Shadow IT',knowledgePoints:6,time:'Less Than 15 Minutes'},
+    {id:'d4-t06',title:'Systems Availability and Capacity Management',knowledgePoints:34,time:'30-60 Minutes'},
+    {id:'d4-t07',title:'Problem and Incident Management',knowledgePoints:14,time:'Less Than 15 Minutes'},
+    {id:'d4-t08',title:'IT Change, Configuration, and Patch Management',knowledgePoints:66,time:'60+ Minutes'},
+    {id:'d4-t09',title:'Operational Log Management',knowledgePoints:18,time:'15-30 Minutes'},
+    {id:'d4-t10',title:'IT Service Level Management',knowledgePoints:24,time:'15-30 Minutes'},
+    {id:'d4-t11',title:'Database Management',knowledgePoints:64,time:'60+ Minutes'},
+    {id:'d4-t12',title:'Business Impact Analysis',knowledgePoints:20,time:'15-30 Minutes'},
+    {id:'d4-t13',title:'System and Operational Resilience',knowledgePoints:24,time:'15-30 Minutes'},
+    {id:'d4-t14',title:'Data Backup, Storage, and Restoration',knowledgePoints:46,time:'30-60 Minutes'},
+    {id:'d4-t15',title:'Business Continuity Plan',knowledgePoints:76,time:'60+ Minutes'},
+    {id:'d4-t16',title:'Disaster Recovery Plans',knowledgePoints:84,time:'60+ Minutes'}
+  ]},
+  {id:'d5',domain:'Domain 5',name:'Protection of Information Assets',knowledgePoints:572,time:'60+ Minutes',weight:26,topics:[
+    {id:'d5-t01',title:'Information Asset Security Policies, Frameworks, Standards, and Guidelines',knowledgePoints:26,time:'15-30 Minutes'},
+    {id:'d5-t02',title:'Physical and Environmental Controls',knowledgePoints:26,time:'15-30 Minutes'},
+    {id:'d5-t03',title:'Identity and Access Management',knowledgePoints:80,time:'60+ Minutes'},
+    {id:'d5-t04',title:'Network and End-Point Security',knowledgePoints:92,time:'60+ Minutes'},
+    {id:'d5-t05',title:'Data Loss Prevention',knowledgePoints:38,time:'30-60 Minutes'},
+    {id:'d5-t06',title:'Data Encryption',knowledgePoints:64,time:'60+ Minutes'},
+    {id:'d5-t07',title:'Public Key Infrastructure',knowledgePoints:24,time:'15-30 Minutes'},
+    {id:'d5-t08',title:'Cloud and Virtualized Environments',knowledgePoints:20,time:'15-30 Minutes'},
+    {id:'d5-t09',title:'Mobile, Wireless, and Internet-of-Things Devices',knowledgePoints:20,time:'15-30 Minutes'},
+    {id:'d5-t10',title:'Security Awareness Training and Programs',knowledgePoints:12,time:'Less Than 15 Minutes'},
+    {id:'d5-t11',title:'Information System Attack Methods and Techniques',knowledgePoints:60,time:'30-60 Minutes'},
+    {id:'d5-t12',title:'Security Testing Tools and Techniques',knowledgePoints:24,time:'15-30 Minutes'},
+    {id:'d5-t13',title:'Security Monitoring Logs, Tools, and Techniques',knowledgePoints:46,time:'30-60 Minutes'},
+    {id:'d5-t14',title:'Security Incident Response Management',knowledgePoints:28,time:'15-30 Minutes'},
+    {id:'d5-t15',title:'Evidence Collection and Forensics',knowledgePoints:12,time:'Less Than 15 Minutes'}
+  ]},
+  {id:'practice',domain:'Practice Exams',name:'Practice Exams',knowledgePoints:900,time:'60+ Minutes',weight:0,topics:[
+    {id:'pe-1',title:'Practice Exam 1',knowledgePoints:300,time:'60+ Minutes'},
+    {id:'pe-2',title:'Practice Exam 2',knowledgePoints:300,time:'60+ Minutes'},
+    {id:'pe-3',title:'Practice Exam 3',knowledgePoints:300,time:'60+ Minutes'}
+  ]}
 ];
