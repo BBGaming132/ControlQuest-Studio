@@ -93,9 +93,9 @@ export const HOMEWORK_SUGGESTIONS = [
 ];
 
 export const DAILY_QUEST_TEMPLATES = [
-  {id:'daily-qae',title:'QAE Warm-Up',details:'Log at least 10 QAE questions or a focused practice block.',xp:30,coins:12,icon:'qae'},
-  {id:'daily-learn',title:'Learn One Concept',details:'Complete one roadmap lesson or watch at least 15 minutes of lesson content.',xp:25,coins:10,icon:'roadmap'},
-  {id:'daily-review',title:'Review And Retain',details:'Review missed questions, build flashcards, or complete one Arcade review round.',xp:25,coins:10,icon:'notebook'}
+  {id:'daily-qae',title:'Complete A QAE Block',details:'Log or import an official ISACA QAE practice block.',xp:30,coins:12,icon:'qae',go:'practice',actionLabel:'Open Practice Log'},
+  {id:'daily-review',title:'Review Real Questions',details:'Review missed questions, complete adaptive cards, or retake a question set.',xp:28,coins:11,icon:'cards',go:'tools',actionLabel:'Open Smart Review'},
+  {id:'daily-reinforce',title:'Reinforce The Learning',details:'Complete a Study Room session, roadmap task, or question-powered game.',xp:26,coins:10,icon:'arcade',go:'room',actionLabel:'Open Study Room'}
 ];
 
 export const SHOP_ITEMS = [

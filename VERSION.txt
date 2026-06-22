@@ -1,3 +1,2 @@
-ControlQuest Studio v2.7
-Adaptive Study Library Build
-Generated: 2026-06-22
+ControlQuest Studio v2.7.1
+Workflow, streak, roadmap, game overlay, Guild branding, calendar, and preview refinements.
