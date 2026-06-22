@@ -3,6 +3,7 @@ import { firebaseConfig } from '../config/firebase-config.js';
 let app, auth, db, currentUnsub;
 let ready = false;
 const localKey = 'controlquest_v24_local_state';
+const localStudyKey = 'controlquest_v27_study_library';
 
 export async function initFirebase() {
   if (!firebaseConfig?.enabled) return { enabled: false, reason: 'Firebase Disabled' };
@@ -104,7 +105,7 @@ export function publicSummary(profile) {
     uid: profile.uid,
     name: profile.displayName || profile.email?.split('@')[0] || 'Study Buddy',
     email: profile.email || '',
-    avatar: profile.avatar || {},
+    avatar: profile.inventory?.equipped || profile.avatar || {},
     level: getLevel(profile.stats?.xp || 0),
     xp: profile.stats?.xp || 0,
     coins: profile.stats?.coins || 0,
@@ -126,6 +127,161 @@ export function subscribeGroup(groupId, callback) {
 
 export function withStamp(obj){ return { ...obj, updatedAt: new Date().toISOString() }; }
 export function getLevel(xp){ return Math.max(1, Math.floor(Math.sqrt(Math.max(0,xp)/100)) + 1); }
+
+
+
+function collectionRefFor(scope, uid, groupId, kind) {
+  const plural = kind === 'deck' ? 'studyDecks' : kind === 'card' ? 'studyCards' : kind === 'progress' ? 'studyProgress' : 'studyReviews';
+  if (scope === 'Guild') return fs().collection(db, 'groups', groupId, plural);
+  if (scope === 'Public') return fs().collection(db, kind === 'deck' ? 'publicStudyDecks' : 'publicStudyCards');
+  return fs().collection(db, 'users', uid, plural);
+}
+function docRefFor(scope, uid, groupId, kind, id) {
+  if (scope === 'Guild') return fs().doc(db, 'groups', groupId, kind === 'deck' ? 'studyDecks' : 'studyCards', id);
+  if (scope === 'Public') return fs().doc(db, kind === 'deck' ? 'publicStudyDecks' : 'publicStudyCards', id);
+  if (kind === 'progress') return fs().doc(db, 'users', uid, 'studyProgress', id);
+  if (kind === 'review') return fs().doc(db, 'users', uid, 'studyReviews', id);
+  return fs().doc(db, 'users', uid, kind === 'deck' ? 'studyDecks' : 'studyCards', id);
+}
+
+function loadLocalStudy(){ try { return JSON.parse(localStorage.getItem(localStudyKey) || '{}'); } catch { return {}; } }
+function saveLocalStudy(data){ localStorage.setItem(localStudyKey, JSON.stringify(data)); return data; }
+
+async function docsFromCollection(ref) {
+  const snap = await fs().getDocs(ref);
+  return snap.docs.map(d => ({ id: d.id, ...d.data() }));
+}
+
+export async function loadStudyLibrary(uid, groupId = null) {
+  if (!ready) {
+    const local = loadLocalStudy();
+    return { decks: local.decks || [], cards: local.cards || [], progress: local.progress || {}, reviews: local.reviews || [] };
+  }
+  const deckPromises = [docsFromCollection(collectionRefFor('Personal', uid, null, 'deck'))];
+  const cardPromises = [docsFromCollection(collectionRefFor('Personal', uid, null, 'card'))];
+  if (groupId) {
+    deckPromises.push(docsFromCollection(collectionRefFor('Guild', uid, groupId, 'deck')));
+    cardPromises.push(docsFromCollection(collectionRefFor('Guild', uid, groupId, 'card')));
+  }
+  deckPromises.push(docsFromCollection(collectionRefFor('Public', uid, null, 'deck')));
+  cardPromises.push(docsFromCollection(collectionRefFor('Public', uid, null, 'card')));
+  const [deckGroups, cardGroups, progressDocs, reviewDocs] = await Promise.all([
+    Promise.all(deckPromises),
+    Promise.all(cardPromises),
+    docsFromCollection(collectionRefFor('Personal', uid, null, 'progress')),
+    docsFromCollection(collectionRefFor('Personal', uid, null, 'review'))
+  ]);
+  return {
+    decks: deckGroups.flat(),
+    cards: cardGroups.flat(),
+    progress: Object.fromEntries(progressDocs.map(p => [p.id, p])),
+    reviews: reviewDocs.sort((a,b)=>String(b.reviewedAt||'').localeCompare(String(a.reviewedAt||''))).slice(0, 1000)
+  };
+}
+
+async function commitBatchOperations(operations) {
+  if (!operations.length) return;
+  const chunks = [];
+  for (let i = 0; i < operations.length; i += 350) chunks.push(operations.slice(i, i + 350));
+  for (const chunk of chunks) {
+    const batch = fs().writeBatch(db);
+    for (const operation of chunk) operation(batch);
+    await batch.commit();
+  }
+}
+
+export async function saveStudyImport({ uid, groupId, decks = [], cards = [] }) {
+  if (!ready) {
+    const local = loadLocalStudy();
+    const deckMap = new Map((local.decks || []).map(d => [`${d.scopeKey}:${d.id}`, d]));
+    const cardMap = new Map((local.cards || []).map(c => [`${c.scopeKey}:${c.id}`, c]));
+    decks.forEach(d => deckMap.set(`${d.scopeKey}:${d.id}`, { ...(deckMap.get(`${d.scopeKey}:${d.id}`) || {}), ...d }));
+    cards.forEach(c => {
+      const key = `${c.scopeKey}:${c.id}`;
+      const old = cardMap.get(key) || {};
+      cardMap.set(key, { ...old, ...c, deckIds: [...new Set([...(old.deckIds || []), ...(c.deckIds || [])])] });
+    });
+    saveLocalStudy({ ...local, decks: [...deckMap.values()], cards: [...cardMap.values()] });
+    return;
+  }
+  const operations = [];
+  for (const deck of decks) {
+    const ref = docRefFor(deck.scope, uid, groupId, 'deck', deck.id);
+    operations.push(batch => batch.set(ref, withStamp(deck), { merge: true }));
+  }
+  for (const card of cards) {
+    const ref = docRefFor(card.scope, uid, groupId, 'card', card.id);
+    const { arrayUnion } = fs();
+    operations.push(batch => batch.set(ref, { ...withStamp(card), deckIds: arrayUnion(...(card.deckIds || [])) }, { merge: true }));
+  }
+  await commitBatchOperations(operations);
+}
+
+export async function saveStudyDeck({ uid, groupId, deck }) {
+  if (!deck) return;
+  if (!ready) {
+    const local = loadLocalStudy();
+    const decks = local.decks || [];
+    const idx = decks.findIndex(d => d.scopeKey === deck.scopeKey && d.id === deck.id);
+    if (idx >= 0) decks[idx] = { ...decks[idx], ...deck }; else decks.unshift(deck);
+    saveLocalStudy({ ...local, decks });
+    return;
+  }
+  await fs().setDoc(docRefFor(deck.scope, uid, groupId, 'deck', deck.id), withStamp(deck), { merge: true });
+}
+
+export async function saveStudyCard({ uid, groupId, card }) {
+  if (!card) return;
+  if (!ready) {
+    const local = loadLocalStudy();
+    const cards = local.cards || [];
+    const idx = cards.findIndex(c => c.scopeKey === card.scopeKey && c.id === card.id);
+    if (idx >= 0) cards[idx] = { ...cards[idx], ...card }; else cards.unshift(card);
+    saveLocalStudy({ ...local, cards });
+    return;
+  }
+  await fs().setDoc(docRefFor(card.scope, uid, groupId, 'card', card.id), withStamp(card), { merge: true });
+}
+
+export async function saveStudyProgress(uid, progress) {
+  if (!progress?.id) return;
+  if (!ready) {
+    const local = loadLocalStudy();
+    const map = local.progress || {};
+    map[progress.id] = progress;
+    saveLocalStudy({ ...local, progress: map });
+    return;
+  }
+  await fs().setDoc(docRefFor('Personal', uid, null, 'progress', progress.id), withStamp(progress), { merge: true });
+}
+
+export async function saveStudyReview(uid, review) {
+  if (!review?.id) return;
+  if (!ready) {
+    const local = loadLocalStudy();
+    const reviews = [review, ...(local.reviews || [])].slice(0, 2000);
+    saveLocalStudy({ ...local, reviews });
+    return;
+  }
+  await fs().setDoc(docRefFor('Personal', uid, null, 'review', review.id), review);
+}
+
+export async function deleteStudyDeck({ uid, groupId, deck }) {
+  if (!deck) return;
+  if (!ready) {
+    const local = loadLocalStudy();
+    const decks = (local.decks || []).filter(d => !(d.scopeKey === deck.scopeKey && d.id === deck.id));
+    const cards = (local.cards || []).map(c => c.scopeKey === deck.scopeKey ? { ...c, deckIds: (c.deckIds || []).filter(id => id !== deck.id) } : c);
+    saveLocalStudy({ ...local, decks, cards });
+    return;
+  }
+  await fs().deleteDoc(docRefFor(deck.scope, uid, groupId, 'deck', deck.id));
+  const cardCollection = collectionRefFor(deck.scope, uid, groupId, 'card');
+  const q = fs().query(cardCollection, fs().where('deckIds', 'array-contains', deck.id));
+  const snap = await fs().getDocs(q);
+  const operations = snap.docs.map(docSnap => batch => batch.update(docSnap.ref, { deckIds: fs().arrayRemove(deck.id) }));
+  await commitBatchOperations(operations);
+}
 
 function loadLocal() { try { return JSON.parse(localStorage.getItem(localKey) || '{}'); } catch { return {}; } }
 function saveLocal(partial) { const merged = { ...loadLocal(), ...partial, updatedAt: new Date().toISOString() }; localStorage.setItem(localKey, JSON.stringify(merged)); return merged; }

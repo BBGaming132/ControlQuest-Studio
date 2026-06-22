@@ -6,13 +6,45 @@ service cloud.firestore {
 
     match /users/{uid} {
       allow read, create, update, delete: if isSelf(uid);
+
+      match /studyDecks/{deckId} {
+        allow read, create, update, delete: if isSelf(uid);
+      }
+      match /studyCards/{cardId} {
+        allow read, create, update, delete: if isSelf(uid);
+      }
+      match /studyProgress/{progressId} {
+        allow read, create, update, delete: if isSelf(uid);
+      }
+      match /studyReviews/{reviewId} {
+        allow read, create, update, delete: if isSelf(uid);
+      }
     }
 
     match /groups/{groupId} {
+      allow read, create, update: if signedIn();
+      allow delete: if signedIn() && resource.data.ownerUid == request.auth.uid;
+
+      match /studyDecks/{deckId} {
+        allow read, create, update, delete: if signedIn();
+      }
+      match /studyCards/{cardId} {
+        allow read, create, update, delete: if signedIn();
+      }
+      match /studyReviews/{reviewId} {
+        allow read, create, update, delete: if signedIn();
+      }
+    }
+
+    match /publicStudyDecks/{deckId} {
       allow read: if signedIn();
-      allow create: if signedIn();
-      allow update: if signedIn();
-      allow delete: if signedIn() && request.resource.data.ownerUid == request.auth.uid;
+      allow create: if signedIn() && request.resource.data.ownerUid == request.auth.uid;
+      allow update, delete: if signedIn() && resource.data.ownerUid == request.auth.uid;
+    }
+    match /publicStudyCards/{cardId} {
+      allow read: if signedIn();
+      allow create: if signedIn() && request.resource.data.ownerUid == request.auth.uid;
+      allow update, delete: if signedIn() && resource.data.ownerUid == request.auth.uid;
     }
 
     match /deletedProfiles/{uid}/backups/{backupId} {
