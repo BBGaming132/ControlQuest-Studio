@@ -1,2 +1,1 @@
-ControlQuest Studio v2.7.1
-Workflow, streak, roadmap, game overlay, Guild branding, calendar, and preview refinements.
+v2.8.0

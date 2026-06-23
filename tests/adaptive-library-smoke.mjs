@@ -54,4 +54,4 @@ const card = bundle.cards[0];
 const progress = rateCard(card, defaultProgress(card, 'user'), 'Again');
 if (progress.incorrectCount !== 1) throw new Error('Adaptive rating failed.');
 if (!buildStudyQueue(bundle.cards, { [`${card.scopeKey}__${card.id}`]: progress }, { mode: 'missed', limit: 20 }).length) throw new Error('Missed queue failed.');
-console.log('ControlQuest v2.7 adaptive library smoke test passed.');
+console.log('ControlQuest v2.8 adaptive library smoke test passed.');

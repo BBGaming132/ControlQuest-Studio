@@ -38,7 +38,9 @@ const state = {
   deckFlipped: false,
   quizSelection: null,
   quizRevealed: false,
-  reviewStartedAt: null
+  reviewStartedAt: null,
+  importPreview: null,
+  spaceQuest: null
 };
 
 const NAV = [
@@ -72,6 +74,7 @@ async function init(){
         if (profile.activeGroupId) await loadActiveGroup(profile.activeGroupId);
         await refreshStudyLibrary();
         await migrateLegacyStudyLibrary();
+        restoreActiveStudySession();
         startClock();
         renderApp();
         if (!profile.preferences?.onboardingComplete) setTimeout(()=>showOnboarding(), 500);
@@ -102,7 +105,7 @@ function defaultProfile(user){
     uid:user.uid,email:user.email||'',displayName:user.email?.split('@')[0] || 'Study Buddy',createdAt:new Date().toISOString(),timezone:tz,
     preferences:{theme:'dark',onboardingComplete:false,pageTours:{},defaultStudyDuration:60,dailyQaeGoal:10,calendarProvider:'ics',googleConnected:false,links:{qae:RESOURCE_LINKS.qae,udemy:'',youtubePlaylist:RESOURCE_LINKS.youtubePlaylist},studySettings:{...DEFAULT_REVIEW_SETTINGS}},
     stats:{xp:0,coins:0,streak:0,bestStreak:0,streakFreezes:1,qaeQuestions:0,qaeCorrect:0,studyMinutes:0,sessions:0,roadmapPct:0,lastQuestDate:null,lastStreakDate:null},
-    inventory:{boosts:[],chests:[],ownedItems:['base-blue','eyes-normal','glasses-none','cape-none','hat-none','badge-none'],equipped:{baseColor:'#2fb7ff',eyes:'normal',glasses:'none',cape:'none',hat:'none',badge:'none'}},
+    inventory:{boosts:[],chests:[],ownedItems:['base-blue','eyes-normal','glasses-none','cape-none','hat-none','badge-none','ship-scout'],equipped:{baseColor:'#2fb7ff',eyes:'normal',glasses:'none',cape:'none',hat:'none',badge:'none',ship:'scout'}},
     activity:[],daily:{date:localDateForProfileSafe({timezone:tz}),quests:{}},qaeLogs:[],mistakes:[],missedQuestions:[],questionBank:[],qaeImports:[],homework:[],notes:[],memoryDecks:[],calendarEvents:[],studyHistory:{sessions:0,reviews:0,correct:0,incorrect:0},gameStats:{plays:0,highScores:{},history:[]},roadmap:{startDate:todayIso(),examDate:'2026-09-26',pauseBlocks:[],bonusSessions:[],completedTasks:{}},guildIds:[],activeGroupId:null
   };
 }
@@ -112,10 +115,10 @@ function migrateProfile(p,user){
   const m = deepMerge(base,p||{});
   m.uid = user.uid; m.email = user.email || m.email;
   m.preferences.links ||= {}; m.preferences.links.qae ||= RESOURCE_LINKS.qae; m.preferences.links.udemy ||= RESOURCE_LINKS.udemy; m.preferences.links.youtubePlaylist ||= RESOURCE_LINKS.youtubePlaylist; m.preferences.studySettings=deepMerge(DEFAULT_REVIEW_SETTINGS,m.preferences.studySettings||{});
-  m.stats.streakFreezes ??= 1; m.inventory.ownedItems ||= base.inventory.ownedItems; m.inventory.equipped ||= base.inventory.equipped;
+  m.stats.streakFreezes ??= 1; m.inventory.ownedItems ||= base.inventory.ownedItems; m.inventory.equipped ||= base.inventory.equipped; if(!m.inventory.ownedItems.includes('ship-scout'))m.inventory.ownedItems.push('ship-scout'); m.inventory.equipped.ship ||= 'scout';
   m.daily ||= {date:localDateForProfileSafe(m),quests:{}}; if(m.daily.date !== localDateForProfileSafe(m)) m.daily = {date:localDateForProfileSafe(m),quests:{}};
   m.activity ||= []; m.gameStats ||= {plays:0,highScores:{},history:[]}; m.gameStats.highScores ||= {}; m.gameStats.history ||= []; m.qaeLogs ||= []; m.mistakes ||= []; m.missedQuestions ||= []; m.questionBank ||= []; m.qaeImports ||= []; m.homework ||= []; m.notes ||= []; m.memoryDecks ||= []; m.memoryDecks=(m.memoryDecks||[]).filter(d=>!['public-cisa-audit-mindset','public-bcp-dr'].includes(d.id)); m.calendarEvents ||= []; m.studyHistory ||= {sessions:0,reviews:0,correct:0,incorrect:0};
-  m.roadmap ||= base.roadmap; m.roadmap.pauseBlocks ||= []; m.roadmap.bonusSessions ||= []; m.roadmap.completedTasks ||= {};
+  m.roadmap ||= base.roadmap; m.roadmap.pauseBlocks ||= []; m.roadmap.bonusSessions ||= []; m.roadmap.completedTasks ||= {}; m.activeStudySession ||= null; m.guildReviewRecorded ||= {}; m.spaceQuestProgress ||= {chapter:1,sector:1,energy:5,maxEnergy:5,shipLevel:1,stars:0,missionsCompleted:0,correct:0,incorrect:0,lastPlayedAt:null};
   return m;
 }
 
@@ -132,15 +135,31 @@ function roadmapDayForDate(date){ try{return buildRoadmap().flatMap(w=>w.days||[
 function defaultLiveSession(profile){ return {title:'Morning Study Session',sessionDate:localDateForProfileSafe(profile),durationMinutes:profile?.preferences?.defaultStudyDuration||60,active:false,startedAt:null,accumulatedSeconds:0,completed:false,flow:dailySessionFlow(localDateForProfileSafe(profile)),checked:{},sharedNotes:'',updatedAt:new Date().toISOString()}; }
 function dailySessionFlow(date=localDateForProfileSafe(state.profile)){
   const plan=roadmapDayForDate(date); const topic=plan?.topic||plan?.tasks?.[0]?.title?.replace(/^Official QAE Practice:\s*/,'')||'Today’s QAE Focus';
-  const dow=parseLocal(date)?.getDay()||1;
-  const focusByDay={1:'Set The Weekly Baseline',2:'Attack A Focused Topic',3:'Midweek Missed-Question Repair',4:'Timed QAE And Guild Reinforcement',5:'Weekly Wrap-Up And Retention Check'};
+  const dow=parseLocal(date)?.getDay()??1;
+  if(dow===1){
+    return [
+      {id:`${date}-weekly-pulse`,title:'Weekly Pulse Check',details:'Review last week’s QAE accuracy, missed-question count, adaptive-review backlog, and unfinished homework.',links:[{label:'Open Practice Analytics',go:'practice'},{label:'Open Smart Review',go:'tools'}]},
+      {id:`${date}-missed-review`,title:'Last Week’s Missed-Question Review',details:'Work through the Master Missed Questions deck together. Explain why the tempting distractor was wrong before revealing the justification.',links:[{label:'Open Missed Review',go:'tools'}]},
+      {id:`${date}-guild-retake`,title:'Guild Retake And Discussion',details:'Run a synchronized Guild question session from last week’s lesson decks. Lock answers privately, reveal together, and discuss the reusable CISA rule.',links:[{label:'Open Guild Study',go:'tools'}]},
+      {id:`${date}-flashcard-repair`,title:'Adaptive Flashcard Repair',details:'Complete a short Smart Review round so difficult cards return at the right point in the session and later in the schedule.',links:[{label:'Open Smart Review',go:'tools'}]},
+      {id:`${date}-week-plan`,title:'Set This Week’s QAE Targets',details:'Confirm the Tuesday–Friday lesson sequence, daily question goal, and any weekend flex work.',links:[{label:'Open Study Plan',go:'plan'}]},
+      {id:`${date}-assign`,title:'Assign Homework And Close The Loop',details:'Select follow-up work, save shared notes, and identify the first new QAE set for Tuesday.',links:[{label:'Open Homework Builder',go:'room'}]}
+    ];
+  }
+  if(dow>=2&&dow<=5){
+    return [
+      {id:`${date}-warmup`,title:'5-Minute Recall Warm-Up',details:'Recall one CISA rule from yesterday and identify one likely distractor pattern.',links:[{label:'Open Smart Review',go:'tools'}]},
+      {id:`${date}-qae`,title:`New Official QAE Set · ${topic}`,details:`Complete a fresh QAE set together. Aim for ${state.profile?.preferences?.dailyQaeGoal||10} questions and discuss reasoning without turning the hour into a long lecture.`,links:[{label:'Open ISACA QAE',url:RESOURCE_LINKS.qae}]},
+      {id:`${date}-import`,title:'Import The Full QAE Review',details:'Paste or upload the completed review output so the lesson deck, Master QAE bank, missed deck, flashcards, and retake quiz update automatically.',links:[{label:'Open QAE Importer',go:'practice'}]},
+      {id:`${date}-quick-misses`,title:'Quick Missed-Question Debrief',details:'Review the misses from today’s set and capture the reusable CISA logic. Save deeper repair for Monday or homework.',links:[{label:'Open Missed Questions',go:'practice'}]},
+      {id:`${date}-reinforce`,title:'Short Reinforcement Round',details:'Finish with a five-card Smart Review, Guild race question, or question-powered game.',links:[{label:'Open Study Tools',go:'tools'}]},
+      {id:`${date}-assign`,title:'Assign Homework And Close The Loop',details:'Select homework, save shared notes, and agree on tomorrow’s new set.',links:[{label:'Open Homework Builder',go:'room'}]}
+    ];
+  }
   return [
-    {id:`${date}-warmup`,title:`5-Minute Recall Warm-Up · ${focusByDay[dow]||'Focused Review'}`,details:'Recall yesterday’s biggest CISA rule and identify one question trap before opening QAE.',links:[{label:'Open Smart Review',go:'tools'}]},
-    {id:`${date}-qae`,title:`Official QAE Block · ${topic}`,details:`Complete a focused QAE block together. Aim for ${state.profile?.preferences?.dailyQaeGoal||10} questions and discuss the reasoning before moving on.`,links:[{label:'Open ISACA QAE',url:RESOURCE_LINKS.qae}]},
-    {id:`${date}-import`,title:'Import The Full QAE Review',details:'Paste or upload the completed review output so the lesson deck, Master QAE bank, missed deck, flashcards, and retake quiz are created automatically.',links:[{label:'Open QAE Importer',go:'practice'}]},
-    {id:`${date}-misses`,title:'Review Today’s Misses',details:'Retake missed questions or complete an adaptive review round. Explain why the tempting wrong answer was wrong.',links:[{label:'Open Missed Review',go:'tools'},{label:'Open Practice Log',go:'practice'}]},
-    {id:`${date}-reinforce`,title:'Reinforce With A Game Or Flashcard Round',details:'Use a question-powered game, Guild review, or flashcard round to lock in the imported material.',links:[{label:'Open Study Tools',go:'tools'}]},
-    {id:`${date}-assign`,title:'Assign Homework And Close The Loop',details:'Select homework, save shared notes, and agree on the next session’s starting point.',links:[{label:'Open Homework Builder',go:'room'},{label:'Open Study Plan',go:'plan'}]}
+    {id:`${date}-weekend-flex`,title:'Weekend Flex Study',details:'Complete one self-directed block on either Saturday or Sunday. Both days can earn streak credit, but missing one weekend day never breaks the streak.',links:[{label:'Open Smart Review',go:'tools'},{label:'Open Study Plan',go:'plan'}]},
+    {id:`${date}-choose-focus`,title:'Choose Your Weekend Focus',details:'Pick due cards, missed questions, a lesson retake, or a question-powered game based on your energy and backlog.',links:[{label:'Open Study Tools',go:'tools'}]},
+    {id:`${date}-log-progress`,title:'Log And Close',details:'Record what you completed so the weekend flex block appears in progress and contributes to your personal streak.',links:[{label:'Open Practice Log',go:'practice'}]}
   ];
 }
 async function loadActiveGroup(groupId){
@@ -486,28 +505,60 @@ function flatStudyTopics(){
 function buildRoadmap(){
   const start=parseLocal(state.profile.roadmap.startDate), exam=parseLocal(state.profile.roadmap.examDate); if(!start||!exam||start>exam)return [];
   const weekStart=startOfWeek(start); const allTopics=flatStudyTopics();
-  const days=[]; let cursor=new Date(weekStart); let topicIdx=0; while(cursor<=exam){ const iso=dateIso(cursor), dow=cursor.getDay(); const paused=findPause(iso); const bonus=findBonus(iso); let tasks=[]; let status='Rest'; if(paused){ status='Paused'; tasks=[{id:`pause-${iso}`,title:`Pause Block: ${paused.reason||'Rest Day'}`,details:'This day is protected and will not hurt your streak.',links:[]}]; }
-    else if(dow>=1 && dow<=5 && cursor>=start){ status='Open'; const topic=allTopics[topicIdx%allTopics.length]; topicIdx++; tasks=lessonTasks(topic,iso); }
+  const days=[]; let cursor=new Date(weekStart); let topicIdx=0;
+  while(cursor<=exam){
+    const iso=dateIso(cursor), dow=cursor.getDay(); const paused=findPause(iso); const bonus=findBonus(iso); let tasks=[]; let status='Rest'; let topic=null;
+    const currentWeekStart=dateIso(startOfWeek(cursor));
+    if(paused){ status='Paused'; tasks=[{id:`pause-${iso}`,title:`Pause Block: ${paused.reason||'Rest Day'}`,details:'This date is protected and does not create required work or break the streak.',links:[]}]; }
+    else if(cursor>=start && dow===1){ status='Weekly Recap'; tasks=mondayRecapTasks(iso,currentWeekStart); }
+    else if(cursor>=start && dow>=2 && dow<=5){ status='New Set'; topic=allTopics[topicIdx%allTopics.length]; topicIdx++; tasks=newSetTasks(topic,iso); }
+    else if(cursor>=start && (dow===0||dow===6)){ status='Weekend Flex'; tasks=weekendFlexTasks(currentWeekStart,iso); }
     if(bonus){ status = status==='Rest'?'Bonus':status; tasks.push(...bonusTasks(bonus,iso)); }
-    days.push({iso,dow,status,tasks}); cursor.setDate(cursor.getDate()+1); }
+    days.push({iso,dow,status,tasks,topic:topic?.topic||null}); cursor.setDate(cursor.getDate()+1);
+  }
   const weeks=[]; for(let i=0;i<days.length;i+=7){ const ds=days.slice(i,i+7); weeks.push({index:weeks.length+1,start:ds[0].iso,end:ds[ds.length-1].iso,days:ds}); }
   updateRoadmapPct(days); return weeks;
 }
-function lessonTasks(topic,iso){ const due=calculateLibraryStats(state.library.cards,state.library.progress,state.library.reviews).due; return [
-  {id:`${iso}-qae`,title:`Official QAE Practice: ${topic.topic}`,details:`Primary work: complete roughly ${state.profile.preferences.dailyQaeGoal||10} official QAE questions for ${topic.domain} · ${topic.name}.`,links:[{label:'Open ISACA QAE',url:RESOURCE_LINKS.qae},{label:'Open Study Room',go:'room'}]},
-  {id:`${iso}-import`,title:'Build Today’s Study Package',details:'Paste or upload the QAE review output once. ControlQuest automatically creates the lesson deck, deduplicates the Master QAE bank, records misses, and generates quiz/flashcard content.',links:[{label:'Open QAE Importer',go:'practice'}]},
-  {id:`${iso}-review`,title:`Adaptive Review (${due} Currently Due)`,details:'Complete a Smart Review round from the Master Missed Questions or today’s lesson deck. Ratings determine the next due date for every card.',links:[{label:'Open Smart Review',go:'tools'}]},
-  {id:`${iso}-retake`,title:'Retake Or Guild Reinforcement',details:'Retake missed questions in Quiz Mode, run a synchronized Guild review, or play a question-powered game.',links:[{label:'Open Study Tools',go:'tools'}]},
-  {id:`${iso}-optional-udemy`,title:`Optional Teaching Pass: ${topic.topic}`,details:'Use Udemy only when the QAE explanation is not enough and you need a full lesson. This remains optional and does not block day completion.',optional:true,links:topic.links}
-]; }
+function mondayRecapTasks(iso,weekStartIso){
+  const due=calculateLibraryStats(state.library.cards,state.library.progress,state.library.reviews).due;
+  return [
+    {id:`${iso}-weekly-recap`,title:'Review Last Week’s Results',details:'Review QAE accuracy, unfinished homework, missed questions, and the lesson decks created last week.',links:[{label:'Open Practice Log',go:'practice'},{label:'Open Analytics',go:'tools'}]},
+    {id:`${iso}-missed-repair`,title:`Repair Missed Questions (${due} Cards Currently Due)`,details:'Complete a focused Smart Review or retake from the Master Missed Questions deck. Explain the distractor and the reusable CISA rule.',links:[{label:'Open Smart Review',go:'tools'}]},
+    {id:`${iso}-guild-recap`,title:'Guild Recap Session',details:'Run a synchronized Guild review from last week’s decks and compare reasoning only after everyone locks an answer.',links:[{label:'Open Guild Study',go:'tools'},{label:'Open Study Room',go:'room'}]},
+    {id:`${iso}-week-target`,title:'Set Tuesday–Friday Targets',details:'Confirm the four new QAE lesson sets for this week and choose one flexible weekend reinforcement goal.',links:[{label:'Open Study Plan',go:'plan'}]},
+    {id:`${iso}-optional-teaching`,title:'Optional Teaching Pass',details:'Use a course lesson only for concepts that still do not make sense after QAE explanations and missed-question review.',optional:true,links:[{label:'Open Udemy Course',url:state.profile?.preferences?.links?.udemy||RESOURCE_LINKS.udemy}]}
+  ];
+}
+function newSetTasks(topic,iso){
+  return [
+    {id:`${iso}-qae`,title:`New Official QAE Set: ${topic.topic}`,details:`Complete roughly ${state.profile.preferences.dailyQaeGoal||10} new official QAE questions for ${topic.domain} · ${topic.name}.`,links:[{label:'Open ISACA QAE',url:RESOURCE_LINKS.qae},{label:'Open Study Room',go:'room'}]},
+    {id:`${iso}-import`,title:'Import And Build The Study Package',details:'Upload or paste the full review output. ControlQuest creates the lesson deck, deduplicated Master QAE bank, missed deck, adaptive cards, and retake quiz.',links:[{label:'Open QAE Importer',go:'practice'}]},
+    {id:`${iso}-debrief`,title:'Debrief Today’s Misses',details:'Review the incorrect questions from the new set and capture the reusable answer logic. Defer deeper repair to Monday or homework when needed.',links:[{label:'Open Missed Questions',go:'practice'},{label:'Open Smart Review',go:'tools'}]},
+    {id:`${iso}-quick-reinforce`,title:'Five-Card Reinforcement',details:'Complete a short Smart Review, Guild question, or game round before closing the day.',links:[{label:'Open Study Tools',go:'tools'}]},
+    {id:`${iso}-optional-udemy`,title:`Optional Course Lesson: ${topic.topic}`,details:'Optional teaching support when the QAE explanation is not enough. This never blocks day completion.',optional:true,links:topic.links}
+  ];
+}
+function weekendFlexTasks(weekStartIso,iso){
+  return [
+    {id:`${weekStartIso}-weekend-flex`,title:'Weekend Flex Study Block',details:'Complete one meaningful personal study block on Saturday or Sunday. Checking this shared weekend task on either day completes the weekend requirement; studying both days can still earn two streak days.',links:[{label:'Open Smart Review',go:'tools'},{label:'Open Games',go:'tools'},{label:'Open Practice Log',go:'practice'}]},
+    {id:`${weekStartIso}-weekend-extra-${iso}`,title:'Optional Weekend Extra',details:'Do an additional review, game, QAE retake, or course lesson for bonus XP. This is optional.',optional:true,links:[{label:'Open Study Tools',go:'tools'},{label:'Open ISACA QAE',url:RESOURCE_LINKS.qae}]}
+  ];
+}
+function lessonTasks(topic,iso){ return newSetTasks(topic,iso); }
 function bonusTasks(b,iso){ return [{id:`${iso}-bonus-${b.id}`,title:`Bonus Session: ${b.title}`,details:b.description||'Extra study block. Use this to pull future work forward or reinforce weak areas.',links:[{label:'Open Study Room',go:'room'},{label:'Open ISACA QAE',url:RESOURCE_LINKS.qae}]}]; }
-function topicLinks(t){ const title = typeof t === 'string' ? t : t.title; const links=[{label:'Open ISACA QAE',url:RESOURCE_LINKS.qae},{label:'Open Outline Doc',url:RESOURCE_LINKS.isacaOutline}]; if(state.profile?.preferences?.links?.udemy || RESOURCE_LINKS.udemy) links.push({label:'Open Udemy Course',url:state.profile?.preferences?.links?.udemy||RESOURCE_LINKS.udemy}); links.push({label:'Extra YouTube Resource',url:RESOURCE_LINKS.youtubePlaylist}); return links; }
+function topicLinks(t){ const links=[{label:'Open ISACA QAE',url:RESOURCE_LINKS.qae},{label:'Open Outline Doc',url:RESOURCE_LINKS.isacaOutline}]; if(state.profile?.preferences?.links?.udemy || RESOURCE_LINKS.udemy) links.push({label:'Open Udemy Course',url:state.profile?.preferences?.links?.udemy||RESOURCE_LINKS.udemy}); return links; }
 function weekCard(w){
   const open=state.expandedWeeks.has(w.index), stats=weekProgress(w), complete=stats.complete;
   const status=complete?'Completed':stats.done?'In Progress':(w.end<localDateForProfile()?'Needs Attention':'Upcoming');
-  return `<div class="week-card ${complete?'week-complete':''}" style="--week-color:${weekColor(w.index)};border-top:5px solid var(--week-color)"><div class="week-head" data-week="${w.index}"><div><div class="metric-row"><span class="bubble ${complete?'good':status==='Needs Attention'?'warn':''}">${status}</span><span class="bubble">${stats.done} / ${stats.total} Required Tasks</span></div><h3>Week ${w.index} · ${fmtDate(w.start)} – ${fmtDate(w.end)}</h3><p class="helper">${w.days.filter(d=>d.tasks.length).length} active days · ${w.days.filter(d=>d.status==='Paused').length} pause days · ${stats.pct}% complete</p><div class="progress week-progress"><span style="width:${stats.pct}%"></span></div></div><span class="app-icon roadmap">${svgIcon('roadmap')}</span><span class="chev">⌄</span></div><div class="week-actions"><button class="secondary-button small" data-open-week-days="${w.index}">Open All Days</button><button class="ghost-button small" data-collapse-week-days="${w.index}">Collapse Days</button><button class="secondary-button small" data-go="tools">Review This Week</button></div>${open?`<div class="week-body">${w.days.map(dayCard).join('')}</div>`:''}</div>`;
+  const weekdayDays=w.days.filter(d=>d.dow>=1&&d.dow<=5); const weekendDays=w.days.filter(d=>d.dow===0||d.dow===6);
+  return `<div class="week-card ${complete?'week-complete':''}" style="--week-color:${weekColor(w.index)};border-top:5px solid var(--week-color)"><div class="week-head" data-week="${w.index}"><div><div class="metric-row"><span class="bubble ${complete?'good':status==='Needs Attention'?'warn':''}">${status}</span><span class="bubble">${stats.done} / ${stats.total} Required Tasks</span></div><h3>Week ${w.index} · ${fmtDate(w.start)} – ${fmtDate(w.end)}</h3><p class="helper">Monday recap · Tuesday–Friday new QAE sets · one flexible weekend study block · ${stats.pct}% complete</p><div class="progress week-progress"><span style="width:${stats.pct}%"></span></div></div><span class="app-icon roadmap">${svgIcon('roadmap')}</span><span class="chev">⌄</span></div><div class="week-actions"><button class="secondary-button small" data-open-week-days="${w.index}">Open All Days</button><button class="ghost-button small" data-collapse-week-days="${w.index}">Collapse Days</button><button class="secondary-button small" data-go="tools">Review This Week</button></div>${open?`<div class="week-body">${weekdayDays.map(dayCard).join('')}${weekendBucket(weekendDays,w)}</div>`:''}</div>`;
 }
-function weekProgress(w){ const required=w.days.flatMap(d=>d.tasks.filter(t=>!t.id.startsWith('pause')&&!t.optional)); const done=required.filter(t=>state.profile.roadmap.completedTasks[t.id]).length; return {total:required.length,done,pct:required.length?Math.round(done/required.length*100):0,complete:required.length>0&&done===required.length}; }
+function weekendBucket(days,w){
+  if(!days.length)return '';
+  const sharedId=`${w.start}-weekend-flex`; const complete=!!state.profile.roadmap.completedTasks[sharedId];
+  return `<div class="weekend-bucket ${complete?'complete':''}"><div class="section-head"><div><p class="eyebrow">Weekend Flex Block</p><h3>Saturday Or Sunday · Your Choice</h3><p class="helper">Complete the shared required task on either day. Studying both days earns activity and streak credit twice, but skipping one weekend day never breaks your streak.</p></div><span class="bubble ${complete?'good':'warn'}">${complete?'Completed':'Flexible'}</span></div><div class="weekend-days">${days.map(dayCard).join('')}</div></div>`;
+}
+function weekProgress(w){ const required=uniqueRequiredTasks(w.days); const done=required.filter(t=>state.profile.roadmap.completedTasks[t.id]).length; return {total:required.length,done,pct:required.length?Math.round(done/required.length*100):0,complete:required.length>0&&done===required.length}; }
 function dayCard(d){ const open=state.expandedDays.has(d.iso); const complete=dayComplete(d); const status=complete?'Complete':d.status; return `<div class="day-card ${open?'open':''}"><div class="day-head" data-day="${d.iso}"><div><span class="date">${fmtDate(d.iso)}</span><span class="bubble ${status==='Complete'?'good':status==='Paused'?'warn':''}">${status}</span></div><span class="chev">⌄</span></div><div class="day-body"><div class="task-list">${d.tasks.length?d.tasks.map(t=>taskItem(t)).join(''):'<div class="empty">Rest Day. No required tasks.</div>'}</div></div></div>`; }
 function taskItem(t){ const done=!!state.profile.roadmap.completedTasks[t.id]; return `<div class="task-item"><input type="checkbox" data-task="${t.id}" ${done?'checked':''}><div><h4>${esc(t.title)}</h4><p class="helper">${esc(t.details)}</p><div class="task-actions">${(t.links||[]).map(linkButton).join('')}</div></div></div>`; }
 function bindPlan(){
@@ -523,7 +574,8 @@ function bindPlan(){
 function toggleTask(id,checked){ state.profile.roadmap.completedTasks[id]=checked?new Date().toISOString():null; if(!checked) delete state.profile.roadmap.completedTasks[id]; award({xp: checked?8:0, coins: checked?3:0, reason: checked?'Roadmap Task Complete':'Roadmap Task Updated', type:'Roadmap'}); saveProfileDebounced(); renderApp(); }
 function pauseModal(){ modal('Add Pause / Rest Day',`<div class="form-grid"><label><span class="label-title">Start Date</span><input id="pauseStart" type="date" value="${todayIso()}"></label><label><span class="label-title">End Date</span><input id="pauseEnd" type="date" value="${todayIso()}"></label></div><label><span class="label-title">Reason</span><input id="pauseReason" placeholder="Vacation, client travel, PTO, etc."></label>`,()=>{ const s=$('#pauseStart').value,e=$('#pauseEnd').value; if(!s||!e||parseLocal(s)>parseLocal(e))return toast('Pause date range is invalid.','error'); state.profile.roadmap.pauseBlocks.push({id:crypto.randomUUID(),start:s,end:e,reason:$('#pauseReason').value.trim()||'Rest Day'}); saveProfileDebounced(); renderApp(); },'Add Pause'); }
 function bonusModal(){ modal('Add Bonus Study Session',`<div class="form-grid"><label><span class="label-title">Date</span><input id="bonusDate" type="date" value="${todayIso()}"></label><label><span class="label-title">Minutes</span><input id="bonusMinutes" type="number" min="15" max="300" value="60"></label></div><label><span class="label-title">Session Title</span><input id="bonusTitle" placeholder="Weekend QAE Sprint"></label><label><span class="label-title">Description</span><textarea id="bonusDesc" placeholder="What will you cover?"></textarea></label>`,()=>{ const d=$('#bonusDate').value, mins=Number($('#bonusMinutes').value); if(!d||!mins||mins<15||mins>300)return toast('Bonus session needs a valid date and minutes.','error'); state.profile.roadmap.bonusSessions.push({id:crypto.randomUUID(),date:d,title:$('#bonusTitle').value.trim()||'Bonus Study Session',description:$('#bonusDesc').value.trim(),minutes:mins}); saveProfileDebounced(); renderApp(); },'Add Session'); }
-function updateRoadmapPct(days){ const tasks=days.flatMap(d=>d.tasks).filter(t=>!t.id.startsWith('pause')); const done=tasks.filter(t=>state.profile.roadmap.completedTasks[t.id]).length; state.profile.stats.roadmapPct=tasks.length?Math.round(done/tasks.length*100):0; }
+function uniqueRequiredTasks(days){ const map=new Map(); for(const task of days.flatMap(d=>d.tasks||[])){ if(task.id.startsWith('pause')||task.optional)continue; if(!map.has(task.id))map.set(task.id,task); } return [...map.values()]; }
+function updateRoadmapPct(days){ const tasks=uniqueRequiredTasks(days); const done=tasks.filter(t=>state.profile.roadmap.completedTasks[t.id]).length; state.profile.stats.roadmapPct=tasks.length?Math.round(done/tasks.length*100):0; }
 function dayComplete(d){ const required=d.tasks.filter(t=>!t.id.startsWith('pause') && !t.optional); return required.length>0 && required.every(t=>state.profile.roadmap.completedTasks[t.id]); }
 function findPause(iso){ return state.profile.roadmap.pauseBlocks.find(p=>iso>=p.start && iso<=p.end); } function findBonus(iso){ return state.profile.roadmap.bonusSessions.find(b=>b.date===iso); }
 function weekColor(i){ const colors=['#7c4dff','#00c2ff','#18c29c','#ffd166','#ff7ad9','#ff5c8a','#8fd3ff','#a78bfa','#fb923c','#34d399','#60a5fa','#f472b6']; return colors[(i-1)%colors.length]; }
@@ -539,7 +591,7 @@ function renderPractice(){
       <div class="panel"><h3>Log A QAE Practice Block Manually</h3><p class="helper">Use this when you only need score totals.</p><div class="form-grid"><label><span class="label-title">Domain</span><select id="qaeDomain">${ISACA_STUDY_PLAN.filter(d=>d.id!=='practice').map(d=>`<option value="${d.id}">${d.domain}: ${d.name}</option>`).join('')}</select></label><label><span class="label-title">Topic</span><select id="qaeTopic"></select></label><label><span class="label-title">Questions</span><input id="qaeTotal" type="number" min="1" max="150" value="10"></label><label><span class="label-title">Correct</span><input id="qaeCorrect" type="number" min="0" max="150" value="0"></label></div><label><span class="label-title">Notes</span><textarea id="qaeNotes" placeholder="Score context, traps, or review notes..."></textarea></label><button class="primary-button" id="addQae">Save QAE Log</button></div>
       <div class="panel"><div class="section-head"><div><p class="eyebrow">Missed Question Bank</p><h3>Capture And Review Missed Concepts</h3><p class="helper">Imported misses appear automatically; manual entries remain available.</p></div></div>${missedQuestionForm()}<div class="log-table">${(state.profile.missedQuestions||[]).length?state.profile.missedQuestions.map(missedQuestionRow).join(''):'<div class="empty">No missed concepts captured yet.</div>'}</div></div>
       <div class="panel"><div class="section-head"><div><p class="eyebrow">Imported Question Bank</p><h3>Recent Imported Review Items</h3></div></div><div class="log-table">${questionBankRows()}</div></div>
-      <div class="panel"><div class="section-head"><div><p class="eyebrow">QAE Trend</p><h3>Accuracy Over Time</h3></div></div><svg class="trend" id="qaeTrend" viewBox="0 0 600 160" preserveAspectRatio="none">${trendSvg()}</svg></div>
+      <div class="panel"><div class="section-head"><div><p class="eyebrow">QAE Trend</p><h3>Accuracy Over Time</h3></div></div><svg class="trend" id="qaeTrend" viewBox="0 0 640 230" preserveAspectRatio="xMidYMid meet">${trendSvg()}</svg></div>
       <div class="panel practice-span-all"><h3>QAE Logs</h3><div class="log-table">${state.profile.qaeLogs.length?state.profile.qaeLogs.map(qaeLogRow).join(''):'<div class="empty">No QAE logs yet.</div>'}</div></div>
     </div>
   </div>`;
@@ -557,64 +609,58 @@ function questionBankRows(){
   if(!list.length) return '<div class="empty">No imported QAE review items yet. Paste a QAE review dump above to build your adaptive study library.</div>';
   return list.map(q=>`<div class="log-row"><div><strong>${esc(q.knowledgeStatement || q.sessionTitle || q.domain || 'Imported QAE Item')}</strong><p class="helper">${esc(q.scope||'Personal')} · ${esc(q.domain || 'Unassigned Domain')} · Question ${q.questionNumber || '?'} · Correct ${q.correctAnswer || '?'}${q.userAnswerAtImport?` · Imported Answer ${q.userAnswerAtImport}`:''}</p><p>${esc((q.question||'').slice(0,220))}${(q.question||'').length>220?'...':''}</p></div><div class="button-row"><button class="secondary-button small" data-open-card-deck="${q.deckIds?.[0]||''}">Study Deck</button></div></div>`).join('');
 }
+function sessionLabelFromFilename(name=''){
+  return String(name).replace(/\.(docx|txt|md)$/i,'').replace(/[_-]+/g,' ').replace(/\s+/g,' ').trim();
+}
 function readQaeTextFile(){
   const file=$('#qaeImportFile')?.files?.[0]; if(!file) return;
-  const applyText=text=>{ $('#qaeImportText').value=String(text||''); toast(`Loaded ${file.name}.`); };
+  if(file.size>12*1024*1024)return toast('That file is larger than 12 MB. Use a smaller Word or text export.','error');
+  const inferred=sessionLabelFromFilename(file.name);
+  const applyText=text=>{ $('#qaeImportText').value=String(text||''); if(inferred)$('#qaeImportLabel').value=inferred; toast(`Loaded ${file.name}. Session label set from the filename.`); };
   if(file.name.toLowerCase().endsWith('.docx')){
     if(!window.mammoth) return toast('The Word import helper did not load. Paste the text directly or refresh and try again.','error');
     const reader=new FileReader();
     reader.onload=async()=>{ try{ const result=await window.mammoth.extractRawText({arrayBuffer:reader.result}); applyText(result.value); }catch(error){toast(`Could not read Word file: ${friendly(error)}`,'error');} };
-    reader.onerror=()=>toast('Could not read that Word file.','error');
-    reader.readAsArrayBuffer(file);
+    reader.onerror=()=>toast('Could not read that Word file.','error'); reader.readAsArrayBuffer(file);
   }else{
-    const reader=new FileReader();
-    reader.onload=()=>applyText(reader.result);
-    reader.onerror=()=>toast('Could not read that file. Try copying and pasting the text instead.','error');
-    reader.readAsText(file);
+    const reader=new FileReader(); reader.onload=()=>applyText(reader.result); reader.onerror=()=>toast('Could not read that file. Try copying and pasting the text instead.','error'); reader.readAsText(file);
   }
 }
 async function importQaePaste(previewOnly=false){
   const text=$('#qaeImportText')?.value || '';
-  const label=$('#qaeImportLabel')?.value?.trim() || 'Imported QAE Session';
+  const initialLabel=$('#qaeImportLabel')?.value?.trim() || sessionLabelFromFilename($('#qaeImportFile')?.files?.[0]?.name||'') || 'Imported QAE Session';
   const scope=$('#qaeImportScope')?.value || (state.profile.activeGroupId?'Guild':'Personal');
   if(scope==='Guild'&&!state.profile.activeGroupId) return toast('Join or create a Guild before importing into Guild scope.','error');
-  if(scope==='Public') return toast('Full ISACA QAE question imports cannot be published publicly. Choose Guild or Personal. Public decks are reserved for original study content.','error');
-  const parsed=parseQaePaste(text);
-  const questions=parsed.questions || [];
+  if(scope==='Public') return toast('Full ISACA QAE question imports cannot be published publicly. Choose Guild or Personal.','error');
+  const parsed=parseQaePaste(text); const questions=parsed.questions || [];
   if(!questions.length) return toast(`No QAE questions were parsed. ${parsed.warnings?.[0]||''}`,'error');
+  const previewRows=questions.map((q,i)=>`<div class="import-preview-row"><span class="bubble">${i+1}</span><div><strong>${esc((q.question||'Untitled Question').slice(0,150))}${(q.question||'').length>150?'…':''}</strong><small>${esc(q.domain||'Unassigned Domain')} · ${q.isCorrect===true?'Correct':q.isCorrect===false?'Missed':'Result Unknown'} · Answer ${esc(q.correctAnswer||'?')}</small></div></div>`).join('');
+  const body=`<label><span class="label-title">Lesson / Session Title</span><input id="confirmImportLabel" value="${escAttr(initialLabel)}"></label><div class="practice-summary"><div class="soft"><h3>${questions.length}</h3><p class="helper">Questions Parsed</p></div><div class="soft"><h3>${questions.filter(q=>q.isCorrect===true).length}</h3><p class="helper">Correct</p></div><div class="soft"><h3>${questions.filter(q=>q.isCorrect===false).length}</h3><p class="helper">Missed</p></div><div class="soft"><h3>${new Set(questions.map(q=>q.fingerprint)).size}</h3><p class="helper">Unique In This Import</p></div></div><div class="import-preview-list">${previewRows}</div>${parsed.warnings?.length?`<p class="helper danger-text">${esc(parsed.warnings.join(' '))}</p>`:''}`;
+  if(previewOnly){ modal('QAE Import Preview',body,()=>{},'Close'); return; }
+  modal('Confirm QAE Study Package',body,async()=>{
+    const label=$('#confirmImportLabel')?.value?.trim()||initialLabel; $('#qaeImportLabel').value=label;
+    await executeQaeImport({questions,parsed,label,scope});
+  },'Import Study Package');
+}
+async function executeQaeImport({questions,parsed,label,scope}){
   const bundle=buildImportBundle({questions,title:label,scope,uid:state.user.uid,groupId:state.profile.activeGroupId,importedBy:state.profile.displayName});
   const existingKeys=new Set((state.library.cards||[]).map(card=>`${card.scopeKey}:${card.id}`));
-  const uniqueNew=bundle.cards.filter(card=>!existingKeys.has(`${card.scopeKey}:${card.id}`));
-  const duplicates=bundle.cards.length-uniqueNew.length;
-  const correct=questions.filter(q=>q.isCorrect===true).length;
-  const missed=questions.filter(q=>q.isCorrect===false);
-  const domains=[...new Set(questions.map(q=>q.domain).filter(Boolean))].join(', ') || 'Imported QAE';
-  if(previewOnly){
-    modal('QAE Import Preview',`<div class="practice-summary"><div class="soft"><h3>${questions.length}</h3><p class="helper">Questions Parsed</p></div><div class="soft"><h3>${uniqueNew.length}</h3><p class="helper">New Unique Questions</p></div><div class="soft"><h3>${duplicates}</h3><p class="helper">Duplicates Skipped In Master Bank</p></div><div class="soft"><h3>${missed.length}</h3><p class="helper">Added To Missed Deck</p></div></div><div class="soft"><strong>Automatic Outputs</strong><p class="helper">1. Lesson Deck: ${esc(label)}<br>2. Master QAE Question Bank<br>3. Master Missed Questions<br>4. Multiple-Choice Quiz Bank<br>5. Individual Adaptive Review Progress</p>${parsed.warnings?.length?`<p class="helper danger-text">${esc(parsed.warnings.join(' '))}</p>`:''}</div>`,()=>{},'Close');
-    return;
-  }
+  const uniqueNew=bundle.cards.filter(card=>!existingKeys.has(`${card.scopeKey}:${card.id}`)); const duplicates=bundle.cards.length-uniqueNew.length;
+  const correct=questions.filter(q=>q.isCorrect===true).length; const missed=questions.filter(q=>q.isCorrect===false); const domains=[...new Set(questions.map(q=>q.domain).filter(Boolean))].join(', ') || 'Imported QAE';
   const duplicateSession=(state.profile.qaeImports||[]).some(item=>item.sessionFingerprint===bundle.sessionFingerprint&&item.scope===scope);
-  await confirmModal('Build Complete Study Package',`Import ${questions.length} questions into ${scope} scope? ControlQuest will build the lesson deck, deduplicate into the Master QAE Question Bank, add misses to the Master Missed Questions deck, and make every item available for flashcards and multiple-choice review. ${duplicates?`${duplicates} existing master questions will be linked without being duplicated.`:''}`, async()=>{
-    await saveStudyImport({uid:state.user.uid,groupId:state.profile.activeGroupId,decks:bundle.decks,cards:bundle.cards});
-    state.library=mergeUniqueLibrary(state.library,bundle);
-    if(scope==='Guild'&&state.group){state.group.studyLibraryUpdatedAt=new Date().toISOString();await saveGroup(state.group);}
-    const importedAt=new Date().toISOString();
-    const importId=crypto.randomUUID();
-    if(!duplicateSession){
-      const misses=questions.filter(q=>q.isCorrect===false).map(missedConceptFromParsedQuestion);
-      state.profile.missedQuestions.unshift(...misses);
-      state.profile.qaeLogs.unshift({id:crypto.randomUUID(),date:todayIso(),domain:domains,domainId:'imported',topic:label,total:questions.length,correct,notes:`Imported QAE study package. ${bundle.incorrect} questions added to the missed deck.`,createdAt:importedAt,source:'QAE Study Package Import'});
-      state.profile.stats.qaeQuestions=(state.profile.stats.qaeQuestions||0)+questions.length;
-      state.profile.stats.qaeCorrect=(state.profile.stats.qaeCorrect||0)+correct;
-    }
-    state.profile.qaeImports.unshift({id:importId,label,scope,date:todayIso(),createdAt:importedAt,total:questions.length,correct,missed:missed.length,domains,warnings:parsed.warnings||[],sessionFingerprint:bundle.sessionFingerprint,lessonDeckId:bundle.lessonDeckId,duplicateSession});
-    award({xp:duplicateSession?10:Math.min(200,30+questions.length*2+missed.length*3),coins:duplicateSession?3:Math.min(90,12+questions.length+missed.length*2),reason:duplicateSession?`Re-linked Existing QAE Session: ${label}`:`Built QAE Study Package: ${label}`,type:'QAE Import'});
-    await saveProfileDebounced(true);
-    $('#qaeImportText').value='';
-    state.selectedDeckId=bundle.lessonDeckId;
-    showCelebration('Study Package Ready',`${questions.length} questions are ready in Flashcards, Quiz Mode, Smart Review, and your Master Banks.`,()=>{state.activeView='tools';state.toolsTab='library';renderApp();},'Open Study Package');
-    renderApp();
-  });
+  await saveStudyImport({uid:state.user.uid,groupId:state.profile.activeGroupId,decks:bundle.decks,cards:bundle.cards});
+  state.library=mergeUniqueLibrary(state.library,bundle);
+  if(scope==='Guild'&&state.group){state.group.studyLibraryUpdatedAt=new Date().toISOString();await saveGroup(state.group);}
+  const importedAt=new Date().toISOString(); const importId=crypto.randomUUID();
+  if(!duplicateSession){
+    const misses=questions.filter(q=>q.isCorrect===false).map(missedConceptFromParsedQuestion); state.profile.missedQuestions.unshift(...misses);
+    state.profile.qaeLogs.unshift({id:crypto.randomUUID(),date:todayIso(),domain:domains,domainId:'imported',topic:label,total:questions.length,correct,notes:`Imported QAE study package. ${bundle.incorrect} questions added to the missed deck.`,createdAt:importedAt,source:'QAE Study Package Import'});
+    state.profile.stats.qaeQuestions=(state.profile.stats.qaeQuestions||0)+questions.length; state.profile.stats.qaeCorrect=(state.profile.stats.qaeCorrect||0)+correct;
+  }
+  state.profile.qaeImports.unshift({id:importId,label,scope,date:todayIso(),createdAt:importedAt,total:questions.length,correct,missed:missed.length,domains,warnings:parsed.warnings||[],sessionFingerprint:bundle.sessionFingerprint,lessonDeckId:bundle.lessonDeckId,duplicateSession,newUniqueQuestions:uniqueNew.length,duplicates});
+  award({xp:duplicateSession?10:Math.min(200,30+questions.length*2+missed.length*3),coins:duplicateSession?3:Math.min(90,12+questions.length+missed.length*2),reason:duplicateSession?`Re-linked Existing QAE Session: ${label}`:`Built QAE Study Package: ${label}`,type:'QAE Import'});
+  await saveProfileDebounced(true); $('#qaeImportText').value=''; state.selectedDeckId=bundle.lessonDeckId;
+  showCelebration('Study Package Ready',`${questions.length} questions imported · ${uniqueNew.length} new to the Master Bank · ${duplicates} duplicates linked.`,()=>{state.activeView='tools';state.toolsTab='library';renderApp();},'Open Study Package'); renderApp();
 }
 
 function addMissedToDeck(id){
@@ -637,7 +683,19 @@ function qaeLogRow(l){ const acc=Math.round(l.correct/l.total*100); return `<div
 function editQae(id){ const l=state.profile.qaeLogs.find(x=>x.id===id); if(!l)return; modal('Edit QAE Log',`<div class="form-grid"><input id="editQaeTotal" type="number" min="1" max="150" value="${l.total}"><input id="editQaeCorrect" type="number" min="0" max="150" value="${l.correct}"></div><textarea id="editQaeNotes">${esc(l.notes||'')}</textarea>`,()=>{const t=Number($('#editQaeTotal').value),c=Number($('#editQaeCorrect').value); if(!t||c<0||c>t)return toast('Invalid QAE values.','error'); recalcQaeStats(-l.total,-l.correct); l.total=t;l.correct=c;l.notes=$('#editQaeNotes').value.trim();recalcQaeStats(t,c);saveProfileDebounced();renderApp();},'Save Changes'); }
 function deleteQae(id){ const l=state.profile.qaeLogs.find(x=>x.id===id); if(!l)return; confirmModal('Delete QAE Log','Delete this QAE log and remove it from totals?',()=>{state.profile.qaeLogs=state.profile.qaeLogs.filter(x=>x.id!==id);recalcQaeStats(-l.total,-l.correct);saveProfileDebounced();renderApp();}); }
 function recalcQaeStats(t,c){ state.profile.stats.qaeQuestions=Math.max(0,(state.profile.stats.qaeQuestions||0)+t); state.profile.stats.qaeCorrect=Math.max(0,(state.profile.stats.qaeCorrect||0)+c); }
-function trendSvg(){ const logs=[...state.profile.qaeLogs].reverse().slice(-20); if(!logs.length)return `<text x="300" y="84" text-anchor="middle" fill="currentColor">No QAE Logs Yet</text>`; const pts=logs.map((l,i)=>[i/(logs.length-1||1)*560+20,140-(l.correct/l.total)*110]); const poly=pts.map(p=>p.join(',')).join(' '); return `<polyline points="${poly}" fill="none" stroke="url(#g)" stroke-width="5"/><defs><linearGradient id="g"><stop stop-color="#7c4dff"/><stop offset="1" stop-color="#00c2ff"/></linearGradient></defs>${pts.map(p=>`<circle cx="${p[0]}" cy="${p[1]}" r="5" fill="#00c2ff"/>`).join('')}`; }
+function trendSvg(){
+  const logs=[...state.profile.qaeLogs].reverse().slice(-20);
+  if(!logs.length)return `<text x="300" y="92" text-anchor="middle" fill="currentColor">No QAE Logs Yet</text>`;
+  const width=640,height=230,left=52,right=20,top=20,bottom=44,plotW=width-left-right,plotH=height-top-bottom;
+  const pts=logs.map((l,i)=>({x:left+(i/(logs.length-1||1))*plotW,y:top+(1-(l.correct/Math.max(1,l.total)))*plotH,acc:Math.round(l.correct/Math.max(1,l.total)*100),date:l.date||String(l.createdAt||'').slice(0,10),total:l.total}));
+  const grid=[0,25,50,75,100].map(v=>{const y=top+(1-v/100)*plotH;return `<line x1="${left}" y1="${y}" x2="${width-right}" y2="${y}" stroke="currentColor" opacity=".12"/><text x="${left-9}" y="${y+4}" text-anchor="end" fill="currentColor" opacity=".7" font-size="11">${v}%</text>`;}).join('');
+  const poly=pts.map(p=>`${p.x},${p.y}`).join(' ');
+  const labelEvery=Math.max(1,Math.ceil(logs.length/6));
+  const labels=pts.map((p,i)=>i%labelEvery===0||i===pts.length-1?`<text x="${p.x}" y="${height-15}" text-anchor="middle" fill="currentColor" opacity=".72" font-size="10">${esc(shortDate(p.date))}</text>`:'').join('');
+  return `<defs><linearGradient id="qaeTrendG"><stop stop-color="#7c4dff"/><stop offset="1" stop-color="#00c2ff"/></linearGradient></defs>${grid}<line x1="${left}" y1="${top}" x2="${left}" y2="${height-bottom}" stroke="currentColor" opacity=".25"/><line x1="${left}" y1="${height-bottom}" x2="${width-right}" y2="${height-bottom}" stroke="currentColor" opacity=".25"/><polyline points="${poly}" fill="none" stroke="url(#qaeTrendG)" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>${pts.map(p=>`<g><circle cx="${p.x}" cy="${p.y}" r="6" fill="#00c2ff" stroke="white" stroke-width="2"><title>${p.date}: ${p.acc}% (${p.total} questions)</title></circle><text x="${p.x}" y="${p.y-11}" text-anchor="middle" fill="currentColor" font-size="10" font-weight="800">${p.acc}%</text></g>`).join('')}${labels}`;
+}
+function shortDate(iso){ try{return new Intl.DateTimeFormat('en-US',{month:'short',day:'numeric'}).format(parseLocal(String(iso).slice(0,10)));}catch{return String(iso||'').slice(5,10);} }
+
 function mistakeForm(){return `<div class="soft"><div class="form-grid"><input id="mistakeTopic" placeholder="Topic / Rule"><select id="mistakeDomain">${DOMAIN_TOPICS.map(d=>`<option>${d.domain}: ${d.name}</option>`).join('')}</select></div><textarea id="mistakeWhy" placeholder="What did you pick, why was it wrong, and what is the reusable CISA logic?"></textarea><button class="primary-button small" id="addMistake">Add Mistake Rule</button></div>`;}
 function addMistake(){ const topic=$('#mistakeTopic').value.trim(); if(!topic)return toast('Add a mistake topic.','error'); state.profile.mistakes.unshift({id:crypto.randomUUID(),date:todayIso(),topic,domain:$('#mistakeDomain').value,why:$('#mistakeWhy').value.trim(),reviewed:false}); award({xp:12,coins:5,reason:'Mistake Rule Added',type:'Mistake'}); saveProfileDebounced(); renderApp(); }
 function mistakeRow(m){return `<div class="log-row"><div><strong>${esc(m.topic)}</strong><p class="helper">${esc(m.domain)} · ${m.reviewed?'Reviewed':'Needs Review'}</p><p>${esc(m.why||'')}</p></div><div class="button-row"><button class="secondary-button small" data-review-mistake="${m.id}">${m.reviewed?'Unreview':'Reviewed'}</button><button class="secondary-button small" data-edit-mistake="${m.id}">Edit</button><button class="danger-button small" data-delete-mistake="${m.id}">Delete</button></div></div>`;}
@@ -689,20 +747,26 @@ function renderDeckLibraryTab(){
     ${decks.length?`<div class="deck-grid advanced-decks">${decks.map(renderLibraryDeckCard).join('')}</div>`:`<div class="empty"><h3>No Study Decks Yet</h3><p>Open Practice Log and import your first QAE review dump. ControlQuest will build everything automatically.</p><button class="primary-button" data-go="practice">Open QAE Importer</button></div>`}`;
 }
 function renderLibraryDeckCard(deck){
-  const stats=currentDeckStats(deck); const cards=libraryCardsForDeck(deck);
-  return `<div class="deck-card advanced ${state.selectedDeckId===deck.id?'selected':''}">
-    <div class="section-head"><span class="app-icon cards">${svgIcon('cards')}</span>${scopeBadge(deck.scope)}</div>
+  const stats=currentDeckStats(deck); const cards=libraryCardsForDeck(deck); const accent=deckAccent(deck);
+  return `<div class="deck-card advanced ${state.selectedDeckId===deck.id?'selected':''}" style="--deck-accent:${accent}">
+    <div class="section-head"><span class="app-icon cards deck-icon">${svgIcon('cards')}</span>${scopeBadge(deck.scope)}</div>
     <h4>${esc(deck.title)}</h4><p class="helper">${esc(deck.description||'')}</p>
     <div class="deck-stat-grid"><span><strong>${cards.length}</strong><small>Cards</small></span><span><strong>${stats.due}</strong><small>Due</small></span><span><strong>${stats.mastered}</strong><small>Mastered</small></span><span><strong>${stats.accuracy}%</strong><small>Accuracy</small></span></div>
     <div class="button-row wrap"><button class="primary-button small" data-open-deck="${deck.id}" data-open-mode="review">Smart Review</button><button class="secondary-button small" data-open-deck="${deck.id}" data-open-mode="quiz">Quiz</button><button class="secondary-button small" data-open-deck="${deck.id}" data-open-mode="flashcards">Flashcards</button><button class="ghost-button small" data-add-card="${deck.id}">Add Card</button><button class="ghost-button small" data-export-library-deck="${deck.id}">Export</button>${!['master','missed'].includes(deck.kind)?`<button class="ghost-button small" data-edit-library-deck="${deck.id}">Edit</button><button class="danger-button small" data-delete-library-deck="${deck.id}">Delete</button>`:''}</div>
   </div>`;
 }
+function deckAccent(deck){
+  const palette=['#7c4dff','#00c2ff','#18c29c','#ffd166','#ff7ad9','#fb923c','#60a5fa','#a78bfa','#34d399','#f472b6','#22d3ee','#f59e0b'];
+  const score=String(deck?.id||deck?.title||'deck').split('').reduce((a,c)=>a+c.charCodeAt(0),0);
+  return palette[score%palette.length];
+}
+
 function renderSmartReviewTab(){
   const deck=selectedLibraryDeck(); if(!deck)return renderNoDeckCta(); const cards=libraryCardsForDeck(deck); const stats=currentDeckStats(deck);
   const settings=state.profile.preferences.studySettings||DEFAULT_REVIEW_SETTINGS; const introduced=newCardsIntroducedToday(); const newRemaining=Math.max(0,(settings.newCardsPerDay||20)-introduced);
   return `<div class="section-head"><div><p class="eyebrow">Adaptive Review</p><h3>${esc(deck.title)}</h3><p class="helper">Due and difficult cards are prioritized. Rate recall with Again, Hard, Good, or Easy so each question receives an individual next-review date.</p></div>${deckPicker('review')}</div>
     <div class="practice-summary"><div class="soft"><h3>${stats.due}</h3><p class="helper">Due Now</p></div><div class="soft"><h3>${newRemaining}</h3><p class="helper">New Cards Remaining Today</p></div><div class="soft"><h3>${stats.learning}</h3><p class="helper">Learning</p></div><div class="soft"><h3>${stats.mastered}</h3><p class="helper">Mastered</p></div><div class="soft"><h3>${stats.leeches||0}</h3><p class="helper">High-Lapse Cards</p></div></div>
-    ${state.studySession?.mode==='review'?renderStudyRunner():`<div class="grid three"><button class="study-mode-card" data-start-study="due"><span class="app-icon target">${svgIcon('target')}</span><strong>Study Due Cards</strong><small>Prioritizes overdue, lapsed, and imported misses.</small></button><button class="study-mode-card" data-start-study="missed"><span class="app-icon qae">${svgIcon('qae')}</span><strong>Missed Questions Only</strong><small>Targets import misses and cards failed during review.</small></button><button class="study-mode-card" data-start-study="new"><span class="app-icon cards">${svgIcon('cards')}</span><strong>Learn New Cards</strong><small>Introduces unseen questions up to your daily limit.</small></button></div>`}`;
+    ${state.studySession?.mode==='review'?renderStudyRunner():`<div class="grid four adaptive-review-modes"><button class="study-mode-card" data-start-study="due"><span class="app-icon target">${svgIcon('target')}</span><strong>Study Due Cards</strong><small>Prioritizes overdue, lapsed, and imported misses.</small></button><button class="study-mode-card" data-start-study="missed"><span class="app-icon qae">${svgIcon('qae')}</span><strong>Missed Questions Only</strong><small>Targets import misses and cards failed during review.</small></button><button class="study-mode-card" data-start-study="new"><span class="app-icon cards">${svgIcon('cards')}</span><strong>Learn New Cards</strong><small>Introduces unseen questions up to your daily limit.</small></button><button class="study-mode-card" data-start-study="mastered"><span class="app-icon xp">${svgIcon('xp')}</span><strong>Review Mastered Cards</strong><small>Reopen cards you already completed whenever you want a confidence check.</small></button></div>`}`;
 }
 function renderFlashcardsTab(){
   const deck=selectedLibraryDeck(); if(!deck)return renderNoDeckCta();
@@ -728,7 +792,7 @@ function startStudySession(mode, queueMode='due'){
   if(!queue.length&&queueMode==='due') queue=buildStudyQueue(cards,state.library.progress,{mode:'all',limit:Math.min(20,limit)});
   if(!queue.length)return toast('No cards are available for this mode.','error');
   state.studySession={id:crypto.randomUUID(),mode,queueMode,deckId:deck.id,deckScopeKey:deck.scopeKey,queue:queue.map(libraryCardKey),index:0,correct:0,incorrect:0,ratings:{Again:0,Hard:0,Good:0,Easy:0},startedAt:new Date().toISOString(),answerSubmitted:false,selectedAnswer:null,revealed:false};
-  state.reviewStartedAt=Date.now(); state.deckFlipped=false; state.quizSelection=null; state.quizRevealed=false; renderApp();
+  state.reviewStartedAt=Date.now(); state.deckFlipped=false; state.quizSelection=null; state.quizRevealed=false; persistActiveStudySession(); renderApp();
 }
 function renderStudyRunner(){
   const session=state.studySession; const deck=libraryDecks().find(d=>d.id===session.deckId); const card=currentStudyCard();
@@ -737,26 +801,54 @@ function renderStudyRunner(){
   return `<div class="study-runner"><div class="study-runner-head"><div><span class="bubble">${session.index+1} / ${session.queue.length}</span><span class="bubble good">${session.correct} Correct</span><span class="bubble warn">${session.incorrect} Missed</span><span class="bubble">${esc(mastery)}</span></div><button class="ghost-button small" id="endStudySession">End Session</button></div><div class="progress"><span style="width:${progressPct}%"></span></div>${session.mode==='quiz'?renderQuizQuestion(card):renderAdaptiveFlashcard(card)}<div class="study-source"><span>${esc(card.domain||'Imported QAE')}</span><span>${esc(card.knowledgeStatement||card.sessionTitle||'')}</span></div></div>`;
 }
 function renderAdaptiveFlashcard(card){
-  const back=formatCardBack(card); const flipped=state.deckFlipped;
-  return `<button class="adaptive-flashcard ${flipped?'is-flipped':''}" id="adaptiveFlashcard"><div class="card-face"><small>${flipped?'Answer And Explanation':'Question'}</small>${flipped?`<h3>${esc(back.answerLine)}</h3><p>${esc(back.explanation)}</p>${renderAllJustifications(card)}`:`<h2>${esc(card.question)}</h2>${renderChoicesReadOnly(card)}`}<span class="flip-hint">${flipped?'Rate your recall below':'Click to reveal answer'}</span></div></button>${flipped?ratingButtons():''}`;
+  const back=formatCardBack(card); const revealed=state.deckFlipped; const selected=state.studySession?.selectedAnswer; const entries=Object.entries(card.choices||{}); const hasChoices=entries.length>=2;
+  const isCorrect=revealed&&hasChoices&&selected===card.correctAnswer;
+  return `<div class="adaptive-flashcard ${revealed?'is-flipped':''}"><div class="card-face"><small>${revealed?'Answer And Explanation':'Choose An Answer, Then Reveal'}</small>${revealed?`<div class="answer-panel ${hasChoices?(isCorrect?'success':'error'):'success'}"><h3>${hasChoices?(isCorrect?'Correct':'Review This One'):'Answer'}</h3><p><strong>${esc(back.answerLine)}</strong></p>${hasChoices?`<p class="helper">Your Answer: ${esc(selected||'—')}</p>`:''}</div><p>${esc(back.explanation)}</p>${renderAllJustifications(card)}`:`<h2>${esc(card.question)}</h2>${hasChoices?`<div class="quiz-options flash-choice-grid">${entries.map(([letter,text])=>`<button class="quiz-option ${selected===letter?'selected':''}" data-flash-choice="${letter}"><strong>${letter}</strong><span>${esc(text)}</span></button>`).join('')}</div>`:`<div class="simple-recall-prompt"><span class="app-icon cards">${svgIcon('cards')}</span><p>Recall the answer in your own words. Then reveal the explanation.</p></div>`}<div class="button-row centered"><button class="primary-button" id="revealAdaptiveCard" ${hasChoices&&!selected?'disabled':''}>Reveal Answer</button></div>`}</div></div>${revealed?ratingButtons(card):''}`;
 }
 function renderQuizQuestion(card){
   const submitted=state.studySession.answerSubmitted; const selected=state.studySession.selectedAnswer; const isCorrect=selected===card.correctAnswer;
-  return `<div class="quiz-card"><p class="eyebrow">Choose The Best Answer</p><h2>${esc(card.question)}</h2><div class="quiz-options">${Object.entries(card.choices||{}).map(([letter,text])=>`<button class="quiz-option ${selected===letter?'selected':''} ${submitted&&letter===card.correctAnswer?'correct':''} ${submitted&&selected===letter&&letter!==card.correctAnswer?'incorrect':''}" data-quiz-choice="${letter}" ${submitted?'disabled':''}><strong>${letter}</strong><span>${esc(text)}</span></button>`).join('')}</div>${!submitted?`<button class="primary-button" id="submitQuizAnswer" ${!selected?'disabled':''}>Submit Answer</button>`:`<div class="answer-panel ${isCorrect?'success':'error'}"><h3>${isCorrect?'Correct':'Review This One Again'}</h3><p><strong>Correct Answer: ${card.correctAnswer}. ${esc(card.choices?.[card.correctAnswer]||'')}</strong></p>${renderAllJustifications(card)}</div>${ratingButtons(isCorrect?'Good':'Again')}`}</div>`;
+  return `<div class="quiz-card"><p class="eyebrow">Choose The Best Answer</p><h2>${esc(card.question)}</h2><div class="quiz-options">${Object.entries(card.choices||{}).map(([letter,text])=>`<button class="quiz-option ${selected===letter?'selected':''} ${submitted&&letter===card.correctAnswer?'correct':''} ${submitted&&selected===letter&&letter!==card.correctAnswer?'incorrect':''}" data-quiz-choice="${letter}" ${submitted?'disabled':''}><strong>${letter}</strong><span>${esc(text)}</span></button>`).join('')}</div>${!submitted?`<button class="primary-button" id="submitQuizAnswer" ${!selected?'disabled':''}>Submit Answer</button>`:`<div class="answer-panel ${isCorrect?'success':'error'}"><h3>${isCorrect?'Correct':'Review This One Again'}</h3><p><strong>Correct Answer: ${card.correctAnswer}. ${esc(card.choices?.[card.correctAnswer]||'')}</strong></p>${renderAllJustifications(card)}</div>${ratingButtons(card)}`}</div>`;
 }
 function renderChoicesReadOnly(card){ const entries=Object.entries(card.choices||{}); return entries.length?`<div class="read-only-choices">${entries.map(([l,t])=>`<div><strong>${l}</strong><span>${esc(t)}</span></div>`).join('')}</div>`:''; }
 function renderAllJustifications(card){ const entries=Object.entries(card.justifications||{}).filter(([k])=>k!=='_'); if(!entries.length)return `<p class="helper">${esc(card.justifications?._||'No detailed justification was included in the import.')}</p>`; return `<details class="justification-details" open><summary>Why Each Option Is Right Or Wrong</summary>${entries.map(([letter,text])=>`<div class="justification-row ${letter===card.correctAnswer?'correct':''}"><strong>${letter}</strong><p>${esc(text)}</p></div>`).join('')}</details>`; }
-function ratingButtons(recommended=''){ return `<div class="rating-panel"><p class="helper">How well did you recall this?</p><div class="rating-grid">${[['Again','< 10 Min'],['Hard','Soon'],['Good','Normal'],['Easy','Longer']].map(([rating,hint])=>`<button class="rating-button ${rating.toLowerCase()} ${recommended===rating?'recommended':''}" data-rate-card="${rating}"><strong>${rating}</strong><small>${hint}</small></button>`).join('')}</div></div>`; }
+function reviewGapForRating(rating,session=state.studySession){
+  const remaining=Math.max(0,(session?.queue?.length||0)-(session?.index||0)-1);
+  if(rating==='Again')return Math.min(3,Math.max(1,remaining));
+  if(rating==='Hard')return Math.min(8,Math.max(2,remaining));
+  if(rating==='Good')return remaining>=12?Math.min(20,remaining):null;
+  return null;
+}
+function ratingFace(rating){
+  const faces={Again:'<circle cx="32" cy="32" r="24" fill="#ff5c8a"/><circle cx="24" cy="27" r="3" fill="white"/><circle cx="40" cy="27" r="3" fill="white"/><path d="M22 43c6-7 14-7 20 0" stroke="white" stroke-width="4" fill="none" stroke-linecap="round"/>',Hard:'<circle cx="32" cy="32" r="24" fill="#ffd166"/><circle cx="24" cy="27" r="3" fill="#14213d"/><circle cx="40" cy="27" r="3" fill="#14213d"/><path d="M23 42h18" stroke="#14213d" stroke-width="4" stroke-linecap="round"/>',Good:'<circle cx="32" cy="32" r="24" fill="#18c29c"/><circle cx="24" cy="27" r="3" fill="white"/><circle cx="40" cy="27" r="3" fill="white"/><path d="M21 39c7 8 15 8 22 0" stroke="white" stroke-width="4" fill="none" stroke-linecap="round"/>',Easy:'<circle cx="32" cy="32" r="24" fill="#00c2ff"/><path d="M20 26l7 3-7 3M44 26l-7 3 7 3" stroke="white" stroke-width="4" fill="none" stroke-linecap="round"/><path d="M20 39c8 10 16 10 24 0" stroke="white" stroke-width="4" fill="none" stroke-linecap="round"/>'};
+  return `<svg viewBox="0 0 64 64" aria-hidden="true">${faces[rating]}</svg>`;
+}
+function ratingButtons(card){
+  const selected=state.studySession?.selectedAnswer; const hasChoices=Object.keys(card?.choices||{}).length>=2; const correct=hasChoices?selected===card.correctAnswer:null;
+  const defs={Again:'Did Not Know It',Hard:'Remembered With Effort',Good:'Recalled Correctly',Easy:'Instant Recall'};
+  return `<div class="rating-panel"><p class="helper">${hasChoices?`You selected ${selected||'—'} and ${correct?'answered correctly':'missed this question'}. Rate the strength of your memory so ControlQuest can place it later in this session and schedule the next review.`:'Rate how confidently you recalled the answer.'}</p><div class="rating-grid">${['Again','Hard','Good','Easy'].map(rating=>{const gap=reviewGapForRating(rating);const hint=rating==='Easy'?'Moves To A Later Session':gap?`Returns In ${gap} Card${gap===1?'':'s'}`:'Scheduled Later';return `<button class="rating-button ${rating.toLowerCase()}" data-rate-card="${rating}"><span class="rating-face" aria-hidden="true">${ratingFace(rating)}</span><strong>${rating}</strong><span>${defs[rating]}</span><small>${hint}</small></button>`;}).join('')}</div></div>`;
+}
+function persistActiveStudySession(){
+  if(!state.profile)return; state.profile.activeStudySession=state.studySession?{...state.studySession,deckFlipped:state.deckFlipped,reviewStartedAt:state.reviewStartedAt}:null; saveProfileDebounced();
+}
+function restoreActiveStudySession(){
+  const saved=state.profile?.activeStudySession; if(!saved?.queue?.length)return; const valid=saved.queue.some(key=>libraryCardFromKey(key)); if(!valid){state.profile.activeStudySession=null;return;} state.studySession=saved; state.deckFlipped=!!saved.deckFlipped; state.reviewStartedAt=saved.reviewStartedAt||Date.now();
+}
+function clearActiveStudySession(){ state.studySession=null; state.deckFlipped=false; if(state.profile){state.profile.activeStudySession=null;saveProfileDebounced();} }
+function revealAdaptiveCard(){
+  const card=currentStudyCard(); if(!card)return; const hasChoices=Object.keys(card.choices||{}).length>=2; if(hasChoices&&!state.studySession.selectedAnswer)return toast('Select an answer before revealing the card.','error'); state.deckFlipped=true; state.studySession.answerSubmitted=true; persistActiveStudySession(); renderApp();
+}
 async function applyCardRating(rating){
   const session=state.studySession, card=currentStudyCard(); if(!session||!card)return;
-  const key=progressKey(card); const old=state.library.progress[key]||defaultProgress(card,state.user.uid); const next=rateCard(card,old,rating,state.profile.preferences.studySettings||DEFAULT_REVIEW_SETTINGS);
-  const correct=rating!=='Again'; const event=createReviewEvent({uid:state.user.uid,card,deckId:session.deckId,mode:session.mode,rating,correct,responseTimeMs:Date.now()-(state.reviewStartedAt||Date.now()),sessionId:session.id,groupId:state.profile.activeGroupId,wasNew:!(old.repetitions||0)});
+  const key=progressKey(card); const old=state.library.progress[key]||defaultProgress(card,state.user.uid); const hasChoices=Object.keys(card.choices||{}).length>=2; const answerCorrect=hasChoices?session.selectedAnswer===card.correctAnswer:rating!=='Again';
+  const next=rateCard(card,old,rating,state.profile.preferences.studySettings||DEFAULT_REVIEW_SETTINGS);
+  const event=createReviewEvent({uid:state.user.uid,card,deckId:session.deckId,mode:session.mode,rating,correct:answerCorrect,responseTimeMs:Date.now()-(state.reviewStartedAt||Date.now()),sessionId:session.id,groupId:state.profile.activeGroupId,wasNew:!(old.repetitions||0)});
   state.library.progress[key]=next; state.library.reviews.unshift(event); state.library.reviews=state.library.reviews.slice(0,1000);
   await Promise.all([saveStudyProgress(state.user.uid,next),saveStudyReview(state.user.uid,event)]);
-  session.ratings[rating]=(session.ratings[rating]||0)+1; if(correct)session.correct++;else session.incorrect++;
-  state.profile.studyHistory.reviews=(state.profile.studyHistory.reviews||0)+1; state.profile.studyHistory.correct=(state.profile.studyHistory.correct||0)+(correct?1:0); state.profile.studyHistory.incorrect=(state.profile.studyHistory.incorrect||0)+(correct?0:1);
-  award({xp:correct?4:2,coins:correct?2:1,reason:`Study Review: ${rating}`,type:'Flashcards'});
-  session.index++; session.answerSubmitted=false;session.selectedAnswer=null;state.deckFlipped=false;state.quizSelection=null;state.quizRevealed=false;state.reviewStartedAt=Date.now(); await saveProfileDebounced(true); renderApp();
+  session.ratings[rating]=(session.ratings[rating]||0)+1; if(answerCorrect)session.correct++;else session.incorrect++;
+  const gap=reviewGapForRating(rating,session); const currentKey=session.queue[session.index]; if(gap){ const insertAt=Math.min(session.queue.length,session.index+1+gap); session.queue.splice(insertAt,0,currentKey); }
+  state.profile.studyHistory.reviews=(state.profile.studyHistory.reviews||0)+1; state.profile.studyHistory.correct=(state.profile.studyHistory.correct||0)+(answerCorrect?1:0); state.profile.studyHistory.incorrect=(state.profile.studyHistory.incorrect||0)+(answerCorrect?0:1);
+  award({xp:answerCorrect?4:2,coins:answerCorrect?2:1,reason:`Study Review: ${rating}`,type:'Flashcards'});
+  session.index++; session.answerSubmitted=false; session.selectedAnswer=null; state.deckFlipped=false; state.reviewStartedAt=Date.now(); persistActiveStudySession(); await saveProfileDebounced(true); renderApp();
 }
 function renderStudySessionComplete(){ const s=state.studySession; const total=(s.correct||0)+(s.incorrect||0); const pct=total?Math.round(s.correct/total*100):0; return `<div class="study-complete"><span class="app-icon xp">${svgIcon('xp')}</span><h2>Review Session Complete</h2><div class="practice-summary"><div class="soft"><h3>${total}</h3><p class="helper">Cards Reviewed</p></div><div class="soft"><h3>${pct}%</h3><p class="helper">Recall Accuracy</p></div><div class="soft"><h3>${s.ratings?.Again||0}</h3><p class="helper">Again</p></div><div class="soft"><h3>${s.ratings?.Easy||0}</h3><p class="helper">Easy</p></div></div><button class="primary-button" id="finishStudySession">Return To Deck</button></div>`; }
 
@@ -768,69 +860,98 @@ function renderGuildStudyTab(){
   return renderGuildStudySession(gs);
 }
 function renderGuildStudySession(gs){
-  const card=libraryCardFromKey(gs.cardKeys?.[gs.index||0]); if(!card)return `<div class="empty"><h3>Guild Session Complete</h3>${gs.gameType==='guild-race'?renderGuildRaceTrack(gs,Object.values(state.group.members||{})):''}<button class="primary-button" id="endGuildStudy">Close Session</button></div>`;
-  const response=gs.responses?.[state.user.uid]; const members=Object.values(state.group.members||{}); const scores=gs.scores||{};
-  return `<div class="guild-study-live"><div class="section-head"><div><p class="eyebrow">${gs.gameType==='guild-race'?'Live Guild Game':'Live Guild Session'}</p><h3>${esc(gs.title||'Guild Review')}</h3></div><div class="button-row"><span class="bubble">${(gs.index||0)+1} / ${gs.cardKeys.length}</span><button class="danger-button small" id="endGuildStudy">End</button></div></div>${gs.gameType==='guild-race'?renderGuildRaceTrack(gs,members):''}<h2>${esc(card.question)}</h2><div class="quiz-options">${Object.entries(card.choices||{}).map(([letter,text])=>`<button class="quiz-option ${response?.answer===letter?'selected':''} ${gs.revealed&&letter===card.correctAnswer?'correct':''}" data-guild-answer="${letter}" ${response||gs.revealed?'disabled':''}><strong>${letter}</strong><span>${esc(text)}</span></button>`).join('')}</div><div class="guild-response-grid">${members.map(m=>`<div class="member-response"><strong>${esc(m.name)}</strong><span class="bubble ${gs.responses?.[m.uid]?.correct?'good':gs.responses?.[m.uid]?'warn':''}">${gs.responses?.[m.uid]?`${gs.responses[m.uid].answer} · ${gs.responses[m.uid].correct?'Correct':'Missed'}`:'Thinking...'}</span><small>${scores[m.uid]||0} Points</small></div>`).join('')}</div>${gs.revealed?`<div class="answer-panel success"><h3>${card.correctAnswer}. ${esc(card.choices?.[card.correctAnswer]||'')}</h3>${renderAllJustifications(card)}</div><button class="primary-button" id="nextGuildQuestion">Next Question</button>`:`<button class="secondary-button" id="revealGuildAnswer">Reveal Answer</button>`}</div>`;
+  const card=libraryCardFromKey(gs.cardKeys?.[gs.index||0]);
+  if(!card)return `<div class="empty"><h3>Guild Session Complete</h3>${renderGuildRaceTrack(gs,Object.values(state.group.members||{}))}<button class="primary-button" id="endGuildStudy">Close Session</button></div>`;
+  const response=gs.responses?.[state.user.uid]; const members=Object.values(state.group.members||{}); const scores=gs.scores||{}; const allAnswered=allGuildMembersAnswered(gs,members);
+  if(gs.revealed) queueMicrotask(()=>recordLocalGuildReviewIfNeeded(gs,card));
+  return `<div class="guild-study-live"><div class="section-head"><div><p class="eyebrow">Live Guild Starship Review</p><h3>${esc(gs.title||'Guild Review')}</h3><p class="helper">Answers stay private until every active member locks one in and someone reveals the result.</p></div><div class="button-row"><span class="bubble">${(gs.index||0)+1} / ${gs.cardKeys.length}</span><button class="danger-button small" id="endGuildStudy">End</button></div></div>${renderGuildRaceTrack(gs,members)}<h2>${esc(card.question)}</h2><div class="quiz-options">${Object.entries(card.choices||{}).map(([letter,text])=>`<button class="quiz-option ${response?.answer===letter?'selected':''} ${gs.revealed&&letter===card.correctAnswer?'correct':''} ${gs.revealed&&response?.answer===letter&&letter!==card.correctAnswer?'incorrect':''}" data-guild-answer="${letter}" ${gs.revealed?'disabled':''}><strong>${letter}</strong><span>${esc(text)}</span></button>`).join('')}</div><div class="guild-response-grid">${members.map(m=>{const r=gs.responses?.[m.uid];const label=gs.revealed?(r?`${r.answer} · ${r.correct?'Correct':'Missed'}`:'No Answer'):(r?'Answer Locked In':'Thinking…');return `<div class="member-response"><strong>${esc(m.name)}</strong><span class="bubble ${gs.revealed?(r?.correct?'good':r?'warn':''):(r?'good':'')}">${label}</span><small>${scores[m.uid]||0} Points</small></div>`;}).join('')}</div>${gs.revealed?`<div class="answer-panel success"><h3>${card.correctAnswer}. ${esc(card.choices?.[card.correctAnswer]||'')}</h3>${renderAllJustifications(card)}</div><button class="primary-button" id="nextGuildQuestion">Next Question</button>`:`<div class="reveal-gate"><p class="helper">${allAnswered?'Everyone is locked in. Reveal whenever your group is ready.':`${Object.keys(gs.responses||{}).length} of ${members.length} members locked in.`}</p><button class="primary-button" id="revealGuildAnswer" ${allAnswered?'':'disabled'}>Reveal Answers</button></div>`}</div>`;
 }
+function allGuildMembersAnswered(gs,members=Object.values(state.group?.members||{})){ return members.length>0 && members.every(m=>gs.responses?.[m.uid]?.answer); }
+async function recordLocalGuildReviewIfNeeded(gs,card){
+  if(!state.profile||!state.user||!gs?.revealed)return; state.profile.guildReviewRecorded ||= {}; const marker=`${gs.id}:${gs.index}`; if(state.profile.guildReviewRecorded[marker])return;
+  const answer=gs.responses?.[state.user.uid]?.answer; if(!answer)return; const correct=answer===card.correctAnswer; const old=state.library.progress[progressKey(card)]||defaultProgress(card,state.user.uid); const rating=correct?'Good':'Again'; const next=rateCard(card,old,rating,state.profile.preferences.studySettings||DEFAULT_REVIEW_SETTINGS);
+  const event=createReviewEvent({uid:state.user.uid,card,deckId:gs.deckId,mode:'guild-study',rating,correct,responseTimeMs:0,sessionId:gs.id,groupId:state.profile.activeGroupId,wasNew:!(old.repetitions||0)});
+  state.library.progress[progressKey(card)]=next; state.library.reviews.unshift(event); state.profile.guildReviewRecorded[marker]=new Date().toISOString(); state.profile.studyHistory.reviews=(state.profile.studyHistory.reviews||0)+1; state.profile.studyHistory.correct=(state.profile.studyHistory.correct||0)+(correct?1:0); state.profile.studyHistory.incorrect=(state.profile.studyHistory.incorrect||0)+(correct?0:1);
+  await Promise.all([saveStudyProgress(state.user.uid,next),saveStudyReview(state.user.uid,event),saveProfileDebounced(true)]);
+}
+
 function renderStudyGamesTab(){
   const deck=selectedLibraryDeck(); if(!deck)return renderNoDeckCta();
   const games=[
     ['missed-gauntlet','Missed Question Gauntlet','Three animated hearts. Each miss removes one life until the run ends.','qae'],
-    ['confidence-climb','Confidence Climb','Correct answers move your owl up the mountain; misses slide it down.','target'],
-    ['speed-audit','60-Second Audit Sprint','A live timer counts down while you build the longest answer streak possible.','timer'],
-    ['guild-race','Guild Avatar Race','Launch a synchronized Guild race where each correct answer moves a member avatar toward the finish.','guild']
+    ['confidence-climb','Confidence Climb','Correct answers move your owl up an animated mountain route; misses slide it down.','target'],
+    ['speed-audit','60-Second Audit Sprint','A live countdown measures the longest correct-answer streak you can build.','timer'],
+    ['space-odyssey','Assurance Odyssey','A persistent space-adventure campaign with missions, upgrades, energy, and saved progress.','arcade']
   ];
-  return `<div class="section-head"><div><p class="eyebrow">Question-Powered Games</p><h3>Games Built From Your Real Imported Library</h3><p class="helper">Every game opens in a focused overlay and draws only from the selected deck or its missed-question subset.</p></div>${deckPicker('games')}</div><div class="grid two">${games.map(([id,title,desc,icon])=>`<div class="game-card"><span class="app-icon ${icon}">${svgIcon(icon)}</span><h4>${title}</h4><p class="helper">${desc}</p><button class="primary-button small" data-library-game="${id}">Play</button></div>`).join('')}</div>`;
+  return `<div class="section-head"><div><p class="eyebrow">Question-Powered Games</p><h3>Games Built From Your Real Imported Library</h3><p class="helper">Games open in a focused overlay and draw from the selected lesson, Master QAE bank, missed deck, or Smart Review queue.</p></div>${deckPicker('games')}</div><div class="grid two">${games.map(([id,title,desc,icon])=>`<div class="game-card"><span class="app-icon ${icon}">${svgIcon(icon)}</span><h4>${title}</h4><p class="helper">${desc}</p><button class="primary-button small" data-library-game="${id}">Play</button></div>`).join('')}</div>`;
 }
 async function startLibraryGame(type){
-  if(type==='guild-race'){ await startGuildRace(); return; }
   const deck=selectedLibraryDeck(); let cards=libraryCardsForDeck(deck).filter(c=>c.correctAnswer&&Object.keys(c.choices||{}).length>=2);
   if(type==='missed-gauntlet')cards=cards.filter(c=>c.wasCorrectAtImport===false||(state.library.progress[progressKey(c)]?.incorrectCount||0)>0);
   if(!cards.length)return toast('This deck does not have eligible multiple-choice cards for that game.','error');
-  const shuffled=[...cards].sort(()=>Math.random()-.5).slice(0,30);
-  state.gameState={type,deckId:deck.id,queue:shuffled.map(libraryCardKey),index:0,score:0,lives:3,streak:0,bestStreak:0,correct:0,incorrect:0,climb:12,startedAt:Date.now(),endsAt:type==='speed-audit'?Date.now()+60000:null};
+  const shuffled=[...cards].sort(()=>Math.random()-.5).slice(0,type==='space-odyssey'?40:30);
+  const campaign=deepMerge({chapter:1,sector:1,energy:5,maxEnergy:5,shipLevel:1,stars:0,missionsCompleted:0,correct:0,incorrect:0,lastPlayedAt:null},state.profile.spaceQuestProgress||{});
+  state.gameState={type,deckId:deck.id,queue:shuffled.map(libraryCardKey),index:0,score:0,lives:3,streak:0,bestStreak:0,correct:0,incorrect:0,climb:12,startedAt:Date.now(),endsAt:type==='speed-audit'?Date.now()+60000:null,campaign:type==='space-odyssey'?campaign:null};
   renderApp();
 }
 function renderLibraryGameArena(){ return state.gameState?renderLibraryGameOverlay():''; }
-function answerLibraryGame(letter){
+async function answerLibraryGame(letter){
   const g=state.gameState,card=libraryCardFromKey(g?.queue?.[g.index]); if(!g||!card)return;
   if(g.type==='speed-audit'&&Date.now()>=g.endsAt){g.index=g.queue.length;renderApp();return;}
   const correct=letter===card.correctAnswer;
   if(correct){g.score+=100+g.streak*15;g.streak++;g.correct++;g.climb=Math.min(100,(g.climb||12)+14);g.bestStreak=Math.max(g.bestStreak,g.streak);}else{g.streak=0;g.incorrect++;g.climb=Math.max(4,(g.climb||12)-10);if(g.type==='missed-gauntlet')g.lives--;}
+  if(g.type==='space-odyssey'){
+    const c=g.campaign; if(correct){c.stars+=12+Math.min(18,g.streak*2);c.correct++;}else{c.energy=Math.max(0,c.energy-1);c.incorrect++;}
+    if(correct&&(g.correct%5===0)){c.sector++;c.missionsCompleted++;if(c.sector>5){c.chapter++;c.sector=1;c.shipLevel++;c.maxEnergy=Math.min(9,(c.maxEnergy||5)+1);c.energy=c.maxEnergy;}}
+    c.lastPlayedAt=new Date().toISOString(); state.profile.spaceQuestProgress={...c}; await saveProfileDebounced(true);
+  }
   g.index++;
-  if((g.type==='missed-gauntlet'&&g.lives<=0)||(g.type==='speed-audit'&&Date.now()>=g.endsAt))g.index=g.queue.length;
+  if((g.type==='missed-gauntlet'&&g.lives<=0)||(g.type==='speed-audit'&&Date.now()>=g.endsAt)||(g.type==='space-odyssey'&&g.campaign.energy<=0))g.index=g.queue.length;
   renderApp();
 }
-function renderLibraryGameComplete(g){ return `<div class="game-complete"><span class="app-icon arcade">${svgIcon('arcade')}</span><h2>Game Complete</h2><div class="practice-summary"><div class="soft"><h3>${g.score}</h3><p class="helper">Score</p></div><div class="soft"><h3>${g.bestStreak}</h3><p class="helper">Best Answer Streak</p></div><div class="soft"><h3>${g.correct||0}</h3><p class="helper">Correct</p></div><div class="soft"><h3>${g.incorrect||0}</h3><p class="helper">Missed</p></div></div><button class="primary-button" id="finishLibraryGame">Collect Rewards</button></div>`; }
-function finishLibraryGame(){
-  const g=state.gameState;if(!g)return;const xp=Math.min(80,15+Math.round(g.score/100));const coins=Math.min(35,5+Math.round(g.score/300));
-  state.profile.gameStats ||= {plays:0,highScores:{},history:[]}; state.profile.gameStats.plays++; state.profile.gameStats.highScores[g.type]=Math.max(state.profile.gameStats.highScores[g.type]||0,g.score); state.profile.gameStats.history.unshift({id:crypto.randomUUID(),type:g.type,score:g.score,correct:g.correct||0,incorrect:g.incorrect||0,date:new Date().toISOString()}); state.profile.gameStats.history=state.profile.gameStats.history.slice(0,100);
-  award({xp,coins,reason:`Question Game Complete: ${titleCase(g.type)}`,type:'Arcade'});state.gameState=null;saveProfileDebounced();showCelebration('Game Rewards Collected',`+${xp} XP · +${coins} Audit Coins`);renderApp();
+function renderLibraryGameComplete(g){
+  if(g.type==='space-odyssey')return `<div class="game-complete odyssey-complete"><div class="odyssey-ship-wrap">${spaceshipSvg(state.profile.inventory.equipped?.ship||'scout',state.profile.inventory.equipped)}</div><h2>${g.campaign.energy<=0?'Mission Paused — Recharge Required':'Sector Run Complete'}</h2><div class="practice-summary"><div class="soft"><h3>${g.campaign.chapter}</h3><p class="helper">Chapter</p></div><div class="soft"><h3>${g.campaign.sector}</h3><p class="helper">Next Sector</p></div><div class="soft"><h3>${g.campaign.stars}</h3><p class="helper">Star Credits</p></div><div class="soft"><h3>${g.campaign.shipLevel}</h3><p class="helper">Ship Level</p></div></div><button class="primary-button" id="finishLibraryGame">Save Campaign And Collect Rewards</button></div>`;
+  return `<div class="game-complete"><span class="app-icon arcade">${svgIcon('arcade')}</span><h2>Game Complete</h2><div class="practice-summary"><div class="soft"><h3>${g.score}</h3><p class="helper">Score</p></div><div class="soft"><h3>${g.bestStreak}</h3><p class="helper">Best Answer Streak</p></div><div class="soft"><h3>${g.correct||0}</h3><p class="helper">Correct</p></div><div class="soft"><h3>${g.incorrect||0}</h3><p class="helper">Missed</p></div></div><button class="primary-button" id="finishLibraryGame">Collect Rewards</button></div>`;
 }
-function gameTitle(type){ return ({'missed-gauntlet':'Missed Question Gauntlet','confidence-climb':'Confidence Climb','speed-audit':'60-Second Audit Sprint'}[type]||titleCase(type)); }
+function finishLibraryGame(){
+  const g=state.gameState;if(!g)return;const xp=Math.min(100,15+Math.round(g.score/100)+(g.type==='space-odyssey'?15:0));const coins=Math.min(45,5+Math.round(g.score/300)+(g.type==='space-odyssey'?8:0));
+  state.profile.gameStats ||= {plays:0,highScores:{},history:[]}; state.profile.gameStats.plays++; state.profile.gameStats.highScores[g.type]=Math.max(state.profile.gameStats.highScores[g.type]||0,g.score); state.profile.gameStats.history.unshift({id:crypto.randomUUID(),type:g.type,score:g.score,correct:g.correct||0,incorrect:g.incorrect||0,date:new Date().toISOString()}); state.profile.gameStats.history=state.profile.gameStats.history.slice(0,100);
+  if(g.type==='space-odyssey'){state.profile.spaceQuestProgress={...g.campaign,energy:Math.max(1,g.campaign.energy),lastPlayedAt:new Date().toISOString()};}
+  award({xp,coins,reason:`Question Game Complete: ${gameTitle(g.type)}`,type:'Arcade'});state.gameState=null;saveProfileDebounced(true);showCelebration('Game Rewards Collected',`+${xp} XP · +${coins} Audit Coins`);renderApp();
+}
+function gameTitle(type){ return ({'missed-gauntlet':'Missed Question Gauntlet','confidence-climb':'Confidence Climb','speed-audit':'60-Second Audit Sprint','space-odyssey':'Assurance Odyssey'}[type]||titleCase(type)); }
 function heartIcon(active=true){ return `<svg viewBox="0 0 64 58" aria-hidden="true"><path d="M32 55S4 39 4 18C4 5 21-1 32 11 43-1 60 5 60 18 60 39 32 55 32 55Z" fill="${active?'#ff5c8a':'rgba(255,255,255,.12)'}" stroke="${active?'#ffd5df':'rgba(255,255,255,.2)'}" stroke-width="4"/></svg>`; }
 function renderGameVisual(g){
   if(g.type==='missed-gauntlet') return `<div class="gauntlet-stage"><div class="heart-row">${[0,1,2].map(i=>`<span class="game-heart ${i>=g.lives?'lost':''}">${heartIcon(i<g.lives)}</span>`).join('')}</div><strong>${g.lives} ${g.lives===1?'Life':'Lives'} Remaining</strong></div>`;
-  if(g.type==='confidence-climb') return `<div class="climb-stage"><svg viewBox="0 0 800 230" preserveAspectRatio="none"><defs><linearGradient id="mountain" x1="0" y1="1" x2="1" y2="0"><stop stop-color="#263b68"/><stop offset="1" stop-color="#7c4dff"/></linearGradient></defs><path d="M20 215L210 90l95 72L455 25l120 105 205-110v195Z" fill="url(#mountain)" opacity=".72"/><path d="M20 215L210 90l95 72L455 25l120 105 205-110" fill="none" stroke="#8fd3ff" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/></svg><div class="climber" style="left:${Math.max(4,Math.min(92,g.climb||12))}%;bottom:${Math.max(12,Math.min(172,(g.climb||12)*1.72))}px"><div class="avatar tiny">${avatarSvg(state.profile.inventory.equipped)}</div></div><div class="summit-flag">SUMMIT</div></div>`;
+  if(g.type==='confidence-climb') return `<div class="climb-stage"><div class="cloud c1"></div><div class="cloud c2"></div><svg viewBox="0 0 800 230" preserveAspectRatio="none"><defs><linearGradient id="mountain" x1="0" y1="1" x2="1" y2="0"><stop stop-color="#263b68"/><stop offset="1" stop-color="#7c4dff"/></linearGradient></defs><path d="M20 215L210 90l95 72L455 25l120 105 205-110v195Z" fill="url(#mountain)" opacity=".82"/><path d="M20 215L210 90l95 72L455 25l120 105 205-110" fill="none" stroke="#8fd3ff" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/></svg><div class="climber" style="left:${Math.max(4,Math.min(92,g.climb||12))}%;bottom:${Math.max(12,Math.min(172,(g.climb||12)*1.72))}px"><div class="avatar tiny">${avatarSvg(state.profile.inventory.equipped)}</div></div><div class="summit-flag">SUMMIT</div><div class="climb-meter"><span style="width:${Math.max(4,Math.min(100,g.climb||12))}%"></span></div></div>`;
   if(g.type==='speed-audit'){const left=Math.max(0,Math.ceil((g.endsAt-Date.now())/1000));return `<div class="sprint-stage"><div class="sprint-clock" id="gameClock" style="--time-pct:${left/60*100}%"><strong id="gameTime">${left}</strong><small>Seconds</small></div><div><h3>Build Your Longest Correct-Answer Streak</h3><p class="helper">The round ends automatically when the live clock reaches zero.</p></div></div>`;}
+  if(g.type==='space-odyssey'){const c=g.campaign;return `<div class="odyssey-stage"><div class="starfield layer-one"></div><div class="starfield layer-two"></div><div class="odyssey-hud"><span class="bubble">Chapter ${c.chapter}</span><span class="bubble">Sector ${c.sector} / 5</span><span class="bubble good">${c.energy} / ${c.maxEnergy} Energy</span><span class="bubble warn">${c.stars} Star Credits</span></div><div class="odyssey-route"><div class="planet planet-a"></div><div class="planet planet-b"></div><div class="space-ship-player">${spaceshipSvg(state.profile.inventory.equipped?.ship||'scout',state.profile.inventory.equipped)}</div><div class="space-anomaly"><span>?</span></div></div><div class="mission-copy"><strong>Mission ${c.missionsCompleted+1}: Restore The Assurance Beacon</strong><small>Five correct answers clear a sector. Misses drain energy. Campaign progress saves after every answer.</small></div></div>`;}
   return '';
 }
+function spaceshipSvg(ship='scout',avatar={}){
+  const palette={scout:['#2fb7ff','#7c4dff'],comet:['#ff8c42','#ffd166'],nebula:['#7c4dff','#ff7ad9'],aurora:['#18c29c','#8fd3ff']}; const [a,b]=palette[ship]||palette.scout;
+  const wing=ship==='aurora'?'M18 78L5 116l48-18M142 78l13 38-48-18':ship==='nebula'?'M18 68L2 102l52-10M142 68l16 34-52-10':'M22 74L7 104l45-10M138 74l15 30-45-10';
+  return `<svg class="spaceship-svg ship-${ship}" viewBox="0 0 160 130" role="img" aria-label="${titleCase(ship)} spaceship"><defs><linearGradient id="ship-${ship}" x1="0" y1="0" x2="1" y2="1"><stop stop-color="${a}"/><stop offset="1" stop-color="${b}"/></linearGradient><filter id="shipGlow-${ship}"><feDropShadow dx="0" dy="7" stdDeviation="7" flood-color="${b}" flood-opacity=".55"/></filter></defs><path d="${wing}" stroke="${a}" stroke-width="14" stroke-linecap="round" fill="none"/><path d="M80 8C48 30 34 63 42 104l38 18 38-18c8-41-6-74-38-96Z" fill="url(#ship-${ship})" stroke="white" stroke-width="5" filter="url(#shipGlow-${ship})"/><ellipse cx="80" cy="57" rx="25" ry="22" fill="#dff7ff" opacity=".95"/><g transform="translate(55 32) scale(.32)">${avatarSvg(avatar).replace(/^<svg[^>]*>|<\/svg>$/g,'')}</g><path d="M58 108l8 17M102 108l-8 17" stroke="#ffb347" stroke-width="9" stroke-linecap="round"/><circle cx="80" cy="93" r="8" fill="#fff" opacity=".75"/></svg>`;
+}
+
 function renderLibraryGameOverlay(){
   const g=state.gameState;if(!g)return '';
   const card=libraryCardFromKey(g.queue[g.index]); const complete=!card||(g.type==='speed-audit'&&Date.now()>=g.endsAt)||(g.type==='missed-gauntlet'&&g.lives<=0);
   return `<div class="game-overlay" role="dialog" aria-modal="true"><div class="game-overlay-card"><div class="game-overlay-head"><div><p class="eyebrow">Question-Powered Game</p><h2>${gameTitle(g.type)}</h2></div><div class="metric-row"><span class="bubble good">Score ${g.score}</span><span class="bubble">Streak ${g.streak}</span><button class="ghost-button small" id="quitLibraryGame">Quit</button></div></div>${complete?renderLibraryGameComplete(g):`${renderGameVisual(g)}<div class="game-question"><p class="eyebrow">Question ${g.index+1}</p><h2>${esc(card.question)}</h2><div class="quiz-options">${Object.entries(card.choices||{}).map(([l,t])=>`<button class="quiz-option" data-library-game-answer="${l}"><strong>${l}</strong><span>${esc(t)}</span></button>`).join('')}</div></div>`}</div></div>`;
 }
 async function startGuildRace(){
-  if(!state.group)return toast('Join a Guild before starting a Guild Avatar Race.','error');
+  if(!state.group)return toast('Join a Guild before starting a Guild Starship Race.','error');
   const guildDecks=libraryDecks().filter(d=>d.scope==='Guild'); const deck=(selectedLibraryDeck()?.scope==='Guild'?selectedLibraryDeck():guildDecks[0]);
-  if(!deck)return toast('Import or create a Guild deck before starting a Guild Avatar Race.','error');
-  let cards=libraryCardsForDeck(deck).filter(c=>c.correctAnswer&&Object.keys(c.choices||{}).length>=2);
-  if(!cards.length)return toast('The selected Guild deck has no eligible multiple-choice questions.','error');
+  if(!deck)return toast('Import or create a Guild deck before starting a Guild Starship Race.','error');
+  let cards=libraryCardsForDeck(deck).filter(c=>c.correctAnswer&&Object.keys(c.choices||{}).length>=2); if(!cards.length)return toast('The selected Guild deck has no eligible multiple-choice questions.','error');
   cards=[...cards].sort(()=>Math.random()-.5).slice(0,20);
-  state.group.studySession={id:crypto.randomUUID(),active:true,gameType:'guild-race',title:'Guild Avatar Race',deckId:deck.id,scopeKey:deck.scopeKey,cardKeys:cards.map(libraryCardKey),index:0,responses:{},scores:{},revealed:false,hostUid:state.user.uid,startedAt:new Date().toISOString(),targetScore:1000};
+  state.group.studySession={id:crypto.randomUUID(),active:true,gameType:'guild-race',title:'Guild Starship Race',deckId:deck.id,scopeKey:deck.scopeKey,cardKeys:cards.map(libraryCardKey),index:0,responses:{},scores:{},revealed:false,hostUid:state.user.uid,startedAt:new Date().toISOString(),targetScore:1200};
   await saveGroup(state.group); state.toolsTab='guild-study'; renderApp();
 }
-function renderGuildRaceTrack(gs,members){ const target=gs.targetScore||1000; return `<div class="guild-race-stage"><div class="finish-line">FINISH</div>${members.map((m,i)=>{const pct=Math.min(92,Math.round((gs.scores?.[m.uid]||0)/target*88)+2);return `<div class="guild-race-lane"><strong>${esc(m.name)}</strong><div class="lane-track"><div class="guild-racer" style="left:${pct}%"><div class="avatar tiny">${avatarSvg(m.avatar||{})}</div></div></div><span>${gs.scores?.[m.uid]||0}</span></div>`;}).join('')}</div>`; }
+function renderGuildRaceTrack(gs,members){
+  const target=gs.targetScore||1200;
+  return `<div class="guild-race-stage star-race"><div class="race-stars"></div><div class="finish-line">FINISH GATE</div>${members.map(m=>{const pct=Math.min(89,Math.round((gs.scores?.[m.uid]||0)/target*84)+2);const ship=m.avatar?.ship||'scout';return `<div class="guild-race-lane"><strong>${esc(m.name)}</strong><div class="lane-track space-lane"><div class="guild-racer space-racer" style="left:${pct}%">${spaceshipSvg(ship,m.avatar||{})}</div></div><span>${gs.scores?.[m.uid]||0}</span></div>`;}).join('')}</div>`;
+}
 
 function renderStudyAnalyticsTab(){
   const stats=calculateLibraryStats(state.library.cards,state.library.progress,state.library.reviews,null,state.profile.preferences.studySettings||DEFAULT_REVIEW_SETTINGS); const last7=reviewCountsLastDays(7); const max=Math.max(1,...last7.map(x=>x.count));
@@ -850,12 +971,12 @@ function dueForecast(days){
 function reviewCountsLastDays(days){ const out=[]; for(let i=days-1;i>=0;i--){const d=new Date();d.setDate(d.getDate()-i);const iso=d.toISOString().slice(0,10);out.push({iso,label:new Intl.DateTimeFormat('en-US',{weekday:'short'}).format(d),count:(state.library.reviews||[]).filter(r=>String(r.reviewedAt||'').slice(0,10)===iso).length});}return out; }
 
 function bindTools(){
-  $$('[data-tools-tab]').forEach(b=>b.onclick=()=>{state.toolsTab=b.dataset.toolsTab;state.studySession=null;state.gameState=null;renderApp();});
+  $$('[data-tools-tab]').forEach(b=>b.onclick=()=>{state.toolsTab=b.dataset.toolsTab;clearActiveStudySession();state.gameState=null;renderApp();});
   $('#refreshStudyLibrary')?.addEventListener('click',async()=>{await refreshStudyLibrary();toast('Study library refreshed.');renderApp();});
   $('#newDeckBtn')?.addEventListener('click',()=>libraryDeckModal());
   $('#libraryScopeFilter')?.addEventListener('change',e=>{state.libraryScopeFilter=e.target.value;renderApp();});
-  $$('[data-open-deck]').forEach(b=>b.onclick=()=>{state.selectedDeckId=b.dataset.openDeck;state.toolsTab=b.dataset.openMode||'review';state.studySession=null;renderApp();});
-  $$('[data-deck-picker]').forEach(s=>s.onchange=()=>{state.selectedDeckId=s.value;state.studySession=null;renderApp();});
+  $$('[data-open-deck]').forEach(b=>b.onclick=()=>{state.selectedDeckId=b.dataset.openDeck;state.toolsTab=b.dataset.openMode||'review';clearActiveStudySession();renderApp();});
+  $$('[data-deck-picker]').forEach(s=>s.onchange=()=>{state.selectedDeckId=s.value;clearActiveStudySession();renderApp();});
   $$('[data-add-card]').forEach(b=>b.onclick=()=>libraryCardModal(b.dataset.addCard));
   $$('[data-edit-library-deck]').forEach(b=>b.onclick=()=>libraryDeckModal(b.dataset.editLibraryDeck));
   $$('[data-delete-library-deck]').forEach(b=>b.onclick=()=>deleteLibraryDeckFlow(b.dataset.deleteLibraryDeck));
@@ -863,12 +984,13 @@ function bindTools(){
   $$('[data-start-study]').forEach(b=>b.onclick=()=>startStudySession('review',b.dataset.startStudy));
   $('[data-start-flashcards]')?.addEventListener('click',()=>startStudySession('flashcards','all'));
   $$('[data-start-quiz]').forEach(b=>b.onclick=()=>startStudySession('quiz',b.dataset.startQuiz));
-  $('#adaptiveFlashcard')?.addEventListener('click',()=>{state.deckFlipped=!state.deckFlipped;renderApp();});
-  $$('[data-quiz-choice]').forEach(b=>b.onclick=()=>{if(!state.studySession.answerSubmitted){state.studySession.selectedAnswer=b.dataset.quizChoice;renderApp();}});
-  $('#submitQuizAnswer')?.addEventListener('click',()=>{if(!state.studySession.selectedAnswer)return;const card=currentStudyCard();state.studySession.answerSubmitted=true;state.quizRevealed=true;renderApp();});
+  $$('[data-flash-choice]').forEach(b=>b.onclick=()=>{if(!state.deckFlipped){state.studySession.selectedAnswer=b.dataset.flashChoice;persistActiveStudySession();renderApp();}});
+  $('#revealAdaptiveCard')?.addEventListener('click',revealAdaptiveCard);
+  $$('[data-quiz-choice]').forEach(b=>b.onclick=()=>{if(!state.studySession.answerSubmitted){state.studySession.selectedAnswer=b.dataset.quizChoice;persistActiveStudySession();renderApp();}});
+  $('#submitQuizAnswer')?.addEventListener('click',()=>{if(!state.studySession.selectedAnswer)return;state.studySession.answerSubmitted=true;state.quizRevealed=true;persistActiveStudySession();renderApp();});
   $$('[data-rate-card]').forEach(b=>b.onclick=()=>applyCardRating(b.dataset.rateCard));
-  $('#endStudySession')?.addEventListener('click',()=>{state.studySession=null;renderApp();});
-  $('#finishStudySession')?.addEventListener('click',()=>{const s=state.studySession;const reviewed=(s.correct||0)+(s.incorrect||0);if(reviewed){state.profile.studyHistory.sessions=(state.profile.studyHistory.sessions||0)+1;award({xp:Math.min(40,10+reviewed),coins:Math.min(18,4+Math.floor(reviewed/2)),reason:`Adaptive Study Session: ${reviewed} Cards`,type:'Flashcards'});saveProfileDebounced();}state.studySession=null;renderApp();});
+  $('#endStudySession')?.addEventListener('click',()=>{clearActiveStudySession();renderApp();});
+  $('#finishStudySession')?.addEventListener('click',()=>{const session=state.studySession;const reviewed=(session?.correct||0)+(session?.incorrect||0);if(reviewed){state.profile.studyHistory.sessions=(state.profile.studyHistory.sessions||0)+1;award({xp:Math.min(40,10+reviewed),coins:Math.min(18,4+Math.floor(reviewed/2)),reason:`Adaptive Study Session: ${reviewed} Cards`,type:'Flashcards'});saveProfileDebounced();}clearActiveStudySession();state.deckFlipped=false;renderApp();});
   $('#startGuildQuiz')?.addEventListener('click',()=>startGuildStudy(false)); $('#startGuildMissed')?.addEventListener('click',()=>startGuildStudy(true));
   $$('[data-guild-answer]').forEach(b=>b.onclick=()=>submitGuildAnswer(b.dataset.guildAnswer)); $('#revealGuildAnswer')?.addEventListener('click',revealGuildAnswer); $('#nextGuildQuestion')?.addEventListener('click',nextGuildQuestion); $('#endGuildStudy')?.addEventListener('click',endGuildStudy);
   $$('[data-library-game]').forEach(b=>b.onclick=async()=>startLibraryGame(b.dataset.libraryGame)); $$('[data-library-game-answer]').forEach(b=>b.onclick=()=>answerLibraryGame(b.dataset.libraryGameAnswer)); $('#quitLibraryGame')?.addEventListener('click',()=>{state.gameState=null;renderApp();}); $('#finishLibraryGame')?.addEventListener('click',finishLibraryGame);
@@ -881,9 +1003,16 @@ function libraryCardModal(deckId){ const deck=libraryDecks().find(d=>d.id===deck
 async function deleteLibraryDeckFlow(id){ const deck=libraryDecks().find(d=>d.id===id);if(!deck)return;await confirmModal('Delete Deck',`Delete “${esc(deck.title)}”? Cards shared with a Master deck remain in the Master bank.`,async()=>{await deleteStudyDeck({uid:state.user.uid,groupId:state.profile.activeGroupId,deck});state.library.decks=state.library.decks.filter(d=>!(d.id===deck.id&&d.scopeKey===deck.scopeKey));state.library.cards=state.library.cards.map(c=>c.scopeKey===deck.scopeKey?{...c,deckIds:(c.deckIds||[]).filter(x=>x!==deck.id)}:c);if(state.selectedDeckId===deck.id)state.selectedDeckId=null;renderApp();}); }
 function exportLibraryDeck(id){ const deck=libraryDecks().find(d=>d.id===id);if(!deck)return;const rows=libraryCardsForDeck(deck).map(c=>[c.question,c.correctAnswer,c.choices?.[c.correctAnswer]||'',c.justifications?.[c.correctAnswer]||c.justifications?._||'',c.domain,c.knowledgeStatement].map(v=>String(v||'').replace(/\t/g,' ')).join('\t'));downloadText(`${safeFile(deck.title)}.tsv`,`Question\tCorrect Letter\tCorrect Answer\tExplanation\tDomain\tKnowledge Statement\n${rows.join('\n')}`,'text/tab-separated-values'); }
 async function startGuildStudy(missedOnly){ const deck=libraryDecks().find(d=>d.id===$('#guildStudyDeck').value);if(!deck)return;let cards=libraryCardsForDeck(deck).filter(c=>c.correctAnswer&&Object.keys(c.choices||{}).length>=2);if(missedOnly)cards=cards.filter(c=>c.wasCorrectAtImport===false);cards=[...cards].sort(()=>Math.random()-.5).slice(0,30);if(!cards.length)return toast('No eligible questions in that Guild deck.','error');state.group.studySession={id:crypto.randomUUID(),active:true,title:missedOnly?'Guild Missed-Question Review':'Guild Question Review',deckId:deck.id,scopeKey:deck.scopeKey,cardKeys:cards.map(libraryCardKey),index:0,responses:{},scores:{},revealed:false,hostUid:state.user.uid,startedAt:new Date().toISOString()};await saveGroup(state.group);renderApp(); }
-async function submitGuildAnswer(letter){ const gs=state.group?.studySession,card=libraryCardFromKey(gs?.cardKeys?.[gs.index]);if(!gs||!card||gs.responses?.[state.user.uid])return;gs.responses||={};gs.scores||={};const correct=letter===card.correctAnswer;gs.responses[state.user.uid]={answer:letter,correct,at:new Date().toISOString()};gs.scores[state.user.uid]=(gs.scores[state.user.uid]||0)+(correct?(gs.gameType==='guild-race'?140:100):0);const old=state.library.progress[progressKey(card)]||defaultProgress(card,state.user.uid);const next=rateCard(card,old,correct?'Good':'Again',state.profile.preferences.studySettings||DEFAULT_REVIEW_SETTINGS);state.library.progress[progressKey(card)]=next;const event=createReviewEvent({uid:state.user.uid,card,deckId:gs.deckId,mode:'guild-quiz',rating:correct?'Good':'Again',correct,responseTimeMs:0,sessionId:gs.id,groupId:state.profile.activeGroupId,wasNew:!(old.repetitions||0)});state.library.reviews.unshift(event);await Promise.all([saveStudyProgress(state.user.uid,next),saveStudyReview(state.user.uid,event),saveGroup(state.group)]);renderApp(); }
-async function revealGuildAnswer(){if(!state.group?.studySession)return;state.group.studySession.revealed=true;await saveGroup(state.group);renderApp();}
-async function nextGuildQuestion(){const gs=state.group?.studySession;if(!gs)return;gs.index++;gs.responses={};gs.revealed=false;await saveGroup(state.group);renderApp();}
+async function submitGuildAnswer(letter){
+  const gs=state.group?.studySession,card=libraryCardFromKey(gs?.cardKeys?.[gs.index]); if(!gs||!card||gs.revealed)return;
+  gs.responses ||= {}; gs.responses[state.user.uid]={answer:letter,at:new Date().toISOString()}; await saveGroup(state.group); renderApp();
+}
+async function revealGuildAnswer(){
+  const gs=state.group?.studySession; if(!gs||gs.revealed)return; const members=Object.values(state.group.members||{}); if(!allGuildMembersAnswered(gs,members))return toast('Every Guild member must lock in an answer first.','error');
+  const card=libraryCardFromKey(gs.cardKeys?.[gs.index]); gs.scores ||= {}; for(const m of members){const r=gs.responses?.[m.uid]; if(r){r.correct=r.answer===card.correctAnswer;if(r.correct)gs.scores[m.uid]=(gs.scores[m.uid]||0)+120;}}
+  gs.revealed=true; gs.revealedAt=new Date().toISOString(); await saveGroup(state.group); renderApp();
+}
+async function nextGuildQuestion(){const gs=state.group?.studySession;if(!gs)return;gs.index++;gs.responses={};gs.revealed=false;gs.revealedAt=null;await saveGroup(state.group);renderApp();}
 async function endGuildStudy(){if(!state.group?.studySession)return;state.group.studySession.active=false;state.group.studySession.endedAt=new Date().toISOString();await saveGroup(state.group);renderApp();}
 
 function renderGuild(){
@@ -892,16 +1021,22 @@ function renderGuild(){
 }
 function guildEmblem(group,size='small'){ const color=group?.color||'#7c4dff'; if(group?.iconImage)return `<span class="guild-emblem ${size}" style="--guild-color:${escAttr(color)}"><img src="${escAttr(group.iconImage)}" alt="Guild"></span>`; return `<span class="guild-emblem ${size}" style="--guild-color:${escAttr(color)}"><span class="app-icon ${group?.icon||'guild'}">${svgIcon(group?.icon||'guild')}</span></span>`; }
 function readFileDataUrl(file){ return new Promise((resolve,reject)=>{const r=new FileReader();r.onload=()=>resolve(r.result);r.onerror=reject;r.readAsDataURL(file);}); }
+async function compressGuildImage(file){
+  if(!/^image\/(png|jpeg|webp)$/i.test(file.type))throw new Error('Use PNG, JPG, or WebP.');
+  const url=URL.createObjectURL(file); try{const img=await new Promise((resolve,reject)=>{const el=new Image();el.onload=()=>resolve(el);el.onerror=()=>reject(new Error('The image could not be read.'));el.src=url;}); const max=640,scale=Math.min(1,max/Math.max(img.width,img.height)),w=Math.max(1,Math.round(img.width*scale)),h=Math.max(1,Math.round(img.height*scale));const canvas=document.createElement('canvas');canvas.width=w;canvas.height=h;const ctx=canvas.getContext('2d');ctx.fillStyle='transparent';ctx.fillRect(0,0,w,h);ctx.drawImage(img,0,0,w,h);for(const quality of [.88,.78,.68,.58]){const blob=await new Promise(resolve=>canvas.toBlob(resolve,'image/webp',quality));if(blob&&blob.size<340000)return await blobToDataUrl(blob);}throw new Error('The optimized image is still too large. Try a simpler image.');}finally{URL.revokeObjectURL(url);}
+}
+function blobToDataUrl(blob){return new Promise((resolve,reject)=>{const r=new FileReader();r.onload=()=>resolve(r.result);r.onerror=()=>reject(r.error||new Error('Unable to read the optimized image.'));r.readAsDataURL(blob);});}
+
 function guildSetup(){ return `<div class="grid two"><div class="soft"><h3>Create A Guild</h3><input id="newGuildName" placeholder="Guild Name"><button class="primary-button" id="createGuild">Create Guild</button></div><div class="soft"><h3>Join A Guild</h3><input id="joinGuildId" placeholder="Guild ID"><input id="joinGuildCode" placeholder="Invite Code"><button class="secondary-button" id="joinGuild">Join Guild</button></div></div>`; }
 function guildDetails(){
   const members=Object.values(state.group.members||{});
-  return `<div class="soft guild-settings"><div class="guild-settings-preview">${guildEmblem(state.group,'large')}<div><strong>${esc(state.group.name)}</strong><small>${esc(state.group.iconImage?'Custom Image':'Built-In Icon')} · ${esc(state.group.color||'#7c4dff')}</small></div></div><div class="form-grid"><label><span class="label-title">Guild Name</span><input id="guildName" value="${escAttr(state.group.name)}"></label><label><span class="label-title">Guild Icon</span><select id="guildIcon"><option value="guild" ${state.group.icon==='guild'?'selected':''}>Guild Shield</option><option value="qae" ${state.group.icon==='qae'?'selected':''}>QAE Check</option><option value="streak" ${state.group.icon==='streak'?'selected':''}>Streak Flame</option><option value="target" ${state.group.icon==='target'?'selected':''}>Target</option><option value="arcade" ${state.group.icon==='arcade'?'selected':''}>Arcade</option></select></label><label><span class="label-title">Guild Color</span><input id="guildColor" type="color" value="${state.group.color||'#7c4dff'}"></label><label><span class="label-title">Custom Guild Image Optional</span><input id="guildImageUpload" type="file" accept="image/png,image/jpeg,image/webp,image/svg+xml"><small class="helper">Maximum 250 KB. A custom image replaces the built-in symbol.</small></label></div><div class="button-row"><button class="primary-button small" id="saveGuildSettings">Save Guild</button>${state.group.iconImage?'<button class="ghost-button small" id="clearGuildImage">Remove Custom Image</button>':''}<span class="bubble">ID: ${state.group.id}</span><span class="bubble">Invite Code: ${state.group.code}</span></div></div><h3>Member Overview</h3><div class="grid three">${members.map(m=>`<div class="member-card"><div class="button-row"><div class="avatar small">${avatarSvg(m.avatar||{})}</div><div><h4>${esc(m.name)}</h4><div class="metric-row"><span class="bubble">Level ${m.level||1}</span><span class="bubble good">${m.streak||0} Day Streak</span><span class="bubble">${m.qaeQuestions||0} Questions</span><span class="bubble">${m.minutes||0} Minutes</span></div></div></div></div>`).join('')}</div>`;
+  return `<div class="soft guild-settings"><div class="guild-settings-preview">${guildEmblem(state.group,'large')}<div><strong>${esc(state.group.name)}</strong><small>${esc(state.group.iconImage?'Custom Image':'Built-In Icon')} · ${esc(state.group.color||'#7c4dff')}</small></div></div><div class="form-grid"><label><span class="label-title">Guild Name</span><input id="guildName" value="${escAttr(state.group.name)}"></label><label><span class="label-title">Guild Icon</span><select id="guildIcon"><option value="guild" ${state.group.icon==='guild'?'selected':''}>Guild Shield</option><option value="qae" ${state.group.icon==='qae'?'selected':''}>QAE Check</option><option value="streak" ${state.group.icon==='streak'?'selected':''}>Streak Flame</option><option value="target" ${state.group.icon==='target'?'selected':''}>Target</option><option value="arcade" ${state.group.icon==='arcade'?'selected':''}>Arcade</option></select></label><label><span class="label-title">Guild Color</span><input id="guildColor" type="color" value="${state.group.color||'#7c4dff'}"></label><label><span class="label-title">Custom Guild Image Optional</span><input id="guildImageUpload" type="file" accept="image/png,image/jpeg,image/webp"><small class="helper">Choose an image up to 10 MB. ControlQuest automatically resizes and compresses it for safe Firebase storage.</small></label></div><div class="button-row"><button class="primary-button small" id="saveGuildSettings">Save Guild</button>${state.group.iconImage?'<button class="ghost-button small" id="clearGuildImage">Remove Custom Image</button>':''}<span class="bubble">ID: ${state.group.id}</span><span class="bubble">Invite Code: ${state.group.code}</span></div></div><h3>Member Overview</h3><div class="grid three">${members.map(m=>`<div class="member-card"><div class="button-row"><div class="avatar small">${avatarSvg(m.avatar||{})}</div><div><h4>${esc(m.name)}</h4><div class="metric-row"><span class="bubble">Level ${m.level||1}</span><span class="bubble good">${m.streak||0} Day Streak</span><span class="bubble">${m.qaeQuestions||0} Questions</span><span class="bubble">${m.minutes||0} Minutes</span></div></div></div></div>`).join('')}</div>`;
 }
 function guildEventsMini(){ const events=allEvents().filter(e=>e.scope!=='Personal' && new Date(e.end)>=new Date()).sort((a,b)=>new Date(a.start)-new Date(b.start)).slice(0,5); return events.length?`<div class="grid">${events.map(e=>`<div class="event-card"><strong>${esc(e.title)}</strong><p class="helper">${fmtDateTime(e.start)} · ${esc(e.scope)}</p></div>`).join('')}</div>`:'<div class="empty">No upcoming Guild events yet.</div>'; }
 function bindGuild(){
   $('#createGuild')?.addEventListener('click',async()=>{const name=$('#newGuildName').value.trim()||'Study Guild'; const g=defaultGroup(state.profile,name); state.group=g; state.profile.activeGroupId=g.id; state.profile.guildIds=[...new Set([...(state.profile.guildIds||[]),g.id])]; await createGroup(g); await saveProfileDebounced(true); renderApp();});
   $('#joinGuild')?.addEventListener('click',async()=>{const id=$('#joinGuildId').value.trim(); const code=$('#joinGuildCode').value.trim().toUpperCase(); const g=await loadGroup(id); if(!g||g.code!==code)return toast('Guild ID or invite code is invalid.','error'); state.group=g; state.group.members ||= {}; state.group.members[state.profile.uid]=publicSummary(state.profile); state.profile.activeGroupId=id; state.profile.guildIds=[...new Set([...(state.profile.guildIds||[]),id])]; await saveAll({group:true}); await loadActiveGroup(id); renderApp();});
-  $('#guildImageUpload')?.addEventListener('change',async e=>{const file=e.target.files?.[0];if(!file)return;if(file.size>250000)return toast('Guild image must be 250 KB or smaller.','error');const data=await readFileDataUrl(file);state.group.iconImage=data;await saveGroup(state.group);toast('Custom Guild image saved.');renderApp();});
+  $('#guildImageUpload')?.addEventListener('change',async e=>{const file=e.target.files?.[0];if(!file)return;if(file.size>10*1024*1024)return toast('Guild image must be 10 MB or smaller.','error');try{const data=await compressGuildImage(file);state.group.iconImage=data;await saveGroup(state.group);toast('Custom Guild image optimized and saved.');renderApp();}catch(error){toast(`Image upload failed: ${friendly(error)}`,'error');}});
   $('#clearGuildImage')?.addEventListener('click',async()=>{delete state.group.iconImage;await saveGroup(state.group);renderApp();});
   $('#saveGuildSettings')?.addEventListener('click',async()=>{state.group.name=$('#guildName').value.trim()||state.group.name; state.group.icon=$('#guildIcon').value; state.group.color=$('#guildColor').value; await saveGroup(state.group); toast('Guild branding saved.'); renderApp();});
 }
@@ -930,12 +1065,16 @@ function bindNotebook(){ $('#newNote')?.addEventListener('click',()=>{ const n={
 function exportNote(type){ const n=state.profile.notes.find(x=>x.id===state.selectedNoteId); if(!n)return; const text=`# ${n.title}\n\n${n.body||''}`; downloadText(`${safeFile(n.title)}.${type==='doc'?'doc':'md'}`, type==='doc'?`<html><body><h1>${esc(n.title)}</h1><pre>${esc(n.body||'')}</pre></body></html>`:text, type==='doc'?'application/msword':'text/markdown'); }
 
 function renderRewards(){
-  const lvl=levelInfo();
-  return `<div class="grid"><div class="panel"><div class="section-head"><div><p class="eyebrow">Rewards</p><h3>XP, Audit Coins, Inventory, And Avatar</h3></div></div><div class="grid three"><div class="soft"><h3>${state.profile.stats.xp}</h3><p class="helper">Total XP · Level ${lvl.level}</p></div><div class="soft"><h3>${state.profile.stats.coins}</h3><p class="helper">Audit Coins Available</p></div><div class="soft"><h3>${state.profile.inventory.chests.filter(c=>!c.opened).length}</h3><p class="helper">Unopened Chests</p></div></div></div><div class="panel"><div class="section-head"><div><p class="eyebrow">Activity History</p><h3>What Earned Rewards</h3></div></div><div class="activity-list">${state.profile.activity.length?state.profile.activity.map(activityItem).join(''):'<div class="empty">No activity yet.</div>'}</div></div><div class="panel"><div class="section-head"><div><p class="eyebrow">Inventory</p><h3>Chests, Boosts, And Streak Freezes</h3></div></div><div class="grid three">${inventoryCards()}</div></div><div class="panel"><div class="section-head"><div><p class="eyebrow">Quest Shop</p><h3>Spend Audit Coins</h3></div></div><div class="grid three">${SHOP_ITEMS.map(shopItem).join('')}</div></div><div class="panel"><div class="section-head"><div><p class="eyebrow">Avatar Closet</p><h3>Customize Your Owl</h3></div>${state.previewAvatar?'<button class="secondary-button small" id="revertAvatarPreview">Revert Preview</button>':''}</div><div class="grid two"><div class="avatar-preview-card"><div class="avatar-stage"><div class="avatar big">${avatarSvg(state.previewAvatar||state.profile.inventory.equipped)}</div></div><p class="helper">${state.previewAvatar?'Preview mode is active. Revert or leave this tab to return to your equipped avatar.':'Preview items before buying. Equip owned items anytime.'}</p></div><div class="closet-grid">${AVATAR_ITEMS.map(avatarItem).join('')}</div></div></div></div>`;
+  const lvl=levelInfo(); const equipped=state.previewAvatar||state.profile.inventory.equipped;
+  return `<div class="grid"><div class="panel"><div class="section-head"><div><p class="eyebrow">Rewards</p><h3>XP, Audit Coins, Inventory, Avatar, And Starship</h3></div></div><div class="grid three"><div class="soft"><h3>${state.profile.stats.xp}</h3><p class="helper">Total XP · Level ${lvl.level}</p></div><div class="soft"><h3>${state.profile.stats.coins}</h3><p class="helper">Audit Coins Available</p></div><div class="soft"><h3>${state.profile.inventory.chests.filter(c=>!c.opened).length}</h3><p class="helper">Unopened Chests</p></div></div></div><div class="panel"><div class="section-head"><div><p class="eyebrow">Activity History</p><h3>What Earned Rewards</h3></div></div><div class="activity-list">${state.profile.activity.length?state.profile.activity.map(activityItem).join(''):'<div class="empty">No activity yet.</div>'}</div></div><div class="panel"><div class="section-head"><div><p class="eyebrow">Inventory</p><h3>Chests, Boosts, And Streak Freezes</h3></div></div><div class="grid three">${inventoryCards()}</div></div><div class="panel"><div class="section-head"><div><p class="eyebrow">Quest Shop</p><h3>Spend Audit Coins</h3></div></div><div class="grid three">${SHOP_ITEMS.map(shopItem).join('')}</div></div><div class="panel"><div class="section-head"><div><p class="eyebrow">Avatar And Starship Hangar</p><h3>Customize Your Owl And Guild Racer</h3></div>${state.previewAvatar?'<button class="secondary-button small" id="revertAvatarPreview">Revert Preview</button>':''}</div><div class="grid two"><div class="avatar-preview-card"><div class="avatar-stage dual-preview"><div class="avatar big">${avatarSvg(equipped)}</div><div class="hangar-ship">${spaceshipSvg(equipped.ship||'scout',equipped)}</div></div><p class="helper">${state.previewAvatar?'Preview mode is active. Revert or leave this tab to return to your equipped setup.':'Your starship appears in Guild races and Assurance Odyssey.'}</p></div><div class="closet-grid">${AVATAR_ITEMS.map(avatarItem).join('')}</div></div></div></div>`;
 }
 function inventoryCards(){ const chests=state.profile.inventory.chests.filter(c=>!c.opened).map(c=>`<div class="shop-card"><span class="app-icon chest-${c.type}">${svgIcon(`chest-${c.type}`)}</span><h4>${titleCase(c.type)} Chest</h4><p class="helper">Earned From: ${esc(c.reason||'Reward')}</p><button class="primary-button small" data-open-chest="${c.id}">Open Chest</button></div>`).join(''); const boosts=state.profile.inventory.boosts.filter(b=>!b.used).map(b=>`<div class="shop-card"><span class="app-icon boost">${svgIcon('boost')}</span><h4>${b.multiplier}x XP Boost</h4><p class="helper">${b.durationMinutes} Minutes</p><button class="primary-button small" data-use-boost="${b.id}">Activate Boost</button></div>`).join(''); return `${chests}${boosts}<div class="shop-card"><span class="app-icon freeze">${svgIcon('freeze')}</span><h4>Streak Freezes</h4><p class="helper">Used automatically on eligible missed weekdays.</p><span class="bubble">${state.profile.stats.streakFreezes||0} Available</span></div>`; }
 function shopItem(i){ return `<div class="shop-card"><span class="app-icon ${i.icon}">${svgIcon(i.icon)}</span><h4>${i.title}</h4><p class="helper">${i.details}</p><div class="button-row"><span class="shop-price">${i.cost} Coins</span><button class="primary-button small" data-buy="${i.id}">Buy</button></div></div>`; }
-function avatarItem(i){ const owned=state.profile.inventory.ownedItems.includes(i.id); const equipped=isEquipped(i); const locked=levelInfo().level<i.unlockLevel; return `<div class="shop-card"><div class="item-preview"><div class="avatar small">${avatarSvg(previewEquip(i))}</div></div><h4>${i.title}</h4><p class="helper">${titleCase(i.type)} · Level ${i.unlockLevel}${i.cost?` · ${i.cost} Coins`:''}</p><div class="button-row"><button class="secondary-button small" data-preview-avatar="${i.id}">Preview</button>${owned?`<button class="${equipped?'secondary-button':'primary-button'} small" data-equip-avatar="${i.id}" ${equipped?'disabled':''}>${equipped?'Equipped':'Equip'}</button>`:`<button class="primary-button small" data-buy-avatar="${i.id}" ${locked?'disabled':''}>${locked?'Locked':'Buy'}</button>`}</div></div>`; }
+function avatarItem(i){
+  const owned=state.profile.inventory.ownedItems.includes(i.id); const equipped=isEquipped(i); const locked=levelInfo().level<i.unlockLevel; const preview=previewEquip(i);
+  const visual=i.type==='ship'?`<div class="ship-item-preview">${spaceshipSvg(i.value,preview)}</div>`:`<div class="avatar small">${avatarSvg(preview)}</div>`;
+  return `<div class="shop-card"><div class="item-preview">${visual}</div><h4>${i.title}</h4><p class="helper">${titleCase(i.type)} · Level ${i.unlockLevel}${i.cost?` · ${i.cost} Coins`:''}</p><div class="button-row"><button class="secondary-button small" data-preview-avatar="${i.id}">Preview</button>${owned?`<button class="${equipped?'secondary-button':'primary-button'} small" data-equip-avatar="${i.id}" ${equipped?'disabled':''}>${equipped?'Equipped':'Equip'}</button>`:`<button class="primary-button small" data-buy-avatar="${i.id}" ${locked?'disabled':''}>${locked?'Locked':'Buy'}</button>`}</div></div>`;
+}
 function bindRewards(){
   $$('[data-buy]').forEach(b=>b.onclick=()=>buyShop(b.dataset.buy)); $$('[data-open-chest]').forEach(b=>b.onclick=()=>openChest(b.dataset.openChest)); $$('[data-use-boost]').forEach(b=>b.onclick=()=>activateBoost(b.dataset.useBoost));
   $$('[data-preview-avatar]').forEach(b=>b.onclick=()=>{const i=AVATAR_ITEMS.find(x=>x.id===b.dataset.previewAvatar); state.previewAvatar=previewEquip(i); renderApp();});

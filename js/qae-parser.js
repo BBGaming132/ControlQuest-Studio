@@ -36,11 +36,12 @@ export function parseQaePaste(rawText, opts = {}){
   if (!uniqueStarts.length) warnings.push('No numbered Question markers were found. Paste from the QAE review screen after the answers are visible.');
 
   const blocks = uniqueStarts.map((start, i) => text.slice(start, uniqueStarts[i + 1] || text.length).trim()).filter(Boolean);
-  const questions = blocks.map((block, index) => parseBlock(block, index + 1)).filter(q => {
+  const questions = blocks.map((block, index) => ({ parsed: parseBlock(block, index + 1), index })).filter(item => {
+    const q = item.parsed;
     const valid = q.question && q.correctAnswer && Object.keys(q.choices).length >= 2;
-    if (!valid) warnings.push(`Skipped a block near item ${index + 1} because the parser could not identify the question, answer choices, and correct answer.`);
+    if (!valid) warnings.push(`Skipped a block near item ${item.index + 1} because the parser could not identify the question, answer choices, and correct answer.`);
     return valid;
-  });
+  }).map(item => item.parsed);
 
   const inferredTotals = [...new Set(questions.map(q => q.totalInSet).filter(Boolean))];
   if (inferredTotals.length > 1) warnings.push('This paste appears to include multiple sessions or mixed totals. The app imported them together, but you may want to import sessions separately for cleaner logging.');

@@ -93,9 +93,9 @@ export const HOMEWORK_SUGGESTIONS = [
 ];
 
 export const DAILY_QUEST_TEMPLATES = [
-  {id:'daily-qae',title:'Complete A QAE Block',details:'Log or import an official ISACA QAE practice block.',xp:30,coins:12,icon:'qae',go:'practice',actionLabel:'Open Practice Log'},
-  {id:'daily-review',title:'Review Real Questions',details:'Review missed questions, complete adaptive cards, or retake a question set.',xp:28,coins:11,icon:'cards',go:'tools',actionLabel:'Open Smart Review'},
-  {id:'daily-reinforce',title:'Reinforce The Learning',details:'Complete a Study Room session, roadmap task, or question-powered game.',xp:26,coins:10,icon:'arcade',go:'room',actionLabel:'Open Study Room'}
+  {id:'daily-qae',title:'Complete Today’s Core Block',details:'Monday: recap last week. Tuesday–Friday: complete and import a new official QAE set. Weekend: finish one flexible personal study block.',xp:30,coins:12,icon:'qae',go:'practice',actionLabel:'Open Practice Log'},
+  {id:'daily-review',title:'Review Questions That Matter',details:'Use Smart Review, missed-question retakes, or Guild review to strengthen real imported QAE questions.',xp:28,coins:11,icon:'cards',go:'tools',actionLabel:'Open Smart Review'},
+  {id:'daily-reinforce',title:'Reinforce And Record Progress',details:'Complete a Study Room session, study game, flashcard round, or required roadmap task.',xp:26,coins:10,icon:'arcade',go:'room',actionLabel:'Open Study Room'}
 ];
 
 export const SHOP_ITEMS = [
@@ -133,7 +133,12 @@ export const AVATAR_ITEMS = [
   {id:'badge-none',type:'badge',title:'No Badge',value:'none',cost:0,unlockLevel:1},
   {id:'badge-cisa',type:'badge',title:'CISA Trainee Badge',value:'cisa',cost:110,unlockLevel:4},
   {id:'badge-fire',type:'badge',title:'Streak Flame Badge',value:'fire',cost:160,unlockLevel:7},
-  {id:'badge-coffee',type:'badge',title:'Cold Brew Badge',value:'coffee',cost:130,unlockLevel:3}
+  {id:'badge-coffee',type:'badge',title:'Cold Brew Badge',value:'coffee',cost:130,unlockLevel:3},
+
+  {id:'ship-scout',type:'ship',title:'Control Scout',value:'scout',cost:0,unlockLevel:1},
+  {id:'ship-comet',type:'ship',title:'Comet Cruiser',value:'comet',cost:180,unlockLevel:4},
+  {id:'ship-nebula',type:'ship',title:'Nebula Runner',value:'nebula',cost:260,unlockLevel:6},
+  {id:'ship-aurora',type:'ship',title:'Aurora Interceptor',value:'aurora',cost:340,unlockLevel:8},
 ];
 
 export const GAME_CATALOG = [
@@ -143,7 +148,8 @@ export const GAME_CATALOG = [
   {id:'controlMatch',title:'Control Match Arena',details:'Match risks to the strongest control response.',xp:24,coins:9,icon:'qae'},
   {id:'duel',title:'Decision Duel',details:'Choose the CISA-best answer under time pressure.',xp:26,coins:10,icon:'timer'},
   {id:'missedSprint',title:'Missed-Question Sprint',details:'Race through concepts pulled from your missed-question bank.',xp:30,coins:12,icon:'qae'},
-  {id:'ruleRelay',title:'Rule Relay',details:'Convert a scenario into the reusable CISA rule before time runs out.',xp:28,coins:11,icon:'audit'}
+  {id:'ruleRelay',title:'Rule Relay',details:'Convert a scenario into the reusable CISA rule before time runs out.',xp:28,coins:11,icon:'audit'},
+  {id:'spaceQuest',title:'Assurance Odyssey',details:'A persistent space-adventure campaign powered by real QAE questions, upgrades, missions, and saved progress.',xp:40,coins:15,icon:'arcade'}
 ];
 
 // v2.6: Exact ISACA Perform/QAE study-plan structure supplied by Bennett.
