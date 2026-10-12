@@ -44,13 +44,23 @@ export function filterDecks(decks, cards, filters={}) {
   const result=decks.filter(d=>{
     const lesson=deckLesson(d);
     const own=cards.filter(c=>c.scopeKey===d.scopeKey&&c.deckIds?.includes(d.id));
-    const matching=filterDeckCards(own.map(c=>cardLesson(c)?c:{...c,lessonId:lesson?.id||''}),filters);
-    const text=normalizeLessonName([d.title,d.description,d.createdBy,lesson?.title,...(lesson?.aliases||[])].join(' '));
-    return (!filters.scope||filters.scope==='All'||d.scope===filters.scope) && (!filters.kind||d.kind===filters.kind) &&
+    const effective=own.map(c=>d.categoryOverride?{...c,lessonId:d.lessonId||'',knowledgeStatement:'',sessionTitle:'',domainNumber:/^d[1-5]$/.test(d.domainId||'')?Number(d.domainId.slice(1)):null,domain:''}:cardLesson(c)?c:{...c,lessonId:lesson?.id||'',domainNumber:/^d[1-5]$/.test(d.domainId||'')?Number(d.domainId.slice(1)):c.domainNumber});
+    const matching=filterDeckCards(effective,filters);
+    const text=normalizeLessonName([d.title,d.description,d.createdBy,...(d.contributors||[]),...(d.tags||[]),lesson?.title,...(lesson?.aliases||[])].join(' '));
+    return (!filters.category||(filters.category==='unlinked'?!lesson&&!['master','missed'].includes(d.kind):!!lesson)) && (!filters.scope||filters.scope==='All'||d.scope===filters.scope) && (!filters.kind||d.kind===filters.kind) &&
       (!filters.search||text.includes(normalizeLessonName(filters.search))) &&
-      ((!filters.domain&&!filters.lesson)||matching.length>0||((!filters.domain||lesson?.domainId===filters.domain)&&(!filters.lesson||lesson?.id===filters.lesson)));
+      ((!filters.domain&&!filters.lesson)||matching.length>0||((!filters.domain||(lesson?.domainId||d.domainId)===filters.domain)&&(!filters.lesson||lesson?.id===filters.lesson)));
   });
   if(filters.sort==='title')result.sort((a,b)=>a.title.localeCompare(b.title));
   if(filters.sort==='domain')result.sort((a,b)=>(deckLesson(a)?.id||'z').localeCompare(deckLesson(b)?.id||'z')||a.title.localeCompare(b.title));
   return result;
+}
+
+export function inferDeckLesson(deck,cards=[]){
+  if(deck.categoryOverride)return deckLesson(deck);
+  const named=deckLesson(deck);if(named)return named;
+  const own=cards.filter(c=>c.scopeKey===deck.scopeKey&&c.deckIds?.includes(deck.id));
+  const lessons=own.map(cardLesson);
+  if(!lessons.length||lessons.some(l=>!l))return null;
+  const ids=new Set(lessons.map(l=>l.id));return ids.size===1?lessons[0]:null;
 }

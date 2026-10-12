@@ -296,3 +296,32 @@ export async function saveGuildLessonStatus(groupId, lessonId, status) {
   }
   await fs().updateDoc(groupRef(groupId), { [`lessonStatus.${lessonId}`]:status });
 }
+
+export async function loadCommunityLibrary() {
+  if(!ready){const local=loadLocalStudy();return {contributions:local.publicContributions||[],statuses:local.publicLessonStatus||{}};}
+  const [contributions,statuses]=await Promise.all([
+    docsFromCollection(fs().collection(db,'publicLessonContributions')),
+    docsFromCollection(fs().collection(db,'publicLessonStatus'))
+  ]);
+  return {contributions,statuses:Object.fromEntries(statuses.map(s=>[s.id,s]))};
+}
+export async function savePublicContributions(uid, contributions, sourceKey=null) {
+  if(contributions.some(c=>c.ownerUid!==uid))throw new Error('You can only save your own submissions.');
+  if(!ready){
+    const local=loadLocalStudy();const map=new Map((local.publicContributions||[]).filter(c=>!(sourceKey&&c.ownerUid===uid&&c.sourceKey===sourceKey)).map(c=>[c.id,c]));
+    contributions.forEach(c=>map.set(c.id,c));saveLocalStudy({...local,publicContributions:[...map.values()]});return;
+  }
+  const stale=sourceKey?(await docsFromCollection(fs().query(fs().collection(db,'publicLessonContributions'),fs().where('ownerUid','==',uid)))).filter(c=>c.sourceKey===sourceKey&&!contributions.some(n=>n.id===c.id)):[];
+  await commitBatchOperations([...stale.map(c=>batch=>batch.delete(fs().doc(db,'publicLessonContributions',c.id))),...contributions.map(c=>batch=>batch.set(fs().doc(db,'publicLessonContributions',c.id),c))]);
+}
+export async function savePublicLessonStatus(uid,lessonId,status) {
+  if(!/^((d[1-5]-t\d{2})|(pe-[1-3]))$/.test(lessonId))throw new Error('Invalid lesson');
+  const value={completed:!!status.completed,updatedBy:uid,updatedByName:status.updatedByName||'Member',updatedAt:new Date().toISOString()};
+  if(!ready){const local=loadLocalStudy();local.publicLessonStatus ||= {};local.publicLessonStatus[lessonId]=value;saveLocalStudy(local);return;}
+  await fs().setDoc(fs().doc(db,'publicLessonStatus',lessonId),value);
+}
+export function subscribeCommunityLibrary(onChange,onError) {
+  if(!ready)return ()=>{};
+  const unsubscribers=['publicLessonContributions','publicLessonStatus'].map(name=>fs().onSnapshot(fs().collection(db,name),onChange,onError));
+  return ()=>unsubscribers.forEach(stop=>stop());
+}
