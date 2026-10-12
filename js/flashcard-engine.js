@@ -1,3 +1,4 @@
+import { cardLesson, LESSONS } from './lesson-catalog.js';
 // ControlQuest Adaptive Review Engine
 // Inspired by proven spaced-repetition patterns (Again / Hard / Good / Easy),
 // but intentionally implemented as a transparent ControlQuest scheduler rather than a clone of Anki/FSRS.
@@ -61,7 +62,7 @@ export function missedDeckId(scope, uid, groupId) {
   return makeDeckId('Master Missed Questions', scope, uid, groupId, 'missed');
 }
 
-export function buildImportBundle({ questions, title, scope = 'Guild', uid, groupId, importedBy = '', source = 'ISACA QAE Paste' }) {
+export function buildImportBundle({ questions, title, scope = 'Guild', uid, groupId, importedBy = '', source = 'ISACA QAE Paste', lessonId = '' }) {
   const cleanTitle = String(title || questions?.[0]?.sessionTitle || 'Imported QAE Session').trim();
   const key = scopeKey(scope, uid, groupId);
   const importSeed = stableHash((questions || []).map(q => q.fingerprint || cardFingerprint(q.question, q.choices)).sort().join('|'));
@@ -71,7 +72,9 @@ export function buildImportBundle({ questions, title, scope = 'Guild', uid, grou
   const now = new Date().toISOString();
   const cardsById = new Map();
 
-  for (const q of questions || []) {
+  for (const original of questions || []) {
+    const lesson=LESSONS.find(l=>l.id===lessonId) || cardLesson(original);
+    const q={...original, ...(lesson?{lessonId:lesson.id,lessonTitle:lesson.title,domain:lesson.domain,domainNumber:lesson.domainId==='practice'?null:Number(lesson.domainId.slice(1)),domainName:lesson.domainName}:{})};
     const fingerprint = q.fingerprint || cardFingerprint(q.question, q.choices);
     const id = `card_${fingerprint}`;
     const deckIds = [lessonDeckId, masterId];
@@ -92,6 +95,8 @@ export function buildImportBundle({ questions, title, scope = 'Guild', uid, grou
       userAnswerAtImport: q.userAnswer || null,
       wasCorrectAtImport: q.isCorrect,
       justifications: q.justifications || {},
+      lessonId: q.lessonId || '',
+      lessonTitle: q.lessonTitle || '',
       domain: q.domain || '',
       domainNumber: q.domainNumber || null,
       domainName: q.domainName || '',
@@ -122,6 +127,7 @@ export function buildImportBundle({ questions, title, scope = 'Guild', uid, grou
     ownerUid: uid,
     groupId: scope === 'Guild' ? groupId : null,
     createdBy: importedBy,
+    contributors: importedBy ? [importedBy] : [],
     source,
     createdAt: now,
     updatedAt: now
@@ -133,6 +139,8 @@ export function buildImportBundle({ questions, title, scope = 'Guild', uid, grou
       title: cleanTitle,
       description: `Imported QAE session with ${cards.length} unique questions and ${incorrect} missed questions.`,
       kind: 'lesson',
+      ...(lessonId?{lessonId}:{}),
+      lessonTitle: LESSONS.find(l=>l.id===lessonId)?.title || '',
       sessionFingerprint,
       cardCount: cards.length,
       missedCount: incorrect
@@ -382,7 +390,7 @@ export function formatCardBack(card) {
 export function mergeUniqueLibrary(existing, incoming) {
   const decks = new Map((existing?.decks || []).map(deck => [`${deck.scopeKey}:${deck.id}`, deck]));
   const cards = new Map((existing?.cards || []).map(card => [`${card.scopeKey}:${card.id}`, card]));
-  for (const deck of incoming?.decks || []) decks.set(`${deck.scopeKey}:${deck.id}`, { ...(decks.get(`${deck.scopeKey}:${deck.id}`) || {}), ...deck });
+  for (const deck of incoming?.decks || []) decks.set(`${deck.scopeKey}:${deck.id}`, { ...(decks.get(`${deck.scopeKey}:${deck.id}`) || {}), ...deck, contributors:[...new Set([...(decks.get(`${deck.scopeKey}:${deck.id}`)?.contributors||[]),...(deck.contributors||[])])] });
   for (const card of incoming?.cards || []) {
     const key = `${card.scopeKey}:${card.id}`;
     const old = cards.get(key) || {};

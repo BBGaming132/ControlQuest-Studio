@@ -162,3 +162,10 @@ label{display:grid;gap:7px;margin:10px 0;color:var(--muted);font-weight:800}.lab
 .rating-face svg{display:block;width:48px;height:48px;filter:drop-shadow(0 7px 14px rgba(0,0,0,.18))}
 .adaptive-review-modes{align-items:stretch}
 .adaptive-review-modes .study-mode-card{height:100%}
+
+.deck-filters { padding:16px; margin-bottom:20px; border:1px solid var(--border); border-radius:16px; }
+.lesson-coverage { margin:20px 0; }
+.lesson-checklist { max-height:520px; overflow:auto; }
+.lesson-checklist .log-row { gap:18px; }
+.lesson-checklist small { display:block; opacity:.75; }
+@media(max-width:650px){ .lesson-checklist .log-row { align-items:flex-start; } }

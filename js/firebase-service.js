@@ -195,7 +195,7 @@ export async function saveStudyImport({ uid, groupId, decks = [], cards = [] }) 
     const local = loadLocalStudy();
     const deckMap = new Map((local.decks || []).map(d => [`${d.scopeKey}:${d.id}`, d]));
     const cardMap = new Map((local.cards || []).map(c => [`${c.scopeKey}:${c.id}`, c]));
-    decks.forEach(d => deckMap.set(`${d.scopeKey}:${d.id}`, { ...(deckMap.get(`${d.scopeKey}:${d.id}`) || {}), ...d }));
+    decks.forEach(d => deckMap.set(`${d.scopeKey}:${d.id}`, { ...(deckMap.get(`${d.scopeKey}:${d.id}`) || {}), ...d, contributors:[...new Set([...(deckMap.get(`${d.scopeKey}:${d.id}`)?.contributors||[]),...(d.contributors||[])])] }));
     cards.forEach(c => {
       const key = `${c.scopeKey}:${c.id}`;
       const old = cardMap.get(key) || {};
@@ -207,7 +207,7 @@ export async function saveStudyImport({ uid, groupId, decks = [], cards = [] }) 
   const operations = [];
   for (const deck of decks) {
     const ref = docRefFor(deck.scope, uid, groupId, 'deck', deck.id);
-    operations.push(batch => batch.set(ref, withStamp(deck), { merge: true }));
+    operations.push(batch => batch.set(ref, { ...withStamp(deck), contributors:fs().arrayUnion(...(deck.contributors||[])) }, { merge: true }));
   }
   for (const card of cards) {
     const ref = docRefFor(card.scope, uid, groupId, 'card', card.id);
@@ -285,3 +285,43 @@ export async function deleteStudyDeck({ uid, groupId, deck }) {
 
 function loadLocal() { try { return JSON.parse(localStorage.getItem(localKey) || '{}'); } catch { return {}; } }
 function saveLocal(partial) { const merged = { ...loadLocal(), ...partial, updatedAt: new Date().toISOString() }; localStorage.setItem(localKey, JSON.stringify(merged)); return merged; }
+
+// Write only the selected lesson so simultaneous Guild checkoffs do not overwrite each other.
+export async function saveGuildLessonStatus(groupId, lessonId, status) {
+  if (!groupId || !/^((d[1-5]-t\d{2})|(pe-[1-3]))$/.test(lessonId)) throw new Error('Invalid lesson');
+  if (!ready) {
+    const local=loadLocal()||{};
+    if(local.group?.id!==groupId) throw new Error('Guild is not available locally');
+    local.group.lessonStatus ||= {}; local.group.lessonStatus[lessonId]=status; saveLocal(local); return;
+  }
+  await fs().updateDoc(groupRef(groupId), { [`lessonStatus.${lessonId}`]:status });
+}
+
+export async function loadCommunityLibrary() {
+  if(!ready){const local=loadLocalStudy();return {contributions:local.publicContributions||[],statuses:local.publicLessonStatus||{}};}
+  const [contributions,statuses]=await Promise.all([
+    docsFromCollection(fs().collection(db,'publicLessonContributions')),
+    docsFromCollection(fs().collection(db,'publicLessonStatus'))
+  ]);
+  return {contributions,statuses:Object.fromEntries(statuses.map(s=>[s.id,s]))};
+}
+export async function savePublicContributions(uid, contributions, sourceKey=null) {
+  if(contributions.some(c=>c.ownerUid!==uid))throw new Error('You can only save your own submissions.');
+  if(!ready){
+    const local=loadLocalStudy();const map=new Map((local.publicContributions||[]).filter(c=>!(sourceKey&&c.ownerUid===uid&&c.sourceKey===sourceKey)).map(c=>[c.id,c]));
+    contributions.forEach(c=>map.set(c.id,c));saveLocalStudy({...local,publicContributions:[...map.values()]});return;
+  }
+  const stale=sourceKey?(await docsFromCollection(fs().query(fs().collection(db,'publicLessonContributions'),fs().where('ownerUid','==',uid)))).filter(c=>c.sourceKey===sourceKey&&!contributions.some(n=>n.id===c.id)):[];
+  await commitBatchOperations([...stale.map(c=>batch=>batch.delete(fs().doc(db,'publicLessonContributions',c.id))),...contributions.map(c=>batch=>batch.set(fs().doc(db,'publicLessonContributions',c.id),c))]);
+}
+export async function savePublicLessonStatus(uid,lessonId,status) {
+  if(!/^((d[1-5]-t\d{2})|(pe-[1-3]))$/.test(lessonId))throw new Error('Invalid lesson');
+  const value={completed:!!status.completed,updatedBy:uid,updatedByName:status.updatedByName||'Member',updatedAt:new Date().toISOString()};
+  if(!ready){const local=loadLocalStudy();local.publicLessonStatus ||= {};local.publicLessonStatus[lessonId]=value;saveLocalStudy(local);return;}
+  await fs().setDoc(fs().doc(db,'publicLessonStatus',lessonId),value);
+}
+export function subscribeCommunityLibrary(onChange,onError) {
+  if(!ready)return ()=>{};
+  const unsubscribers=['publicLessonContributions','publicLessonStatus'].map(name=>fs().onSnapshot(fs().collection(db,name),onChange,onError));
+  return ()=>unsubscribers.forEach(stop=>stop());
+}
