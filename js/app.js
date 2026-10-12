@@ -1,4 +1,5 @@
-import { initFirebase, onAuth, signIn, createAccount, sendReset, signOutUser, loadProfile, saveProfile, backupProfile, deleteProfileData, createGroup, loadGroup, saveGroup, updateMemberSummary, subscribeGroup, publicSummary, isFirebaseReady, loadStudyLibrary, saveStudyImport, saveStudyDeck, saveStudyCard, saveStudyProgress, saveStudyReview, deleteStudyDeck } from './firebase-service.js';
+import { LESSONS, matchLesson, deckLesson, cardLesson, filterDecks, filterDeckCards } from './lesson-catalog.js';
+import { initFirebase, onAuth, signIn, createAccount, sendReset, signOutUser, loadProfile, saveProfile, backupProfile, deleteProfileData, createGroup, loadGroup, saveGroup, updateMemberSummary, subscribeGroup, publicSummary, isFirebaseReady, loadStudyLibrary, saveStudyImport, saveStudyDeck, saveStudyCard, saveStudyProgress, saveStudyReview, deleteStudyDeck, saveGuildLessonStatus } from './firebase-service.js';
 import { RESOURCE_LINKS, TIMEZONES, DOMAIN_TOPICS, ISACA_STUDY_PLAN, CISA_RULES, DECISION_PROMPTS, HOMEWORK_SUGGESTIONS, DAILY_QUEST_TEMPLATES, SHOP_ITEMS, AVATAR_ITEMS, GAME_CATALOG } from './content.js';
 import { parseQaePaste, missedConceptFromParsedQuestion } from './qae-parser.js';
 import { DEFAULT_REVIEW_SETTINGS, buildImportBundle, buildStudyQueue, calculateLibraryStats, cardFingerprint, createReviewEvent, defaultProgress, formatCardBack, mergeUniqueLibrary, progressKey, rateCard, scopeKey, makeDeckId } from './flashcard-engine.js';
@@ -33,6 +34,8 @@ const state = {
   library: { decks: [], cards: [], progress: {}, reviews: [], loaded: false },
   toolsTab: 'library',
   libraryScopeFilter: 'All',
+  deckFilters: {scope:'All',domain:'',lesson:'',kind:'',search:'',sort:''},
+  coverageFilter:'all',
   studySession: null,
   deckIndex: 0,
   deckFlipped: false,
@@ -634,16 +637,22 @@ async function importQaePaste(previewOnly=false){
   if(scope==='Public') return toast('Full ISACA QAE question imports cannot be published publicly. Choose Guild or Personal.','error');
   const parsed=parseQaePaste(text); const questions=parsed.questions || [];
   if(!questions.length) return toast(`No QAE questions were parsed. ${parsed.warnings?.[0]||''}`,'error');
-  const previewRows=questions.map((q,i)=>`<div class="import-preview-row"><span class="bubble">${i+1}</span><div><strong>${esc((q.question||'Untitled Question').slice(0,150))}${(q.question||'').length>150?'…':''}</strong><small>${esc(q.domain||'Unassigned Domain')} · ${q.isCorrect===true?'Correct':q.isCorrect===false?'Missed':'Result Unknown'} · Answer ${esc(q.correctAnswer||'?')}</small></div></div>`).join('');
-  const body=`<label><span class="label-title">Lesson / Session Title</span><input id="confirmImportLabel" value="${escAttr(initialLabel)}"></label><div class="practice-summary"><div class="soft"><h3>${questions.length}</h3><p class="helper">Questions Parsed</p></div><div class="soft"><h3>${questions.filter(q=>q.isCorrect===true).length}</h3><p class="helper">Correct</p></div><div class="soft"><h3>${questions.filter(q=>q.isCorrect===false).length}</h3><p class="helper">Missed</p></div><div class="soft"><h3>${new Set(questions.map(q=>q.fingerprint)).size}</h3><p class="helper">Unique In This Import</p></div></div><div class="import-preview-list">${previewRows}</div>${parsed.warnings?.length?`<p class="helper danger-text">${esc(parsed.warnings.join(' '))}</p>`:''}`;
+  const previewRows=questions.map((q,i)=>`<div class="import-preview-row"><span class="bubble">${i+1}</span><div><strong>${esc((q.question||'Untitled Question').slice(0,150))}${(q.question||'').length>150?'…':''}</strong><small>${esc(q.domain||'Unassigned Domain')} · ${esc(cardLesson(q)?.title||'Lesson not matched')} · ${q.isCorrect===true?'Correct':q.isCorrect===false?'Missed':'Result Unknown'} · Answer ${esc(q.correctAnswer||'?')}</small></div></div>`).join('');
+  const inferred=matchLesson(initialLabel);
+  const detected=[...new Set(questions.map(q=>cardLesson(q)?.id).filter(Boolean))];
+  const suggested=detected.length>1?null:detected.length===1&&questions.every(q=>cardLesson(q))?LESSONS.find(l=>l.id===detected[0]):inferred;
+  const body=`<label><span class="label-title">Canonical Lesson</span><select id="confirmImportLesson">${lessonOptions(suggested?.id||'')}</select><small class="helper">Verify the match. Use Mixed / Unassigned for exports covering several lessons; individual question metadata will be matched separately.</small></label><label><span class="label-title">Lesson / Session Title</span><input id="confirmImportLabel" value="${escAttr(initialLabel)}"></label><div class="practice-summary"><div class="soft"><h3>${questions.length}</h3><p class="helper">Questions Parsed</p></div><div class="soft"><h3>${questions.filter(q=>q.isCorrect===true).length}</h3><p class="helper">Correct</p></div><div class="soft"><h3>${questions.filter(q=>q.isCorrect===false).length}</h3><p class="helper">Missed</p></div><div class="soft"><h3>${new Set(questions.map(q=>q.fingerprint)).size}</h3><p class="helper">Unique In This Import</p></div></div><div class="import-preview-list">${previewRows}</div>${parsed.warnings?.length?`<p class="helper danger-text">${esc(parsed.warnings.join(' '))}</p>`:''}`;
   if(previewOnly){ modal('QAE Import Preview',body,()=>{},'Close'); return; }
   modal('Confirm QAE Study Package',body,async()=>{
     const label=$('#confirmImportLabel')?.value?.trim()||initialLabel; $('#qaeImportLabel').value=label;
-    await executeQaeImport({questions,parsed,label,scope});
+    const lessonId=$('#confirmImportLesson')?.value||'';
+    const lesson=LESSONS.find(l=>l.id===lessonId);
+    if(lesson && questions.some(q=>q.domainNumber&&`d${q.domainNumber}`!==lesson.domainId)){toast('The selected lesson conflicts with the export domains. Choose Mixed / Unassigned.','error');return false;}
+    await executeQaeImport({questions,parsed,label,scope,lessonId});
   },'Import Study Package');
 }
-async function executeQaeImport({questions,parsed,label,scope}){
-  const bundle=buildImportBundle({questions,title:label,scope,uid:state.user.uid,groupId:state.profile.activeGroupId,importedBy:state.profile.displayName});
+async function executeQaeImport({questions,parsed,label,scope,lessonId}){
+  const bundle=buildImportBundle({questions,title:label,scope,uid:state.user.uid,groupId:state.profile.activeGroupId,importedBy:state.profile.displayName,lessonId});
   const existingKeys=new Set((state.library.cards||[]).map(card=>`${card.scopeKey}:${card.id}`));
   const uniqueNew=bundle.cards.filter(card=>!existingKeys.has(`${card.scopeKey}:${card.id}`)); const duplicates=bundle.cards.length-uniqueNew.length;
   const correct=questions.filter(q=>q.isCorrect===true).length; const missed=questions.filter(q=>q.isCorrect===false); const domains=[...new Set(questions.map(q=>q.domain).filter(Boolean))].join(', ') || 'Imported QAE';
@@ -709,12 +718,12 @@ function libraryDecks(){
     return (order[a.kind]??9)-(order[b.kind]??9) || String(b.updatedAt||'').localeCompare(String(a.updatedAt||''));
   });
 }
-function libraryCardsForDeck(deck){ return (state.library.cards||[]).filter(c=>c.scopeKey===deck.scopeKey&&(c.deckIds||[]).includes(deck.id)); }
+function libraryCardsForDeck(deck){ return deck?filterDeckCards((state.library.cards||[]).filter(c=>c.scopeKey===deck.scopeKey&&(c.deckIds||[]).includes(deck.id)).map(c=>cardLesson(c)?c:{...c,lessonId:deckLesson(deck)?.id||''}),state.deckFilters):[]; }
 function libraryCardKey(card){ return `${card.scopeKey}|${card.id}`; }
 function libraryCardFromKey(key){ const [scopeKeyValue,id]=String(key||'').split('|'); return (state.library.cards||[]).find(c=>c.scopeKey===scopeKeyValue&&c.id===id); }
-function selectedLibraryDeck(){ return libraryDecks().find(d=>d.id===state.selectedDeckId) || libraryDecks()[0] || null; }
+function selectedLibraryDeck(){ const decks=filteredLibraryDecks(); return decks.find(d=>d.id===state.selectedDeckId) || decks[0] || null; }
 function currentStudyCard(){ const key=state.studySession?.queue?.[state.studySession.index||0]; return libraryCardFromKey(key); }
-function currentDeckStats(deck){ const settings=state.profile?.preferences?.studySettings||DEFAULT_REVIEW_SETTINGS; return deck?calculateLibraryStats(state.library.cards,state.library.progress,state.library.reviews,deck.id,settings):calculateLibraryStats(state.library.cards,state.library.progress,state.library.reviews,null,settings); }
+function currentDeckStats(deck){ const settings=state.profile?.preferences?.studySettings||DEFAULT_REVIEW_SETTINGS; return deck?calculateLibraryStats(libraryCardsForDeck(deck),state.library.progress,state.library.reviews,deck.id,settings):calculateLibraryStats(state.library.cards,state.library.progress,state.library.reviews,null,settings); }
 function newCardsIntroducedToday(){ const iso=localDateForProfileSafe(state.profile); return (state.library.reviews||[]).filter(r=>r.wasNew&&formatIsoInTimezone(r.reviewedAt,state.profile.timezone)===iso).length; }
 function formatIsoInTimezone(value,timezone){ try{return new Intl.DateTimeFormat('en-CA',{timeZone:timezone||state.profile?.timezone||'America/New_York',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date(value));}catch{return String(value||'').slice(0,10);} }
 function scopeBadge(scope){ return `<span class="bubble ${scope==='Guild'?'good':scope==='Public'?'warn':''}">${esc(scope||'Personal')}</span>`; }
@@ -728,7 +737,7 @@ function renderTools(){
       <div class="practice-summary compact-summary"><div class="soft"><h3>${allStats.total}</h3><p class="helper">Unique Questions</p></div><div class="soft"><h3>${allStats.due}</h3><p class="helper">Due Now</p></div><div class="soft"><h3>${allStats.mastered}</h3><p class="helper">Mastered</p></div><div class="soft"><h3>${allStats.accuracy}%</h3><p class="helper">Review Accuracy</p></div></div>
       <div class="tool-tabs">${tabs.map(([id,label])=>`<button class="${state.toolsTab===id?'active':''}" data-tools-tab="${id}">${label}</button>`).join('')}</div>
     </div>
-    <div class="panel span-12">${renderToolsTab()}</div>
+    <div class="panel span-12">${renderDeckFilters()}${renderToolsTab()}</div>
   </div>`;
 }
 function renderToolsTab(){
@@ -742,15 +751,15 @@ function renderToolsTab(){
 }
 function renderDeckLibraryTab(){
   const scopes=['All','Guild','Personal','Public'];
-  const decks=libraryDecks().filter(d=>state.libraryScopeFilter==='All'||d.scope===state.libraryScopeFilter);
-  return `<div class="section-head"><div><p class="eyebrow">Deck Library</p><h3>Your Imported And Original Decks</h3><p class="helper">Imported QAE decks contain the original multiple-choice question, all answer choices, the correct answer, and every available justification.</p></div><select id="libraryScopeFilter">${scopes.map(s=>`<option ${state.libraryScopeFilter===s?'selected':''}>${s}</option>`).join('')}</select></div>
-    ${decks.length?`<div class="deck-grid advanced-decks">${decks.map(renderLibraryDeckCard).join('')}</div>`:`<div class="empty"><h3>No Study Decks Yet</h3><p>Open Practice Log and import your first QAE review dump. ControlQuest will build everything automatically.</p><button class="primary-button" data-go="practice">Open QAE Importer</button></div>`}`;
+  const decks=filteredLibraryDecks();
+  return `<div class="section-head"><div><p class="eyebrow">Deck Library</p><h3>Your Imported And Original Decks</h3><p class="helper">Imported QAE decks contain the original multiple-choice question, all answer choices, the correct answer, and every available justification.</p></div></div>
+    ${renderLessonCoverage()}${decks.length?`<div class="deck-grid advanced-decks">${decks.map(renderLibraryDeckCard).join('')}</div>`:`<div class="empty"><h3>No Matching Decks</h3><p>Reset the filters or open Practice Log and import a QAE review dump. ControlQuest will build everything automatically.</p><button class="primary-button" data-go="practice">Open QAE Importer</button></div>`}`;
 }
 function renderLibraryDeckCard(deck){
   const stats=currentDeckStats(deck); const cards=libraryCardsForDeck(deck); const accent=deckAccent(deck);
   return `<div class="deck-card advanced ${state.selectedDeckId===deck.id?'selected':''}" style="--deck-accent:${accent}">
     <div class="section-head"><span class="app-icon cards deck-icon">${svgIcon('cards')}</span>${scopeBadge(deck.scope)}</div>
-    <h4>${esc(deck.title)}</h4><p class="helper">${esc(deck.description||'')}</p>
+    <h4>${esc(deck.title)}</h4><p class="helper">${esc(deckLesson(deck)?.domain||'Mixed / Unassigned')} · ${esc(deckLesson(deck)?.title||'No lesson link')} · Uploaded by ${esc((deck.contributors?.length?deck.contributors:[deck.createdBy||'Unknown']).join(', '))}</p><button class="ghost-button small" data-link-lesson="${deck.id}">Link Lesson</button><p class="helper">${esc(deck.description||'')}</p>
     <div class="deck-stat-grid"><span><strong>${cards.length}</strong><small>Cards</small></span><span><strong>${stats.due}</strong><small>Due</small></span><span><strong>${stats.mastered}</strong><small>Mastered</small></span><span><strong>${stats.accuracy}%</strong><small>Accuracy</small></span></div>
     <div class="button-row wrap"><button class="primary-button small" data-open-deck="${deck.id}" data-open-mode="review">Smart Review</button><button class="secondary-button small" data-open-deck="${deck.id}" data-open-mode="quiz">Quiz</button><button class="secondary-button small" data-open-deck="${deck.id}" data-open-mode="flashcards">Flashcards</button><button class="ghost-button small" data-add-card="${deck.id}">Add Card</button><button class="ghost-button small" data-export-library-deck="${deck.id}">Export</button>${!['master','missed'].includes(deck.kind)?`<button class="ghost-button small" data-edit-library-deck="${deck.id}">Edit</button><button class="danger-button small" data-delete-library-deck="${deck.id}">Delete</button>`:''}</div>
   </div>`;
@@ -777,7 +786,7 @@ function renderQuizTab(){
   return `<div class="section-head"><div><p class="eyebrow">Multiple-Choice Quiz</p><h3>${esc(deck.title)}</h3><p class="helper">Retake the imported question exactly as a multiple-choice review. After answering, ControlQuest reveals the correct choice and the justification for every option.</p></div>${deckPicker('quiz')}</div><div class="soft"><strong>${eligible} Multiple-Choice Questions Available</strong><p class="helper">Choose a targeted mode or take the full lesson again.</p></div>${state.studySession?.mode==='quiz'?renderStudyRunner():`<div class="grid three"><button class="study-mode-card" data-start-quiz="missed"><span class="app-icon qae">${svgIcon('qae')}</span><strong>Retake Missed Questions</strong><small>Focuses on incorrect imports and later lapses.</small></button><button class="study-mode-card" data-start-quiz="due"><span class="app-icon target">${svgIcon('target')}</span><strong>Due Quiz</strong><small>Uses the adaptive review queue.</small></button><button class="study-mode-card" data-start-quiz="all"><span class="app-icon cards">${svgIcon('cards')}</span><strong>Full Lesson Quiz</strong><small>Shuffles all multiple-choice questions in this deck.</small></button></div>`}`;
 }
 function renderNoDeckCta(){ return `<div class="empty"><h3>No Deck Selected</h3><p>Import a QAE session or choose a deck from Deck Library.</p><div class="button-row"><button class="primary-button" data-tools-tab="library">Open Deck Library</button><button class="secondary-button" data-go="practice">Import QAE Session</button></div></div>`; }
-function deckPicker(mode){ const decks=libraryDecks(); return `<label class="compact-picker"><span class="label-title">Deck</span><select data-deck-picker="${mode}">${decks.map(d=>`<option value="${d.id}" ${d.id===selectedLibraryDeck()?.id?'selected':''}>${esc(d.title)} · ${esc(d.scope)}</option>`).join('')}</select></label>`; }
+function deckPicker(mode){ const decks=filteredLibraryDecks(); return `<label class="compact-picker"><span class="label-title">Deck</span><select data-deck-picker="${mode}">${decks.map(d=>`<option value="${d.id}" ${d.id===selectedLibraryDeck()?.id?'selected':''}>${esc(d.title)} · ${esc(d.scope)}</option>`).join('')}</select></label>`; }
 
 function startStudySession(mode, queueMode='due'){
   const deck=selectedLibraryDeck(); if(!deck)return toast('Choose a deck first.','error');
@@ -854,7 +863,7 @@ function renderStudySessionComplete(){ const s=state.studySession; const total=(
 
 function renderGuildStudyTab(){
   if(!state.group)return `<div class="empty"><h3>Join A Study Guild First</h3><p>Guild Study synchronizes the same question, member answers, reveal state, and score board across every member’s screen.</p><button class="primary-button" data-go="guild">Open Guild</button></div>`;
-  const guildDecks=libraryDecks().filter(d=>d.scope==='Guild'); const gs=state.group.studySession;
+  const guildDecks=filteredLibraryDecks().filter(d=>d.scope==='Guild'); const gs=state.group.studySession;
   if(!guildDecks.length)return `<div class="empty"><h3>No Guild Decks Yet</h3><p>Import a QAE session with Guild scope. Guild is the default import option.</p><button class="primary-button" data-go="practice">Import Guild QAE Session</button></div>`;
   if(!gs?.active)return `<div class="section-head"><div><p class="eyebrow">Live Guild Review</p><h3>Start A Synchronized Question Session</h3><p class="helper">Every member sees the same question. Each answer is tracked individually, then the group reveals the explanation together.</p></div></div><label><span class="label-title">Guild Deck</span><select id="guildStudyDeck">${guildDecks.map(d=>`<option value="${d.id}">${esc(d.title)}</option>`).join('')}</select></label><div class="button-row"><button class="primary-button" id="startGuildQuiz">Start Guild Quiz</button><button class="secondary-button" id="startGuildMissed">Start Missed-Question Review</button></div>`;
   return renderGuildStudySession(gs);
@@ -886,7 +895,7 @@ function renderStudyGamesTab(){
   return `<div class="section-head"><div><p class="eyebrow">Question-Powered Games</p><h3>Games Built From Your Real Imported Library</h3><p class="helper">Games open in a focused overlay and draw from the selected lesson, Master QAE bank, missed deck, or Smart Review queue.</p></div>${deckPicker('games')}</div><div class="grid two">${games.map(([id,title,desc,icon])=>`<div class="game-card"><span class="app-icon ${icon}">${svgIcon(icon)}</span><h4>${title}</h4><p class="helper">${desc}</p><button class="primary-button small" data-library-game="${id}">Play</button></div>`).join('')}</div>`;
 }
 async function startLibraryGame(type){
-  const deck=selectedLibraryDeck(); let cards=libraryCardsForDeck(deck).filter(c=>c.correctAnswer&&Object.keys(c.choices||{}).length>=2);
+  const deck=selectedLibraryDeck(); if(!deck)return toast('No decks match these filters.','error'); let cards=libraryCardsForDeck(deck).filter(c=>c.correctAnswer&&Object.keys(c.choices||{}).length>=2);
   if(type==='missed-gauntlet')cards=cards.filter(c=>c.wasCorrectAtImport===false||(state.library.progress[progressKey(c)]?.incorrectCount||0)>0);
   if(!cards.length)return toast('This deck does not have eligible multiple-choice cards for that game.','error');
   const shuffled=[...cards].sort(()=>Math.random()-.5).slice(0,type==='space-odyssey'?40:30);
@@ -941,7 +950,7 @@ function renderLibraryGameOverlay(){
 }
 async function startGuildRace(){
   if(!state.group)return toast('Join a Guild before starting a Guild Starship Race.','error');
-  const guildDecks=libraryDecks().filter(d=>d.scope==='Guild'); const deck=(selectedLibraryDeck()?.scope==='Guild'?selectedLibraryDeck():guildDecks[0]);
+  const guildDecks=filteredLibraryDecks().filter(d=>d.scope==='Guild'); const deck=(selectedLibraryDeck()?.scope==='Guild'?selectedLibraryDeck():guildDecks[0]);
   if(!deck)return toast('Import or create a Guild deck before starting a Guild Starship Race.','error');
   let cards=libraryCardsForDeck(deck).filter(c=>c.correctAnswer&&Object.keys(c.choices||{}).length>=2); if(!cards.length)return toast('The selected Guild deck has no eligible multiple-choice questions.','error');
   cards=[...cards].sort(()=>Math.random()-.5).slice(0,20);
@@ -971,6 +980,9 @@ function dueForecast(days){
 function reviewCountsLastDays(days){ const out=[]; for(let i=days-1;i>=0;i--){const d=new Date();d.setDate(d.getDate()-i);const iso=d.toISOString().slice(0,10);out.push({iso,label:new Intl.DateTimeFormat('en-US',{weekday:'short'}).format(d),count:(state.library.reviews||[]).filter(r=>String(r.reviewedAt||'').slice(0,10)===iso).length});}return out; }
 
 function bindTools(){
+  bindDeckFilters();
+  bindLessonCoverage();
+  $$ ('[data-link-lesson]').forEach(b=>b.onclick=()=>linkDeckLesson(b.dataset.linkLesson));
   $$('[data-tools-tab]').forEach(b=>b.onclick=()=>{state.toolsTab=b.dataset.toolsTab;clearActiveStudySession();state.gameState=null;renderApp();});
   $('#refreshStudyLibrary')?.addEventListener('click',async()=>{await refreshStudyLibrary();toast('Study library refreshed.');renderApp();});
   $('#newDeckBtn')?.addEventListener('click',()=>libraryDeckModal());
@@ -1017,7 +1029,7 @@ async function endGuildStudy(){if(!state.group?.studySession)return;state.group.
 
 function renderGuild(){
   const color=state.group?.color||'#7c4dff';
-  return `<div class="grid"><div class="panel guild-hero" style="--guild-color:${escAttr(color)}" data-tour="guild-home"><div class="guild-hero-brand">${state.group?guildEmblem(state.group,'large'):guildEmblem({icon:'guild',color},'large')}<div><p class="eyebrow">Study Guild</p><h3>${esc(state.group?.name||'Join Or Create A Guild')}</h3><p class="helper">Your Guild icon and color now brand the Guild page, Command Center snapshot, calendar accents, and sidebar membership chip.</p></div></div>${state.group?guildDetails():guildSetup()}</div>${state.group?`<div class="panel"><div class="section-head"><div><p class="eyebrow">Guild Calendar Glance</p><h3>Upcoming Shared Events</h3></div><button class="secondary-button small" data-go="calendar">Open Full Calendar</button></div>${guildEventsMini()}</div><div class="panel"><p class="eyebrow">Guild Session Metrics</p><div class="grid four"><div class="soft"><h3>${state.group.sessionStats?.completed||0}</h3><p class="helper">Completed Sessions</p></div><div class="soft"><h3>${state.group.sessionStats?.minutes||0}</h3><p class="helper">Guild Minutes</p></div><div class="soft"><h3>${state.group.sessionStats?.streak||0}</h3><p class="helper">Session Streak</p></div><div class="soft"><h3>${Object.keys(state.group.members||{}).length}</h3><p class="helper">Members</p></div></div></div>`:''}</div>`;
+  return `<div class="grid"><div class="panel guild-hero" style="--guild-color:${escAttr(color)}" data-tour="guild-home"><div class="guild-hero-brand">${state.group?guildEmblem(state.group,'large'):guildEmblem({icon:'guild',color},'large')}<div><p class="eyebrow">Study Guild</p><h3>${esc(state.group?.name||'Join Or Create A Guild')}</h3><p class="helper">Your Guild icon and color now brand the Guild page, Command Center snapshot, calendar accents, and sidebar membership chip.</p></div></div>${state.group?guildDetails():guildSetup()}</div>${state.group?`<div class="panel span-12">${renderDeckFilters()}${renderLessonCoverage()}</div>`:''}${state.group?`<div class="panel"><div class="section-head"><div><p class="eyebrow">Guild Calendar Glance</p><h3>Upcoming Shared Events</h3></div><button class="secondary-button small" data-go="calendar">Open Full Calendar</button></div>${guildEventsMini()}</div><div class="panel"><p class="eyebrow">Guild Session Metrics</p><div class="grid four"><div class="soft"><h3>${state.group.sessionStats?.completed||0}</h3><p class="helper">Completed Sessions</p></div><div class="soft"><h3>${state.group.sessionStats?.minutes||0}</h3><p class="helper">Guild Minutes</p></div><div class="soft"><h3>${state.group.sessionStats?.streak||0}</h3><p class="helper">Session Streak</p></div><div class="soft"><h3>${Object.keys(state.group.members||{}).length}</h3><p class="helper">Members</p></div></div></div>`:''}</div>`;
 }
 function guildEmblem(group,size='small'){ const color=group?.color||'#7c4dff'; if(group?.iconImage)return `<span class="guild-emblem ${size}" style="--guild-color:${escAttr(color)}"><img src="${escAttr(group.iconImage)}" alt="Guild"></span>`; return `<span class="guild-emblem ${size}" style="--guild-color:${escAttr(color)}"><span class="app-icon ${group?.icon||'guild'}">${svgIcon(group?.icon||'guild')}</span></span>`; }
 function readFileDataUrl(file){ return new Promise((resolve,reject)=>{const r=new FileReader();r.onload=()=>resolve(r.result);r.onerror=reject;r.readAsDataURL(file);}); }
@@ -1034,6 +1046,8 @@ function guildDetails(){
 }
 function guildEventsMini(){ const events=allEvents().filter(e=>e.scope!=='Personal' && new Date(e.end)>=new Date()).sort((a,b)=>new Date(a.start)-new Date(b.start)).slice(0,5); return events.length?`<div class="grid">${events.map(e=>`<div class="event-card"><strong>${esc(e.title)}</strong><p class="helper">${fmtDateTime(e.start)} · ${esc(e.scope)}</p></div>`).join('')}</div>`:'<div class="empty">No upcoming Guild events yet.</div>'; }
 function bindGuild(){
+  bindDeckFilters();
+  bindLessonCoverage();
   $('#createGuild')?.addEventListener('click',async()=>{const name=$('#newGuildName').value.trim()||'Study Guild'; const g=defaultGroup(state.profile,name); state.group=g; state.profile.activeGroupId=g.id; state.profile.guildIds=[...new Set([...(state.profile.guildIds||[]),g.id])]; await createGroup(g); await saveProfileDebounced(true); renderApp();});
   $('#joinGuild')?.addEventListener('click',async()=>{const id=$('#joinGuildId').value.trim(); const code=$('#joinGuildCode').value.trim().toUpperCase(); const g=await loadGroup(id); if(!g||g.code!==code)return toast('Guild ID or invite code is invalid.','error'); state.group=g; state.group.members ||= {}; state.group.members[state.profile.uid]=publicSummary(state.profile); state.profile.activeGroupId=id; state.profile.guildIds=[...new Set([...(state.profile.guildIds||[]),id])]; await saveAll({group:true}); await loadActiveGroup(id); renderApp();});
   $('#guildImageUpload')?.addEventListener('change',async e=>{const file=e.target.files?.[0];if(!file)return;if(file.size>10*1024*1024)return toast('Guild image must be 10 MB or smaller.','error');try{const data=await compressGuildImage(file);state.group.iconImage=data;await saveGroup(state.group);toast('Custom Guild image optimized and saved.');renderApp();}catch(error){toast(`Image upload failed: ${friendly(error)}`,'error');}});
@@ -1236,7 +1250,7 @@ function toggleSet(set,val){ set.has(val)?set.delete(val):set.add(val); }
 function ensureGroupLocal(){ if(!state.group) state.group=defaultGroup(state.profile,'My Study Guild'); }
 function markdownPreview(text){ return esc(text).replace(/^# (.*)$/gm,'<h2>$1</h2>').replace(/\n/g,'<br>'); }
 function downloadText(filename,text,type='text/plain'){ const blob=new Blob([text],{type}); const url=URL.createObjectURL(blob); const a=document.createElement('a'); a.href=url; a.download=filename; a.click(); URL.revokeObjectURL(url); }
-function modal(title,body,onOk,ok='Save',extra=''){ const wrap=document.createElement('div'); wrap.className='modal-backdrop'; wrap.innerHTML=`<div class="modal-card"><h2>${esc(title)}</h2>${body}<div class="button-row spaced" style="margin-top:16px"><div class="button-row">${extra}</div><div class="button-row"><button class="secondary-button" data-cancel>Cancel</button><button class="primary-button" data-ok>${ok}</button></div></div></div>`; document.body.append(wrap); $('[data-cancel]',wrap).onclick=()=>wrap.remove(); $('[data-ok]',wrap).onclick=async()=>{ await onOk?.(); wrap.remove();}; }
+function modal(title,body,onOk,ok='Save',extra=''){ const wrap=document.createElement('div'); wrap.className='modal-backdrop'; wrap.innerHTML=`<div class="modal-card"><h2>${esc(title)}</h2>${body}<div class="button-row spaced" style="margin-top:16px"><div class="button-row">${extra}</div><div class="button-row"><button class="secondary-button" data-cancel>Cancel</button><button class="primary-button" data-ok>${ok}</button></div></div></div>`; document.body.append(wrap); $('[data-cancel]',wrap).onclick=()=>wrap.remove(); $('[data-ok]',wrap).onclick=async()=>{ const result=await onOk?.(); if(result!==false)wrap.remove();}; }
 function confirmModal(title,message,onOk,ok='Continue'){ return new Promise(resolve=>{ modal(title,`<div class="confirm-box"><p>${message}</p></div>`,async()=>{ await onOk?.(); resolve(true); },ok); }); }
 function toast(message,type='success'){ let layer=$('#toastLayer'); if(!layer){layer=document.createElement('div');layer.id='toastLayer';layer.className='toast-layer';document.body.appendChild(layer);} const el=document.createElement('div');el.className=`toast ${type}`;el.textContent=message;layer.appendChild(el);setTimeout(()=>el.remove(),3900); }
 function applyTheme(){ document.documentElement.dataset.theme=state.profile?.preferences?.theme || 'dark'; }
@@ -1244,3 +1258,54 @@ function applyTheme(){ document.documentElement.dataset.theme=state.profile?.pre
 // Event delegation after each render. This avoids missing dynamically-created buttons.
 const originalRenderView = renderView;
 setInterval(()=>{ const boost=activeBoost(); const chip=$('#boostChip small'); if(chip&&boost)chip.textContent=boostRemainingText(boost); },30000);
+
+function filteredLibraryDecks(){ return filterDecks(libraryDecks(),state.library.cards||[],state.deckFilters); }
+function lessonOptions(selected='',domain=''){
+  return `<option value="">Mixed / Unassigned</option>`+LESSONS.filter(l=>!domain||l.domainId===domain).map(l=>`<option value="${l.id}" ${l.id===selected?'selected':''}>${esc(l.domain)} · ${esc(l.title)}</option>`).join('');
+}
+function renderDeckFilters(){
+  const f=state.deckFilters;
+  const select=(key,label,options)=>`<label><span class="label-title">${label}</span><select data-deck-filter="${key}">${options.map(([value,text])=>`<option value="${value}" ${f[key]===value?'selected':''}>${esc(text)}</option>`).join('')}</select></label>`;
+  return `<div class="deck-filters form-grid"><label><span class="label-title">Search decks, lessons, aliases or uploader</span><input type="search" data-deck-filter="search" value="${escAttr(f.search)}" placeholder="Search flashcard decks"></label>
+  ${select('domain','Domain',[['','All domains'],...ISACA_STUDY_PLAN.map(d=>[d.id,`${d.domain}: ${d.name}`])])}
+  ${select('lesson','Lesson',[['','All lessons'],...LESSONS.filter(l=>!f.domain||l.domainId===f.domain).map(l=>[l.id,l.title])])}
+  ${select('scope','Library',[['All','All libraries'],['Guild','Guild'],['Personal','Personal'],['Public','Public']])}
+  ${select('kind','Deck type',[['','All types'],['lesson','QAE imports'],['master','Master bank'],['missed','Missed questions'],['custom','Original decks']])}
+  ${select('sort','Sort',[['','Recent / deck type'],['domain','Domain and lesson'],['title','Title A–Z']])}
+  <button class="ghost-button small" id="resetDeckFilters">Reset filters</button><p class="helper">${filteredLibraryDecks().length} matching decks. Domain and lesson selections also limit the cards used in review, quizzes, Guild Study, and games.</p></div>`;
+}
+function bindDeckFilters(){
+  $$('[data-deck-filter]').forEach(el=>{
+    const update=()=>{const key=el.dataset.deckFilter;state.deckFilters[key]=el.value;if(key==='domain')state.deckFilters.lesson='';clearActiveStudySession();renderApp();if(key==='search'){const next=$('[data-deck-filter="search"]');next?.focus();next?.setSelectionRange(next.value.length,next.value.length);}};
+    el.addEventListener(el.type==='search'?'input':'change',update);
+  });
+  $('#resetDeckFilters')?.addEventListener('click',()=>{state.deckFilters={scope:'All',domain:'',lesson:'',kind:'',search:'',sort:''};clearActiveStudySession();renderApp();});
+}
+function renderLessonCoverage(){
+  if(!state.group)return '';
+  const guildDecks=libraryDecks().filter(d=>d.scope==='Guild');
+  const rows=LESSONS.filter(l=>(!state.deckFilters.domain||l.domainId===state.deckFilters.domain)&&(!state.deckFilters.lesson||l.id===state.deckFilters.lesson)&&(!state.deckFilters.search||[l.title,l.domain,...l.aliases].join(' ').toLowerCase().includes(state.deckFilters.search.toLowerCase()))).map(l=>{
+    const decks=guildDecks.filter(d=>deckLesson(d)?.id===l.id || (state.library.cards||[]).some(c=>c.scopeKey===d.scopeKey&&c.deckIds?.includes(d.id)&&cardLesson(c)?.id===l.id));
+    const imports=decks.filter(d=>!['master','missed'].includes(d.kind));
+    const done=!!state.group.lessonStatus?.[l.id]?.completed;
+    return {l,imports,done};
+  });
+  const visible=rows.filter(r=>state.coverageFilter==='all'||(state.coverageFilter==='missing'?!r.imports.length:state.coverageFilter==='uploaded'?r.imports.length:state.coverageFilter==='done'?r.done:!r.done));
+  return `<div class="lesson-coverage"><div class="section-head"><div><h3>Guild Lesson Checklist</h3><p class="helper">${rows.filter(r=>r.imports.length).length}/${rows.length} lessons have uploaded cards · ${rows.filter(r=>r.done).length} completed. Uploaded cards do not guarantee a complete QAE export; verify coverage before checking Done.</p></div><label><span class="label-title">Lesson status</span><select id="coverageFilter">${[['all','All lessons'],['missing','Left to upload'],['uploaded','Uploaded'],['done','Done'],['remaining','Left to complete']].map(([v,t])=>`<option value="${v}" ${state.coverageFilter===v?'selected':''}>${t}</option>`).join('')}</select></label></div>
+  <div class="lesson-checklist">${visible.map(({l,imports,done})=>`<div class="log-row"><div><strong>${esc(l.domain)} · ${esc(l.title)}</strong><p class="helper">${esc(l.id)} · ${imports.length?'Uploaded by '+[...new Set(imports.flatMap(d=>d.contributors?.length?d.contributors:[d.createdBy||'Unknown']))].map(esc).join(', '):'Left to upload'}</p><small>Alternative names: ${l.aliases.map(esc).join(' · ')}</small>${imports.map(d=>`<button class="ghost-button small" data-coverage-deck="${d.id}">${esc(d.title)}</button>`).join('')}</div><label><input type="checkbox" data-lesson-done="${l.id}" ${done?'checked':''}> Done</label></div>`).join('')||'<div class="empty">No lessons match these filters.</div>'}</div></div>`;
+}
+function bindLessonCoverage(){
+  $('#coverageFilter')?.addEventListener('change',e=>{state.coverageFilter=e.target.value;renderApp();});
+  $$('[data-coverage-deck]').forEach(b=>b.onclick=()=>{state.selectedDeckId=b.dataset.coverageDeck;state.deckFilters={scope:'Guild',domain:'',lesson:'',kind:'',search:'',sort:''};state.toolsTab='flashcards';state.activeView='tools';renderApp();});
+  $$('[data-lesson-done]').forEach(el=>el.onchange=async()=>{const status={completed:el.checked,updatedBy:state.user.uid,updatedAt:new Date().toISOString()};el.disabled=true;try{await saveGuildLessonStatus(state.group.id,el.dataset.lessonDone,status);state.group.lessonStatus ||= {};state.group.lessonStatus[el.dataset.lessonDone]=status;renderApp();}catch(error){el.checked=!status.completed;el.disabled=false;toast(friendly(error),'error');}});
+}
+function linkDeckLesson(id){
+  const deck=libraryDecks().find(d=>d.id===id);if(!deck)return;
+  modal('Link Deck To Lesson',`<label><span class="label-title">Canonical Lesson</span><select id="linkDeckLesson">${lessonOptions(deckLesson(deck)?.id||'')}</select></label><p class="helper">This updates the deck link. Cards retain their individual source lesson metadata.</p>`,async()=>{
+    const lesson=LESSONS.find(l=>l.id===$('#linkDeckLesson').value);
+    const updated={...deck,lessonId:lesson?.id||'',lessonTitle:lesson?.title||'',updatedAt:new Date().toISOString()};
+    await saveStudyDeck({uid:state.user.uid,groupId:state.profile.activeGroupId,deck:updated});
+    state.library.decks=state.library.decks.map(d=>d.scopeKey===deck.scopeKey&&d.id===id?updated:d);
+    if(deck.scope==='Guild'&&state.group){state.group.studyLibraryUpdatedAt=new Date().toISOString();await saveGroup(state.group);}renderApp();
+  },'Save Lesson Link');
+}
