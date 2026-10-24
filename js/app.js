@@ -1,11 +1,18 @@
+import { randomId, sha256Hex } from './runtime-crypto.js';
+import { EXPERIENCE_VIEWS, renderExperience, bindExperience, renderExperienceSettings, bindExperienceSettings } from './experience.js';
+import { CISA_MICROLESSONS } from './cisa-learning.js';
+import { createWorld, advanceWorld } from './quest-world.js';
+import { appendActivityEvent } from './activity-bridge.js';
+import { uniqueStudyCards, studyIdentity } from './study-intelligence.js';
 import { buildPublicContributions, aggregateCommunityLibrary } from './community-library.js';
 import { LESSONS, matchLesson, deckLesson, cardLesson, inferDeckLesson, filterDecks, filterDeckCards } from './lesson-catalog.js';
-import { initFirebase, onAuth, signIn, createAccount, sendReset, signOutUser, loadProfile, saveProfile, backupProfile, deleteProfileData, createGroup, loadGroup, saveGroup, updateMemberSummary, subscribeGroup, publicSummary, isFirebaseReady, loadStudyLibrary, saveStudyImport, saveStudyDeck, saveStudyCard, saveStudyProgress, saveStudyReview, deleteStudyDeck, saveGuildLessonStatus, loadCommunityLibrary, savePublicContributions, savePublicLessonStatus, subscribeCommunityLibrary } from './firebase-service.js';
+import { initFirebase, onAuth, signIn, createAccount, sendReset, signOutUser, loadProfile, saveProfile, backupProfile, deleteProfileData, createGroup, loadGroup, saveGroup, updateMemberSummary, subscribeGroup, publicSummary, isFirebaseReady, loadStudyLibrary, saveStudyImport, saveStudyDeck, saveStudyCard, saveStudyProgress, saveStudyReview, deleteStudyDeck, saveGuildLessonStatus, loadCommunityLibrary, savePublicContributions, savePublicLessonStatus, subscribeCommunityLibrary, mutateGuildSession, mutateGuildWorld, enableDemoStorage } from './firebase-service.js';
 import { RESOURCE_LINKS, TIMEZONES, DOMAIN_TOPICS, ISACA_STUDY_PLAN, CISA_RULES, DECISION_PROMPTS, HOMEWORK_SUGGESTIONS, DAILY_QUEST_TEMPLATES, SHOP_ITEMS, AVATAR_ITEMS, GAME_CATALOG } from './content.js';
 import { parseQaePaste, missedConceptFromParsedQuestion } from './qae-parser.js';
-import { DEFAULT_REVIEW_SETTINGS, buildImportBundle, buildStudyQueue, calculateLibraryStats, cardFingerprint, createReviewEvent, defaultProgress, formatCardBack, mergeUniqueLibrary, progressKey, rateCard, scopeKey, makeDeckId } from './flashcard-engine.js';
+import { DEFAULT_REVIEW_SETTINGS, buildImportBundle, buildStudyQueue, hasUnresolvedMiss, calculateLibraryStats, cardFingerprint, createReviewEvent, defaultProgress, formatCardBack, mergeUniqueLibrary, progressKey, rateCard, scopeKey, makeDeckId } from './flashcard-engine.js';
 import { downloadIcs, canUseGoogleCalendar, connectGoogleCalendar, createGoogleEvent } from './calendar.js';
 
+let avatarSequence=0;
 const $ = (sel, root=document) => root.querySelector(sel);
 const $$ = (sel, root=document) => Array.from(root.querySelectorAll(sel));
 const app = $('#app');
@@ -50,21 +57,17 @@ const state = {
 };
 
 const NAV = [
-  ['command','Command Center','home'],
-  ['room','Study Room','timer'],
-  ['plan','Study Plan','roadmap'],
-  ['practice','Practice Log','qae'],
-  ['tools','Study Tools','arcade'],
-  ['guild','Guild','guild'],
-  ['calendar','Calendar','calendar'],
-  ['notebook','Notebook','notebook'],
-  ['rewards','Rewards','coin'],
-  ['profile','Profile','target']
+  ['command','Today','home'],['feed','Pocket Quest','cards'],['adventure','My Adventure','arcade'],
+  ['mastery','Mastery Atlas','target'],['learn','Concept Trails','notebook'],['tools','Deck Library','cards'],
+  ['import','Batch Import','qae'],['room','Live Study','guild'],['guild','My Guild','guild'],
+  ['rewards','Avatar & Rewards','avatar'],['practice','Practice Log','qae'],['plan','Study Plan','roadmap'],
+  ['calendar','Calendar','calendar'],['profile','Preferences','target']
 ];
 
 init();
 
 async function init(){
+  if(new URLSearchParams(location.search).get('demo')==='1'){await startDemoSession();return;}
   try {
     state.firebase = await withTimeout(initFirebase(), 8000, { enabled:false, reason:'Firebase startup timed out. Check network access to gstatic.com or Firebase config.' });
     onAuth(async user => {
@@ -219,7 +222,7 @@ function renderAuth(){
         <div class="auth-tabs"><button class="${state.activeAuthTab==='login'?'active':''}" data-auth-tab="login">Log In</button><button class="${state.activeAuthTab==='create'?'active':''}" data-auth-tab="create">Create Account</button></div>
         ${!state.firebase.enabled ? `<div class="soft"><strong>Firebase Is Not Connected.</strong><p class="helper">${esc(state.firebase.reason || 'Paste your Firebase values into config/firebase-config.js and set enabled: true.')}</p></div>` : ''}
         <form id="loginForm" class="auth-panel ${state.activeAuthTab==='login'?'active':''}">
-          <h2>Welcome Back</h2><p class="helper">Log in with your Firebase Authentication email and password.</p>
+          <button class="secondary-button full" type="button" id="exploreDemo">Explore the island · no account needed</button><h2>Welcome Back</h2><p class="helper">Log in with your Firebase Authentication email and password.</p>
           <label><span>Email</span><input type="email" id="loginEmail" autocomplete="email" required></label>
           <label><span>Password</span><input type="password" id="loginPassword" autocomplete="current-password" required></label>
           <div class="button-row"><button class="primary-button" type="submit">Log In</button><button class="text-button" type="button" id="resetPasswordBtn">Reset Password</button></div>
@@ -232,6 +235,7 @@ function renderAuth(){
         </form>
       </div>
     </div>`;
+  $('#exploreDemo')?.addEventListener('click',()=>{location.search='?demo=1';});
   $$('[data-auth-tab]').forEach(b=>b.onclick=()=>{state.activeAuthTab=b.dataset.authTab;renderAuth();});
   $('#loginForm')?.addEventListener('submit',async e=>{e.preventDefault(); if(!state.firebase?.enabled){return toast('Firebase is disabled. Your config/firebase-config.js file was likely overwritten. Restore your real Firebase config and set enabled: true.','error');} try{await signIn($('#loginEmail').value.trim(),$('#loginPassword').value);}catch(err){toast(friendly(err),'error');}});
   $('#createForm')?.addEventListener('submit',async e=>{e.preventDefault(); if(!state.firebase?.enabled){return toast('Firebase is disabled. Your config/firebase-config.js file was likely overwritten. Restore your real Firebase config and set enabled: true.','error');} try{await createAccount($('#createEmail').value.trim(),$('#createPassword').value);}catch(err){toast(friendly(err),'error');}});
@@ -255,9 +259,11 @@ function renderApp(){
         <div class="button-row"><button class="icon-button hamburger" id="openMenu">Menu</button><h2>${pageTitle()}</h2></div>
         <div class="top-actions">${top}</div>
       </div>
+      ${state.demo?'<div class="cq-demo-notice">DEMO WORLD · Original sample questions · Saves on this device only <button id="endDemo">Exit demo</button></div>':''}
       ${renderStatusStrip()}
       <section id="viewRoot">${renderView()}</section>
     </main>
+    <nav class="cq-bottom-nav" aria-label="Main navigation">${[['command','⌂','Today'],['feed','▤','Study'],['adventure','♧','World'],['mastery','◉','Progress'],['learn','✦','Learn']].map(([id,icon,label])=>`<button data-mobile-view="${id}" class="${state.activeView===id?'active':''}"><span>${icon}</span>${label}</button>`).join('')}</nav>
     ${renderGlobalOverlay()}`;
   bindCommon();
   bindView();
@@ -281,6 +287,8 @@ function renderStatusStrip(){
   return `<div class="status-strip" data-tour="kpis">${tiles.map(([iconName,val,label])=>`<div class="stat-tile"><span class="app-icon ${iconName}">${svgIcon(iconName)}</span><div><span>${val}</span><small>${label}</small></div></div>`).join('')}</div>`;
 }
 function bindCommon(){
+  $('#endDemo')?.addEventListener('click',()=>{location.search='';});
+  $$('[data-mobile-view]').forEach(b=>b.onclick=()=>navigateTo(b.dataset.mobileView));
   $$('.nav-btn').forEach(b=>b.onclick=()=>{state.lastScrollTop=$('#sidebar .nav-list')?.scrollTop||0;navigateTo(b.dataset.view);requestAnimationFrame(()=>{const nav=$('#sidebar .nav-list'); if(nav)nav.scrollTop=state.lastScrollTop;});});
   $('#themeSelect')?.addEventListener('change',e=>{state.profile.preferences.theme=e.target.value;applyTheme();saveProfileDebounced();});
   $('#helpBtn')?.addEventListener('click',()=>startTour(state.activeView,false));
@@ -292,6 +300,7 @@ function bindCommon(){
 }
 
 function navigateTo(view){
+  if(state.activeView!==view)window.speechSynthesis?.cancel();
   if(state.activeView==='rewards' && view!=='rewards') state.previewAvatar=null;
   state.activeView=view;
   renderApp();
@@ -302,6 +311,8 @@ function renderGlobalOverlay(){
 }
 
 function renderView(){
+  if(EXPERIENCE_VIEWS.includes(state.activeView))return renderExperience(state.activeView,experienceContext());
+  if(state.activeView==='profile')return renderExperienceSettings(experienceContext())+renderProfile();
   const views = {command:renderCommand,room:renderRoom,plan:renderPlan,practice:renderPractice,tools:renderTools,guild:renderGuild,calendar:renderCalendar,notebook:renderNotebook,rewards:renderRewards,profile:renderProfile};
   return (views[state.activeView]||renderCommand)();
 }
@@ -363,7 +374,7 @@ function completeDailyQuest(id,{auto=false}={}){
   award({xp:q.xp,coins:q.coins,reason:q.title,type:'Daily Quest'},{skipQuest:true});
   if(dailyQuestCount()>=3 && !state.profile.daily.completionChest){
     state.profile.daily.completionChest=true;
-    state.profile.inventory.chests.unshift({id:crypto.randomUUID(),type:'bronze',opened:false,reason:'Completed All Daily Quests'});
+    state.profile.inventory.chests.unshift({id:randomId(),type:'bronze',opened:false,reason:'Completed All Daily Quests'});
     toast('All three Daily Quests complete — Bronze Chest earned!');
   }
   saveProfileDebounced();
@@ -438,7 +449,7 @@ function renderRoom(){
     </div>
     <div class="panel span-12">
       <div class="section-head"><div><p class="eyebrow">QAE Study Loop</p><h3>Practice → Import → Review → Reinforce</h3><p class="helper">Use the official QAE during the live hour, then import the review dump once. ControlQuest automatically builds the lesson deck, Master QAE Question Bank, Master Missed Questions, flashcard queue, and retake quiz.</p></div><span class="bubble good">${calculateLibraryStats(state.library.cards,state.library.progress,state.library.reviews).due} Cards Due</span></div>
-      <div class="button-row"><button class="primary-button" data-url="${RESOURCE_LINKS.qae}">Open ISACA QAE</button><button class="secondary-button" data-go="practice">Import Today’s QAE Session</button><button class="secondary-button" data-open-study-tools="review">Open Smart Review</button><button class="secondary-button" data-open-study-tools="quiz">Retake Questions</button><button class="ghost-button" data-open-study-tools="guild-study">Start Guild Review</button></div>
+      <div class="button-row"><button class="primary-button" data-go="adventure">Explore Guild island</button><button class="secondary-button" data-go="feed">Start Pocket Quest</button><button class="primary-button" data-url="${RESOURCE_LINKS.qae}">Open ISACA QAE</button><button class="secondary-button" data-go="practice">Import Today’s QAE Session</button><button class="secondary-button" data-open-study-tools="review">Open Smart Review</button><button class="secondary-button" data-open-study-tools="quiz">Retake Questions</button><button class="ghost-button" data-open-study-tools="guild-study">Start Guild Review</button></div>
     </div>
     <div class="panel span-12" data-tour="homework-builder">
       <div class="section-head"><div><p class="eyebrow">Homework Builder</p><h3>Pick Work For Later</h3><p class="helper">Select homework, add custom work, and it will show up with due dates and links.</p></div></div>
@@ -482,10 +493,10 @@ async function toggleTimer(){ await ensureGroupForRoom(); const s=state.group.li
 async function resetTimer(){ await ensureGroupForRoom(); await confirmModal('Reset Timer','This resets the active Study Room timer for the Guild. Continue?', async()=>{ state.group.liveSession.active=false; state.group.liveSession.startedAt=null; state.group.liveSession.accumulatedSeconds=0; await saveGroup(state.group); renderApp(); }); }
 async function completeSession(){ await ensureGroupForRoom(); const s=state.group.liveSession; const mins=Math.round(timerSeconds(s)/60); const pct=Math.min(1, timerSeconds(s)/((s.durationMinutes||60)*60)); const earnedXp=Math.round(50*pct), earnedCoins=Math.round(20*pct); award({xp:earnedXp,coins:earnedCoins,reason:`Completed ${s.title}`,type:'Study Session'}); state.profile.stats.sessions=(state.profile.stats.sessions||0)+1; state.profile.stats.studyMinutes=(state.profile.stats.studyMinutes||0)+mins; state.group.sessionStats ||= {completed:0,minutes:0,streak:0}; state.group.sessionStats.completed+=1; state.group.sessionStats.minutes+=mins; state.group.sessionStats.lastDate=todayIso(); state.group.liveSession=defaultLiveSession(state.profile); await saveAll({group:true}); showCelebration('Study Session Complete',`You logged ${mins} minutes and earned ${earnedXp} XP.`); renderApp(); }
 async function toggleFlow(id,checked){ await ensureGroupForRoom(); state.group.liveSession.checked ||= {}; state.group.liveSession.checked[id]=checked; state.group.liveSession.updatedAt=new Date().toISOString(); await saveGroup(state.group); }
-function addHomework(id){ const h=HOMEWORK_SUGGESTIONS.find(x=>x.id===id); if(!h) return; if(state.profile.homework.some(x=>!x.complete && x.sourceTemplate===id)) return toast('That homework is already selected.','error'); state.profile.homework.unshift({id:crypto.randomUUID(),sourceTemplate:id,title:h.title,details:h.details,type:h.type,xp:h.xp,coins:h.coins,links:h.links,dueDate:shiftDate(todayIso(),1),createdAt:new Date().toISOString(),complete:false,source:'Study Room'}); awardRawActivity({xp:0,coins:0,reason:`Homework Selected: ${h.title}`,type:'Homework'}); saveProfileDebounced(); renderApp(); }
-function addCustomHomework(){ const title=$('#customHwTitle').value.trim(); if(!title)return toast('Add a custom homework title.','error'); state.profile.homework.unshift({id:crypto.randomUUID(),title,details:$('#customHwDetails').value.trim(),type:'Custom',xp:20,coins:8,links:[],dueDate:$('#customHwDue').value||shiftDate(todayIso(),1),createdAt:new Date().toISOString(),complete:false,source:'Custom'}); saveProfileDebounced(); renderApp(); }
+function addHomework(id){ const h=HOMEWORK_SUGGESTIONS.find(x=>x.id===id); if(!h) return; if(state.profile.homework.some(x=>!x.complete && x.sourceTemplate===id)) return toast('That homework is already selected.','error'); state.profile.homework.unshift({id:randomId(),sourceTemplate:id,title:h.title,details:h.details,type:h.type,xp:h.xp,coins:h.coins,links:h.links,dueDate:shiftDate(todayIso(),1),createdAt:new Date().toISOString(),complete:false,source:'Study Room'}); awardRawActivity({xp:0,coins:0,reason:`Homework Selected: ${h.title}`,type:'Homework'}); saveProfileDebounced(); renderApp(); }
+function addCustomHomework(){ const title=$('#customHwTitle').value.trim(); if(!title)return toast('Add a custom homework title.','error'); state.profile.homework.unshift({id:randomId(),title,details:$('#customHwDetails').value.trim(),type:'Custom',xp:20,coins:8,links:[],dueDate:$('#customHwDue').value||shiftDate(todayIso(),1),createdAt:new Date().toISOString(),complete:false,source:'Custom'}); saveProfileDebounced(); renderApp(); }
 function completeHomework(id){ const h=state.profile.homework.find(x=>x.id===id); if(!h)return; h.complete=true; h.completedAt=new Date().toISOString(); award({xp:h.xp||20,coins:h.coins||8,reason:`Homework Complete: ${h.title}`,type:'Homework'}); saveProfileDebounced(); renderApp(); }
-async function saveSharedNotes(toNotebook){ await ensureGroupForRoom(); const val=$('#sharedNotes').value.trim(); state.group.liveSession.sharedNotes=val; if(toNotebook && val){ state.profile.notes.unshift({id:crypto.randomUUID(),scope:'Guild',title:`Session Notes - ${fmtDate(todayIso())}`,body:val,createdAt:new Date().toISOString(),updatedAt:new Date().toISOString(),source:'Study Room'}); state.group.notes ||= []; state.group.notes.unshift({id:crypto.randomUUID(),author:state.profile.displayName,title:`Session Notes - ${fmtDate(todayIso())}`,body:val,createdAt:new Date().toISOString(),source:'Study Room'}); award({xp:10,coins:4,reason:'Saved Guild Session Notes',type:'Notes'}); }
+async function saveSharedNotes(toNotebook){ await ensureGroupForRoom(); const val=$('#sharedNotes').value.trim(); state.group.liveSession.sharedNotes=val; if(toNotebook && val){ state.profile.notes.unshift({id:randomId(),scope:'Guild',title:`Session Notes - ${fmtDate(todayIso())}`,body:val,createdAt:new Date().toISOString(),updatedAt:new Date().toISOString(),source:'Study Room'}); state.group.notes ||= []; state.group.notes.unshift({id:randomId(),author:state.profile.displayName,title:`Session Notes - ${fmtDate(todayIso())}`,body:val,createdAt:new Date().toISOString(),source:'Study Room'}); award({xp:10,coins:4,reason:'Saved Guild Session Notes',type:'Notes'}); }
   await saveAll({group:true}); toast(toNotebook?'Saved to Guild Notebook.':'Shared notes saved.'); }
 
 function renderPlan(){
@@ -581,8 +592,8 @@ function bindPlan(){
   $$('[data-delete-pause]').forEach(b=>b.onclick=()=>{state.profile.roadmap.pauseBlocks=state.profile.roadmap.pauseBlocks.filter(p=>p.id!==b.dataset.deletePause);saveProfileDebounced();renderApp();});
 }
 function toggleTask(id,checked){ state.profile.roadmap.completedTasks[id]=checked?new Date().toISOString():null; if(!checked) delete state.profile.roadmap.completedTasks[id]; award({xp: checked?8:0, coins: checked?3:0, reason: checked?'Roadmap Task Complete':'Roadmap Task Updated', type:'Roadmap'}); saveProfileDebounced(); renderApp(); }
-function pauseModal(){ modal('Add Pause / Rest Day',`<div class="form-grid"><label><span class="label-title">Start Date</span><input id="pauseStart" type="date" value="${todayIso()}"></label><label><span class="label-title">End Date</span><input id="pauseEnd" type="date" value="${todayIso()}"></label></div><label><span class="label-title">Reason</span><input id="pauseReason" placeholder="Vacation, client travel, PTO, etc."></label>`,()=>{ const s=$('#pauseStart').value,e=$('#pauseEnd').value; if(!s||!e||parseLocal(s)>parseLocal(e))return toast('Pause date range is invalid.','error'); state.profile.roadmap.pauseBlocks.push({id:crypto.randomUUID(),start:s,end:e,reason:$('#pauseReason').value.trim()||'Rest Day'}); saveProfileDebounced(); renderApp(); },'Add Pause'); }
-function bonusModal(){ modal('Add Bonus Study Session',`<div class="form-grid"><label><span class="label-title">Date</span><input id="bonusDate" type="date" value="${todayIso()}"></label><label><span class="label-title">Minutes</span><input id="bonusMinutes" type="number" min="15" max="300" value="60"></label></div><label><span class="label-title">Session Title</span><input id="bonusTitle" placeholder="Weekend QAE Sprint"></label><label><span class="label-title">Description</span><textarea id="bonusDesc" placeholder="What will you cover?"></textarea></label>`,()=>{ const d=$('#bonusDate').value, mins=Number($('#bonusMinutes').value); if(!d||!mins||mins<15||mins>300)return toast('Bonus session needs a valid date and minutes.','error'); state.profile.roadmap.bonusSessions.push({id:crypto.randomUUID(),date:d,title:$('#bonusTitle').value.trim()||'Bonus Study Session',description:$('#bonusDesc').value.trim(),minutes:mins}); saveProfileDebounced(); renderApp(); },'Add Session'); }
+function pauseModal(){ modal('Add Pause / Rest Day',`<div class="form-grid"><label><span class="label-title">Start Date</span><input id="pauseStart" type="date" value="${todayIso()}"></label><label><span class="label-title">End Date</span><input id="pauseEnd" type="date" value="${todayIso()}"></label></div><label><span class="label-title">Reason</span><input id="pauseReason" placeholder="Vacation, client travel, PTO, etc."></label>`,()=>{ const s=$('#pauseStart').value,e=$('#pauseEnd').value; if(!s||!e||parseLocal(s)>parseLocal(e))return toast('Pause date range is invalid.','error'); state.profile.roadmap.pauseBlocks.push({id:randomId(),start:s,end:e,reason:$('#pauseReason').value.trim()||'Rest Day'}); saveProfileDebounced(); renderApp(); },'Add Pause'); }
+function bonusModal(){ modal('Add Bonus Study Session',`<div class="form-grid"><label><span class="label-title">Date</span><input id="bonusDate" type="date" value="${todayIso()}"></label><label><span class="label-title">Minutes</span><input id="bonusMinutes" type="number" min="15" max="300" value="60"></label></div><label><span class="label-title">Session Title</span><input id="bonusTitle" placeholder="Weekend QAE Sprint"></label><label><span class="label-title">Description</span><textarea id="bonusDesc" placeholder="What will you cover?"></textarea></label>`,()=>{ const d=$('#bonusDate').value, mins=Number($('#bonusMinutes').value); if(!d||!mins||mins<15||mins>300)return toast('Bonus session needs a valid date and minutes.','error'); state.profile.roadmap.bonusSessions.push({id:randomId(),date:d,title:$('#bonusTitle').value.trim()||'Bonus Study Session',description:$('#bonusDesc').value.trim(),minutes:mins}); saveProfileDebounced(); renderApp(); },'Add Session'); }
 function uniqueRequiredTasks(days){ const map=new Map(); for(const task of days.flatMap(d=>d.tasks||[])){ if(task.id.startsWith('pause')||task.optional)continue; if(!map.has(task.id))map.set(task.id,task); } return [...map.values()]; }
 function updateRoadmapPct(days){ const tasks=uniqueRequiredTasks(days); const done=tasks.filter(t=>state.profile.roadmap.completedTasks[t.id]).length; state.profile.stats.roadmapPct=tasks.length?Math.round(done/tasks.length*100):0; }
 function dayComplete(d){ const required=d.tasks.filter(t=>!t.id.startsWith('pause') && !t.optional); return required.length>0 && required.every(t=>state.profile.roadmap.completedTasks[t.id]); }
@@ -607,12 +618,12 @@ function renderPractice(){
 }
 function bindPractice(){ const d=$('#qaeDomain'); if(d){d.onchange=fillTopicSelect;fillTopicSelect();} $('#addQae')?.addEventListener('click',addQaeLog); $('#addMissedQuestion')?.addEventListener('click',addMissedQuestion); $('#parseQaePaste')?.addEventListener('click',()=>importQaePaste(false)); $('#previewQaePaste')?.addEventListener('click',()=>importQaePaste(true)); $('#clearQaePaste')?.addEventListener('click',()=>{$('#qaeImportText').value='';}); $('#qaeImportFile')?.addEventListener('change',readQaeTextFile); $$('[data-edit-qae]').forEach(b=>b.onclick=()=>editQae(b.dataset.editQae)); $$('[data-delete-qae]').forEach(b=>b.onclick=()=>deleteQae(b.dataset.deleteQae)); $$('[data-review-missed]').forEach(b=>b.onclick=()=>reviewMissed(b.dataset.reviewMissed)); $$('[data-edit-missed]').forEach(b=>b.onclick=()=>editMissed(b.dataset.editMissed)); $$('[data-delete-missed]').forEach(b=>b.onclick=()=>deleteMissed(b.dataset.deleteMissed)); $$('[data-card-missed]').forEach(b=>b.onclick=()=>addMissedToDeck(b.dataset.cardMissed)); $$('[data-open-card-deck]').forEach(b=>b.onclick=()=>{state.selectedDeckId=b.dataset.openCardDeck;state.toolsTab='review';state.activeView='tools';renderApp();}); }
 function missedQuestionForm(){ return `<div class="soft"><div class="form-grid"><label><span class="label-title">Domain</span><select id="missDomain">${DOMAIN_TOPICS.map(d=>`<option>${d.domain}: ${d.name}</option>`).join('')}</select></label><label><span class="label-title">Topic</span><input id="missTopic" placeholder="Topic Or Concept"></label></div><textarea id="missSummary" placeholder="Short summary in your own words: what was the concept, trap, or CISA logic?"></textarea><textarea id="missRule" placeholder="Reusable CISA rule / flashcard answer..."></textarea><button class="primary-button small" id="addMissedQuestion">Add Missed Concept</button></div>`; }
-function addMissedQuestion(){ const topic=$('#missTopic').value.trim(); const summary=$('#missSummary').value.trim(); if(!topic || !summary) return toast('Add a topic and short summary.','error'); state.profile.missedQuestions.unshift({id:crypto.randomUUID(),date:todayIso(),domain:$('#missDomain').value,topic,summary,rule:$('#missRule').value.trim(),reviewed:false,createdAt:new Date().toISOString()}); award({xp:12,coins:5,reason:'Missed Concept Captured',type:'Missed Question'}); saveProfileDebounced(); renderApp(); }
+function addMissedQuestion(){ const topic=$('#missTopic').value.trim(); const summary=$('#missSummary').value.trim(); if(!topic || !summary) return toast('Add a topic and short summary.','error'); state.profile.missedQuestions.unshift({id:randomId(),date:todayIso(),domain:$('#missDomain').value,topic,summary,rule:$('#missRule').value.trim(),reviewed:false,createdAt:new Date().toISOString()}); award({xp:12,coins:5,reason:'Missed Concept Captured',type:'Missed Question'}); saveProfileDebounced(); renderApp(); }
 function missedQuestionRow(m){ return `<div class="log-row"><div><strong>${esc(m.topic)}</strong><p class="helper">${esc(m.domain)} · ${m.reviewed?'Reviewed':'Needs Review'} · ${fmtDate(m.date)}</p><p>${esc(m.summary||'')}</p>${m.rule?`<p class="helper"><strong>Rule:</strong> ${esc(m.rule)}</p>`:''}</div><div class="button-row"><button class="secondary-button small" data-review-missed="${m.id}">${m.reviewed?'Unreview':'Mark Reviewed'}</button><button class="secondary-button small" data-card-missed="${m.id}">Add To Flashcards</button><button class="secondary-button small" data-edit-missed="${m.id}">Edit</button><button class="danger-button small" data-delete-missed="${m.id}">Delete</button></div></div>`; }
 function reviewMissed(id){ const m=state.profile.missedQuestions.find(x=>x.id===id); if(!m)return; m.reviewed=!m.reviewed; if(m.reviewed) award({xp:8,coins:3,reason:'Missed Concept Reviewed',type:'Missed Question'}); saveProfileDebounced(); renderApp(); }
 function editMissed(id){ const m=state.profile.missedQuestions.find(x=>x.id===id); if(!m)return; modal('Edit Missed Concept',`<input id="editMissTopic" value="${escAttr(m.topic)}"><textarea id="editMissSummary">${esc(m.summary||'')}</textarea><textarea id="editMissRule">${esc(m.rule||'')}</textarea>`,()=>{m.topic=$('#editMissTopic').value.trim();m.summary=$('#editMissSummary').value.trim();m.rule=$('#editMissRule').value.trim();m.updatedAt=new Date().toISOString();saveProfileDebounced();renderApp();},'Save Changes'); }
 function deleteMissed(id){ confirmModal('Delete Missed Concept','Delete this missed concept from your review bank?',()=>{state.profile.missedQuestions=state.profile.missedQuestions.filter(x=>x.id!==id);saveProfileDebounced();renderApp();}); }
-function importMissedLines(){ const text=$('#missImport').value.trim(); if(!text)return toast('Paste lines to import first.','error'); const lines=text.split(/\n+/).map(x=>x.trim()).filter(Boolean).slice(0,80); for(const line of lines){ const parts=line.split('|').map(x=>x.trim()); state.profile.missedQuestions.unshift({id:crypto.randomUUID(),date:todayIso(),domain:parts[0]||'Unassigned Domain',topic:parts[1]||'Imported Missed Concept',summary:parts[2]||line,rule:(parts[3]||'').replace(/^Rule:\s*/i,''),reviewed:false,createdAt:new Date().toISOString(),source:'Import'}); } award({xp:Math.min(80,lines.length*4),coins:Math.min(30,lines.length*2),reason:`Imported ${lines.length} Missed Concepts`,type:'Import'}); saveProfileDebounced(); renderApp(); }
+function importMissedLines(){ const text=$('#missImport').value.trim(); if(!text)return toast('Paste lines to import first.','error'); const lines=text.split(/\n+/).map(x=>x.trim()).filter(Boolean).slice(0,80); for(const line of lines){ const parts=line.split('|').map(x=>x.trim()); state.profile.missedQuestions.unshift({id:randomId(),date:todayIso(),domain:parts[0]||'Unassigned Domain',topic:parts[1]||'Imported Missed Concept',summary:parts[2]||line,rule:(parts[3]||'').replace(/^Rule:\s*/i,''),reviewed:false,createdAt:new Date().toISOString(),source:'Import'}); } award({xp:Math.min(80,lines.length*4),coins:Math.min(30,lines.length*2),reason:`Imported ${lines.length} Missed Concepts`,type:'Import'}); saveProfileDebounced(); renderApp(); }
 function questionBankRows(){
   const list=[...(state.library.cards||[])].sort((a,b)=>String(b.importedAt||'').localeCompare(String(a.importedAt||''))).slice(0,12);
   if(!list.length) return '<div class="empty">No imported QAE review items yet. Paste a QAE review dump above to build your adaptive study library.</div>';
@@ -668,10 +679,10 @@ async function executeQaeImport({questions,parsed,label,scope,lessonId,sharePubl
   if(scope!=='Public'){await saveStudyImport({uid:state.user.uid,groupId:state.profile.activeGroupId,decks:bundle.decks,cards:bundle.cards});state.library=mergeUniqueLibrary(state.library,bundle);}
   if(sharePublic){try{const count=await publishDeckToCommunity(bundle.decks[0],bundle.cards);if(scope==='Public'&&!count){toast('Choose a lesson category before publishing these unmatched questions.','error');return false;}}catch(error){if(scope==='Public')throw error;toast(`Private import saved; public sync needs retry: ${friendly(error)}`,'error');}}
   if(scope==='Guild'&&state.group){state.group.studyLibraryUpdatedAt=new Date().toISOString();await saveGroup(state.group);}
-  const importedAt=new Date().toISOString(); const importId=crypto.randomUUID();
+  const importedAt=new Date().toISOString(); const importId=randomId();
   if(!duplicateSession){
     const misses=questions.filter(q=>q.isCorrect===false).map(missedConceptFromParsedQuestion); state.profile.missedQuestions.unshift(...misses);
-    state.profile.qaeLogs.unshift({id:crypto.randomUUID(),date:todayIso(),domain:domains,domainId:'imported',topic:label,total:questions.length,correct,notes:`Imported QAE study package. ${bundle.incorrect} questions added to the missed deck.`,createdAt:importedAt,source:'QAE Study Package Import'});
+    state.profile.qaeLogs.unshift({id:randomId(),date:todayIso(),domain:domains,domainId:'imported',topic:label,total:questions.length,correct,notes:`Imported QAE study package. ${bundle.incorrect} questions added to the missed deck.`,createdAt:importedAt,source:'QAE Study Package Import'});
     state.profile.stats.qaeQuestions=(state.profile.stats.qaeQuestions||0)+questions.length; state.profile.stats.qaeCorrect=(state.profile.stats.qaeCorrect||0)+correct;
   }
   state.profile.qaeImports.unshift({id:importId,label,scope,date:todayIso(),createdAt:importedAt,total:questions.length,correct,missed:missed.length,domains,warnings:parsed.warnings||[],sessionFingerprint:bundle.sessionFingerprint,lessonDeckId:scope==='Public'?`community_${lessonId||cardLesson(bundle.cards[0])?.id}`:bundle.lessonDeckId,duplicateSession,newUniqueQuestions:uniqueNew.length,duplicates});
@@ -695,7 +706,7 @@ function addMissedToDeck(id){
 }
 
 function fillTopicSelect(){ const d=ISACA_STUDY_PLAN.find(x=>x.id===$('#qaeDomain').value) || DOMAIN_TOPICS.find(x=>x.id===$('#qaeDomain').value); $('#qaeTopic').innerHTML=(d?.topics||[]).map(t=>`<option>${escAttr(t.title || t)}</option>`).join(''); }
-function addQaeLog(){ const total=Number($('#qaeTotal').value), correct=Number($('#qaeCorrect').value); if(!total||total<1||total>150)return toast('Questions must be between 1 and 150.','error'); if(correct<0||correct>total)return toast('Correct answers cannot exceed total questions.','error'); const d=DOMAIN_TOPICS.find(x=>x.id===$('#qaeDomain').value); const log={id:crypto.randomUUID(),date:todayIso(),domain:d?.name||'',domainId:d?.id||'',topic:$('#qaeTopic').value,total,correct,notes:$('#qaeNotes').value.trim(),createdAt:new Date().toISOString()}; state.profile.qaeLogs.unshift(log); state.profile.stats.qaeQuestions=(state.profile.stats.qaeQuestions||0)+total; state.profile.stats.qaeCorrect=(state.profile.stats.qaeCorrect||0)+correct; const acc=correct/total; award({xp:Math.round(20+total*1.2+acc*20),coins:Math.round(8+total*.45+acc*8),reason:`QAE Log: ${correct}/${total}`,type:'QAE'}); saveProfileDebounced(); renderApp(); }
+function addQaeLog(){ const total=Number($('#qaeTotal').value), correct=Number($('#qaeCorrect').value); if(!total||total<1||total>150)return toast('Questions must be between 1 and 150.','error'); if(correct<0||correct>total)return toast('Correct answers cannot exceed total questions.','error'); const d=DOMAIN_TOPICS.find(x=>x.id===$('#qaeDomain').value); const log={id:randomId(),date:todayIso(),domain:d?.name||'',domainId:d?.id||'',topic:$('#qaeTopic').value,total,correct,notes:$('#qaeNotes').value.trim(),createdAt:new Date().toISOString()}; state.profile.qaeLogs.unshift(log); state.profile.stats.qaeQuestions=(state.profile.stats.qaeQuestions||0)+total; state.profile.stats.qaeCorrect=(state.profile.stats.qaeCorrect||0)+correct; const acc=correct/total; award({xp:Math.round(20+total*1.2+acc*20),coins:Math.round(8+total*.45+acc*8),reason:`QAE Log: ${correct}/${total}`,type:'QAE'}); saveProfileDebounced(); renderApp(); }
 function qaeLogRow(l){ const acc=Math.round(l.correct/l.total*100); return `<div class="log-row"><div><strong>${esc(l.domain)}</strong><p class="helper">${fmtDate(l.date)} · ${esc(l.topic)} · ${l.correct}/${l.total} (${acc}%)</p><p>${esc(l.notes||'')}</p></div><div class="button-row"><button class="secondary-button small" data-edit-qae="${l.id}">Edit</button><button class="danger-button small" data-delete-qae="${l.id}">Delete</button></div></div>`; }
 function editQae(id){ const l=state.profile.qaeLogs.find(x=>x.id===id); if(!l)return; modal('Edit QAE Log',`<div class="form-grid"><input id="editQaeTotal" type="number" min="1" max="150" value="${l.total}"><input id="editQaeCorrect" type="number" min="0" max="150" value="${l.correct}"></div><textarea id="editQaeNotes">${esc(l.notes||'')}</textarea>`,()=>{const t=Number($('#editQaeTotal').value),c=Number($('#editQaeCorrect').value); if(!t||c<0||c>t)return toast('Invalid QAE values.','error'); recalcQaeStats(-l.total,-l.correct); l.total=t;l.correct=c;l.notes=$('#editQaeNotes').value.trim();recalcQaeStats(t,c);saveProfileDebounced();renderApp();},'Save Changes'); }
 function deleteQae(id){ const l=state.profile.qaeLogs.find(x=>x.id===id); if(!l)return; confirmModal('Delete QAE Log','Delete this QAE log and remove it from totals?',()=>{state.profile.qaeLogs=state.profile.qaeLogs.filter(x=>x.id!==id);recalcQaeStats(-l.total,-l.correct);saveProfileDebounced();renderApp();}); }
@@ -714,7 +725,7 @@ function trendSvg(){
 function shortDate(iso){ try{return new Intl.DateTimeFormat('en-US',{month:'short',day:'numeric'}).format(parseLocal(String(iso).slice(0,10)));}catch{return String(iso||'').slice(5,10);} }
 
 function mistakeForm(){return `<div class="soft"><div class="form-grid"><input id="mistakeTopic" placeholder="Topic / Rule"><select id="mistakeDomain">${DOMAIN_TOPICS.map(d=>`<option>${d.domain}: ${d.name}</option>`).join('')}</select></div><textarea id="mistakeWhy" placeholder="What did you pick, why was it wrong, and what is the reusable CISA logic?"></textarea><button class="primary-button small" id="addMistake">Add Mistake Rule</button></div>`;}
-function addMistake(){ const topic=$('#mistakeTopic').value.trim(); if(!topic)return toast('Add a mistake topic.','error'); state.profile.mistakes.unshift({id:crypto.randomUUID(),date:todayIso(),topic,domain:$('#mistakeDomain').value,why:$('#mistakeWhy').value.trim(),reviewed:false}); award({xp:12,coins:5,reason:'Mistake Rule Added',type:'Mistake'}); saveProfileDebounced(); renderApp(); }
+function addMistake(){ const topic=$('#mistakeTopic').value.trim(); if(!topic)return toast('Add a mistake topic.','error'); state.profile.mistakes.unshift({id:randomId(),date:todayIso(),topic,domain:$('#mistakeDomain').value,why:$('#mistakeWhy').value.trim(),reviewed:false}); award({xp:12,coins:5,reason:'Mistake Rule Added',type:'Mistake'}); saveProfileDebounced(); renderApp(); }
 function mistakeRow(m){return `<div class="log-row"><div><strong>${esc(m.topic)}</strong><p class="helper">${esc(m.domain)} · ${m.reviewed?'Reviewed':'Needs Review'}</p><p>${esc(m.why||'')}</p></div><div class="button-row"><button class="secondary-button small" data-review-mistake="${m.id}">${m.reviewed?'Unreview':'Reviewed'}</button><button class="secondary-button small" data-edit-mistake="${m.id}">Edit</button><button class="danger-button small" data-delete-mistake="${m.id}">Delete</button></div></div>`;}
 function reviewMistake(id){ const m=state.profile.mistakes.find(x=>x.id===id); if(!m)return; m.reviewed=!m.reviewed; if(m.reviewed)award({xp:8,coins:3,reason:'Mistake Reviewed',type:'Mistake'}); saveProfileDebounced(); renderApp(); }
 function editMistake(id){ const m=state.profile.mistakes.find(x=>x.id===id); if(!m)return; modal('Edit Mistake Rule',`<input id="editMistakeTopic" value="${escAttr(m.topic)}"><textarea id="editMistakeWhy">${esc(m.why||'')}</textarea>`,()=>{m.topic=$('#editMistakeTopic').value.trim();m.why=$('#editMistakeWhy').value.trim();saveProfileDebounced();renderApp();},'Save Changes'); }
@@ -806,10 +817,10 @@ function startStudySession(mode, queueMode='due'){
   if(queueMode==='new'&&remainingNew<=0)return toast('You have reached today’s New Cards limit. Change it in Profile or continue with Due/Missed review.','error');
   const dailyLimit=queueMode==='new'?remainingNew:(settings.maxReviewsPerDay||100);
   const limit=mode==='quiz'?Math.min(50,cards.length):Math.min(dailyLimit,cards.length);
-  let queue=buildStudyQueue(cards,state.library.progress,{mode:queueMode,limit,newLimit:remainingNew});
-  if(!queue.length&&queueMode==='due') queue=buildStudyQueue(cards,state.library.progress,{mode:'all',limit:Math.min(20,limit)});
+  let queue=buildStudyQueue(cards,state.library.progress,{mode:queueMode,limit,newLimit:remainingNew,uid:state.user.uid});
+  if(!queue.length&&queueMode==='due') queue=buildStudyQueue(cards,state.library.progress,{mode:'all',limit:Math.min(20,limit),uid:state.user.uid});
   if(!queue.length)return toast('No cards are available for this mode.','error');
-  state.studySession={id:crypto.randomUUID(),mode,queueMode,deckId:deck.id,deckScopeKey:deck.scopeKey,queue:queue.map(libraryCardKey),index:0,correct:0,incorrect:0,ratings:{Again:0,Hard:0,Good:0,Easy:0},startedAt:new Date().toISOString(),answerSubmitted:false,selectedAnswer:null,revealed:false};
+  state.studySession={id:randomId(),mode,queueMode,deckId:deck.id,deckScopeKey:deck.scopeKey,queue:queue.map(libraryCardKey),index:0,correct:0,incorrect:0,ratings:{Again:0,Hard:0,Good:0,Easy:0},startedAt:new Date().toISOString(),answerSubmitted:false,selectedAnswer:null,revealed:false};
   state.reviewStartedAt=Date.now(); state.deckFlipped=false; state.quizSelection=null; state.quizRevealed=false; persistActiveStudySession(); renderApp();
 }
 function renderStudyRunner(){
@@ -856,17 +867,24 @@ function revealAdaptiveCard(){
   const card=currentStudyCard(); if(!card)return; const hasChoices=Object.keys(card.choices||{}).length>=2; if(hasChoices&&!state.studySession.selectedAnswer)return toast('Select an answer before revealing the card.','error'); state.deckFlipped=true; state.studySession.answerSubmitted=true; persistActiveStudySession(); renderApp();
 }
 async function applyCardRating(rating){
-  const session=state.studySession, card=currentStudyCard(); if(!session||!card)return;
-  const key=progressKey(card); const old=state.library.progress[key]||defaultProgress(card,state.user.uid); const hasChoices=Object.keys(card.choices||{}).length>=2; const answerCorrect=hasChoices?session.selectedAnswer===card.correctAnswer:rating!=='Again';
-  const next=rateCard(card,old,rating,state.profile.preferences.studySettings||DEFAULT_REVIEW_SETTINGS);
-  const event=createReviewEvent({uid:state.user.uid,card,deckId:session.deckId,mode:session.mode,rating,correct:answerCorrect,responseTimeMs:Date.now()-(state.reviewStartedAt||Date.now()),sessionId:session.id,groupId:state.profile.activeGroupId,wasNew:!(old.repetitions||0)});
-  state.library.progress[key]=next; state.library.reviews.unshift(event); state.library.reviews=state.library.reviews.slice(0,1000);
-  await Promise.all([saveStudyProgress(state.user.uid,next),saveStudyReview(state.user.uid,event)]);
-  session.ratings[rating]=(session.ratings[rating]||0)+1; if(answerCorrect)session.correct++;else session.incorrect++;
-  const gap=reviewGapForRating(rating,session); const currentKey=session.queue[session.index]; if(gap){ const insertAt=Math.min(session.queue.length,session.index+1+gap); session.queue.splice(insertAt,0,currentKey); }
-  state.profile.studyHistory.reviews=(state.profile.studyHistory.reviews||0)+1; state.profile.studyHistory.correct=(state.profile.studyHistory.correct||0)+(answerCorrect?1:0); state.profile.studyHistory.incorrect=(state.profile.studyHistory.incorrect||0)+(answerCorrect?0:1);
-  award({xp:answerCorrect?4:2,coins:answerCorrect?2:1,reason:`Study Review: ${rating}`,type:'Flashcards'});
-  session.index++; session.answerSubmitted=false; session.selectedAnswer=null; state.deckFlipped=false; state.reviewStartedAt=Date.now(); persistActiveStudySession(); await saveProfileDebounced(true); renderApp();
+  const session=state.studySession,card=currentStudyCard();
+  if(!session||!card||!session.answerSubmitted||applyCardRating.saving)return;
+  applyCardRating.saving=true;session.id ||= randomId();delete session.ratingBusy;
+  try{
+    const hasChoices=Object.keys(card.choices||{}).length>=2;
+    const answerCorrect=hasChoices?session.selectedAnswer===card.correctAnswer:rating!=='Again';
+    if(!answerCorrect)rating='Again';
+    const index=session.index;
+    await saveExperienceReview(card,{rating,selectedAnswer:session.selectedAnswer,eventId:`legacy:${session.id}:${index}`,mode:session.mode});
+    if(state.studySession!==session)return;
+    session.ratings ||= {};session.ratings[rating]=(session.ratings[rating]||0)+1;
+    if(answerCorrect)session.correct=(session.correct||0)+1;else session.incorrect=(session.incorrect||0)+1;
+    const gap=reviewGapForRating(rating,session),currentKey=session.queue[index];
+    if(gap)session.queue.splice(Math.min(session.queue.length,index+1+gap),0,currentKey);
+    session.index++;session.answerSubmitted=false;session.selectedAnswer=null;state.deckFlipped=false;state.reviewStartedAt=Date.now();
+    persistActiveStudySession();await saveProfileDebounced(true);renderApp();
+  }catch(error){toast(`Review not finished: ${friendly(error)}. Your answer can be retried.`,'error');}
+  finally{applyCardRating.saving=false;}
 }
 function renderStudySessionComplete(){ const s=state.studySession; const total=(s.correct||0)+(s.incorrect||0); const pct=total?Math.round(s.correct/total*100):0; return `<div class="study-complete"><span class="app-icon xp">${svgIcon('xp')}</span><h2>Review Session Complete</h2><div class="practice-summary"><div class="soft"><h3>${total}</h3><p class="helper">Cards Reviewed</p></div><div class="soft"><h3>${pct}%</h3><p class="helper">Recall Accuracy</p></div><div class="soft"><h3>${s.ratings?.Again||0}</h3><p class="helper">Again</p></div><div class="soft"><h3>${s.ratings?.Easy||0}</h3><p class="helper">Easy</p></div></div><button class="primary-button" id="finishStudySession">Return To Deck</button></div>`; }
 
@@ -879,12 +897,14 @@ function renderGuildStudyTab(){
 }
 function renderGuildStudySession(gs){
   const card=libraryCardFromKey(gs.cardKeys?.[gs.index||0]);
+  if((gs.pendingParticipants||[]).includes(state.user.uid))return `<section class="cq-feed-empty"><h2>You’re joining the next question.</h2><p>This round is already revealed. Your place is saved for the next one.</p></section>`;
+  if(!(gs.participants||[gs.hostUid]).includes(state.user.uid))return `<section class="cq-feed-empty"><h2>${esc(gs.title||'Live study is ready')}</h2><p>Join this round when you are here and ready. Offline Guild members do not block the session.</p><button class="primary-button" id="joinV3Guild">Join live session</button></section>`;
   if(!card)return `<div class="empty"><h3>Guild Session Complete</h3>${renderGuildRaceTrack(gs,Object.values(state.group.members||{}))}<button class="primary-button" id="endGuildStudy">Close Session</button></div>`;
-  const response=gs.responses?.[state.user.uid]; const members=Object.values(state.group.members||{}); const scores=gs.scores||{}; const allAnswered=allGuildMembersAnswered(gs,members);
+  const response=gs.responses?.[state.user.uid]; const members=Object.values(state.group.members||{}).filter(m=>(gs.participants||Object.keys(gs.responses||{}).concat(gs.hostUid||[])).includes(m.uid)); const scores=gs.scores||{}; const allAnswered=allGuildMembersAnswered(gs,members);
   if(gs.revealed) queueMicrotask(()=>recordLocalGuildReviewIfNeeded(gs,card));
-  return `<div class="guild-study-live"><div class="section-head"><div><p class="eyebrow">Live Guild Starship Review</p><h3>${esc(gs.title||'Guild Review')}</h3><p class="helper">Answers stay private until every active member locks one in and someone reveals the result.</p></div><div class="button-row"><span class="bubble">${(gs.index||0)+1} / ${gs.cardKeys.length}</span><button class="danger-button small" id="endGuildStudy">End</button></div></div>${renderGuildRaceTrack(gs,members)}<h2>${esc(card.question)}</h2><div class="quiz-options">${Object.entries(card.choices||{}).map(([letter,text])=>`<button class="quiz-option ${response?.answer===letter?'selected':''} ${gs.revealed&&letter===card.correctAnswer?'correct':''} ${gs.revealed&&response?.answer===letter&&letter!==card.correctAnswer?'incorrect':''}" data-guild-answer="${letter}" ${gs.revealed?'disabled':''}><strong>${letter}</strong><span>${esc(text)}</span></button>`).join('')}</div><div class="guild-response-grid">${members.map(m=>{const r=gs.responses?.[m.uid];const label=gs.revealed?(r?`${r.answer} · ${r.correct?'Correct':'Missed'}`:'No Answer'):(r?'Answer Locked In':'Thinking…');return `<div class="member-response"><strong>${esc(m.name)}</strong><span class="bubble ${gs.revealed?(r?.correct?'good':r?'warn':''):(r?'good':'')}">${label}</span><small>${scores[m.uid]||0} Points</small></div>`;}).join('')}</div>${gs.revealed?`<div class="answer-panel success"><h3>${card.correctAnswer}. ${esc(card.choices?.[card.correctAnswer]||'')}</h3>${renderAllJustifications(card)}</div><button class="primary-button" id="nextGuildQuestion">Next Question</button>`:`<div class="reveal-gate"><p class="helper">${allAnswered?'Everyone is locked in. Reveal whenever your group is ready.':`${Object.keys(gs.responses||{}).length} of ${members.length} members locked in.`}</p><button class="primary-button" id="revealGuildAnswer" ${allAnswered?'':'disabled'}>Reveal Answers</button></div>`}</div>`;
+  return `<div class="guild-study-live"><div class="section-head"><div><p class="eyebrow">Live Guild Starship Review</p><h3>${esc(gs.title||'Guild Review')}</h3><p class="helper">Answers stay private until every active member locks one in and someone reveals the result.</p></div><div class="button-row"><span class="bubble">${(gs.index||0)+1} / ${gs.cardKeys.length}</span><button class="secondary-button small" id="leaveV3Guild">Leave round</button><button class="danger-button small" id="endGuildStudy">End</button></div></div>${renderGuildRaceTrack(gs,members)}<div class="cq-session-participants">${members.map(m=>`<div>${avatarSvg(m.avatar||{})}<strong>${esc(m.name)}</strong><span>${gs.responses?.[m.uid]?'Answer locked ✓':'Thinking…'}</span></div>`).join('')}</div><h2>${esc(card.question)}</h2><div class="quiz-options">${Object.entries(card.choices||{}).map(([letter,text])=>`<button class="quiz-option ${response?.answer===letter?'selected':''} ${gs.revealed&&letter===card.correctAnswer?'correct':''} ${gs.revealed&&response?.answer===letter&&letter!==card.correctAnswer?'incorrect':''}" data-guild-answer="${letter}" ${gs.revealed?'disabled':''}><strong>${letter}</strong><span>${esc(text)}</span></button>`).join('')}</div><div class="guild-response-grid">${members.map(m=>{const r=gs.responses?.[m.uid];const label=gs.revealed?(r?`${r.answer} · ${r.correct?'Correct':'Missed'}`:'No Answer'):(r?'Answer Locked In':'Thinking…');return `<div class="member-response"><strong>${esc(m.name)}</strong><span class="bubble ${gs.revealed?(r?.correct?'good':r?'warn':''):(r?'good':'')}">${label}</span><small>${scores[m.uid]||0} Points</small></div>`;}).join('')}</div>${gs.revealed?`<div class="answer-panel success"><h3>${card.correctAnswer}. ${esc(card.choices?.[card.correctAnswer]||'')}</h3>${renderAllJustifications(card)}</div><button class="primary-button" id="nextGuildQuestion">Next Question</button>`:`<div class="reveal-gate"><p class="helper">${allAnswered?'Everyone is locked in. Reveal whenever your group is ready.':`${Object.keys(gs.responses||{}).length} of ${members.length} members locked in.`}</p><button class="primary-button" id="revealGuildAnswer" ${allAnswered?'':'disabled'}>Reveal Answers</button></div>`}</div>`;
 }
-function allGuildMembersAnswered(gs,members=Object.values(state.group?.members||{})){ return members.length>0 && members.every(m=>gs.responses?.[m.uid]?.answer); }
+function allGuildMembersAnswered(gs,members=Object.values(state.group?.members||{})){const ids=gs.participants||members.map(m=>m.uid);return ids.length>0&&ids.every(uid=>gs.responses?.[uid]?.answer);}
 async function recordLocalGuildReviewIfNeeded(gs,card){
   if(!state.profile||!state.user||!gs?.revealed)return; state.profile.guildReviewRecorded ||= {}; const marker=`${gs.id}:${gs.index}`; if(state.profile.guildReviewRecorded[marker])return;
   const answer=gs.responses?.[state.user.uid]?.answer; if(!answer)return; const correct=answer===card.correctAnswer; const old=state.library.progress[progressKey(card)]||defaultProgress(card,state.user.uid); const rating=correct?'Good':'Again'; const next=rateCard(card,old,rating,state.profile.preferences.studySettings||DEFAULT_REVIEW_SETTINGS);
@@ -905,7 +925,7 @@ function renderStudyGamesTab(){
 }
 async function startLibraryGame(type){
   const deck=selectedLibraryDeck(); if(!deck)return toast('No decks match these filters.','error'); let cards=libraryCardsForDeck(deck).filter(c=>!c.answerConflict&&c.correctAnswer&&Object.keys(c.choices||{}).length>=2);
-  if(type==='missed-gauntlet')cards=cards.filter(c=>c.wasCorrectAtImport===false||(state.library.progress[progressKey(c)]?.incorrectCount||0)>0);
+  if(type==='missed-gauntlet')cards=cards.filter(c=>hasUnresolvedMiss(c,state.library.progress[progressKey(c)],state.user.uid));
   if(!cards.length)return toast('This deck does not have eligible multiple-choice cards for that game.','error');
   const shuffled=[...cards].sort(()=>Math.random()-.5).slice(0,type==='space-odyssey'?40:30);
   const campaign=deepMerge({chapter:1,sector:1,energy:5,maxEnergy:5,shipLevel:1,stars:0,missionsCompleted:0,correct:0,incorrect:0,lastPlayedAt:null},state.profile.spaceQuestProgress||{});
@@ -917,13 +937,14 @@ async function answerLibraryGame(letter){
   const g=state.gameState,card=libraryCardFromKey(g?.queue?.[g.index]); if(!g||!card)return;
   if(g.type==='speed-audit'&&Date.now()>=g.endsAt){g.index=g.queue.length;renderApp();return;}
   const correct=letter===card.correctAnswer;
+  if(g.answerBusy)return;g.answerBusy=true;try{await saveExperienceReview(card,{rating:correct?'Good':'Again',selectedAnswer:letter,eventId:`game:${g.startedAt}:${g.index}`,mode:g.type});}catch(error){g.answerBusy=false;toast(friendly(error),'error');return;}
   if(correct){g.score+=100+g.streak*15;g.streak++;g.correct++;g.climb=Math.min(100,(g.climb||12)+14);g.bestStreak=Math.max(g.bestStreak,g.streak);}else{g.streak=0;g.incorrect++;g.climb=Math.max(4,(g.climb||12)-10);if(g.type==='missed-gauntlet')g.lives--;}
   if(g.type==='space-odyssey'){
     const c=g.campaign; if(correct){c.stars+=12+Math.min(18,g.streak*2);c.correct++;}else{c.energy=Math.max(0,c.energy-1);c.incorrect++;}
     if(correct&&(g.correct%5===0)){c.sector++;c.missionsCompleted++;if(c.sector>5){c.chapter++;c.sector=1;c.shipLevel++;c.maxEnergy=Math.min(9,(c.maxEnergy||5)+1);c.energy=c.maxEnergy;}}
     c.lastPlayedAt=new Date().toISOString(); state.profile.spaceQuestProgress={...c}; await saveProfileDebounced(true);
   }
-  g.index++;
+  g.index++;g.answerBusy=false;
   if((g.type==='missed-gauntlet'&&g.lives<=0)||(g.type==='speed-audit'&&Date.now()>=g.endsAt)||(g.type==='space-odyssey'&&g.campaign.energy<=0))g.index=g.queue.length;
   renderApp();
 }
@@ -933,7 +954,7 @@ function renderLibraryGameComplete(g){
 }
 function finishLibraryGame(){
   const g=state.gameState;if(!g)return;const xp=Math.min(100,15+Math.round(g.score/100)+(g.type==='space-odyssey'?15:0));const coins=Math.min(45,5+Math.round(g.score/300)+(g.type==='space-odyssey'?8:0));
-  state.profile.gameStats ||= {plays:0,highScores:{},history:[]}; state.profile.gameStats.plays++; state.profile.gameStats.highScores[g.type]=Math.max(state.profile.gameStats.highScores[g.type]||0,g.score); state.profile.gameStats.history.unshift({id:crypto.randomUUID(),type:g.type,score:g.score,correct:g.correct||0,incorrect:g.incorrect||0,date:new Date().toISOString()}); state.profile.gameStats.history=state.profile.gameStats.history.slice(0,100);
+  state.profile.gameStats ||= {plays:0,highScores:{},history:[]}; state.profile.gameStats.plays++; state.profile.gameStats.highScores[g.type]=Math.max(state.profile.gameStats.highScores[g.type]||0,g.score); state.profile.gameStats.history.unshift({id:randomId(),type:g.type,score:g.score,correct:g.correct||0,incorrect:g.incorrect||0,date:new Date().toISOString()}); state.profile.gameStats.history=state.profile.gameStats.history.slice(0,100);
   if(g.type==='space-odyssey'){state.profile.spaceQuestProgress={...g.campaign,energy:Math.max(1,g.campaign.energy),lastPlayedAt:new Date().toISOString()};}
   award({xp,coins,reason:`Question Game Complete: ${gameTitle(g.type)}`,type:'Arcade'});state.gameState=null;saveProfileDebounced(true);showCelebration('Game Rewards Collected',`+${xp} XP · +${coins} Audit Coins`);renderApp();
 }
@@ -963,8 +984,8 @@ async function startGuildRace(){
   if(!deck)return toast('Import or create a Guild deck before starting a Guild Starship Race.','error');
   let cards=libraryCardsForDeck(deck).filter(c=>!c.answerConflict&&c.correctAnswer&&Object.keys(c.choices||{}).length>=2); if(!cards.length)return toast('The selected Guild deck has no eligible multiple-choice questions.','error');
   cards=[...cards].sort(()=>Math.random()-.5).slice(0,20);
-  state.group.studySession={id:crypto.randomUUID(),active:true,gameType:'guild-race',title:'Guild Starship Race',deckId:deck.id,scopeKey:deck.scopeKey,cardKeys:cards.map(libraryCardKey),index:0,responses:{},scores:{},revealed:false,hostUid:state.user.uid,startedAt:new Date().toISOString(),targetScore:1200};
-  await saveGroup(state.group); state.toolsTab='guild-study'; renderApp();
+  state.group.studySession={id:randomId(),active:true,gameType:'guild-race',title:'Guild Starship Race',deckId:deck.id,scopeKey:deck.scopeKey,cardKeys:cards.map(libraryCardKey),index:0,participants:[state.user.uid],responses:{},scores:{},revealed:false,hostUid:state.user.uid,startedAt:new Date().toISOString(),targetScore:1200};
+  await persistNewGuildStudySession(); state.toolsTab='guild-study'; renderApp();
 }
 function renderGuildRaceTrack(gs,members){
   const target=gs.targetScore||1200;
@@ -989,6 +1010,8 @@ function dueForecast(days){
 function reviewCountsLastDays(days){ const out=[]; for(let i=days-1;i>=0;i--){const d=new Date();d.setDate(d.getDate()-i);const iso=d.toISOString().slice(0,10);out.push({iso,label:new Intl.DateTimeFormat('en-US',{weekday:'short'}).format(d),count:(state.library.reviews||[]).filter(r=>String(r.reviewedAt||'').slice(0,10)===iso).length});}return out; }
 
 function bindTools(){
+  $('#leaveV3Guild')?.addEventListener('click',()=>guildCommand('leave').catch(e=>toast(friendly(e),'error')));
+  $('#joinV3Guild')?.addEventListener('click',()=>guildCommand('join').catch(e=>toast(friendly(e),'error')));
   bindDeckFilters();
   bindLessonCoverage();
   $('#publishExistingLessons')?.addEventListener('click',publishExistingLessons);
@@ -1021,24 +1044,21 @@ function bindTools(){
 }
 async function libraryDeckModal(id=null){
   const current=libraryDecks().find(d=>d.id===id); const defaultScope=state.profile.activeGroupId?'Guild':'Personal';
-  modal(current?'Edit Deck':'Create Original Deck',`<div class="form-grid"><label><span class="label-title">Deck Title</span><input id="libraryDeckTitle" value="${escAttr(current?.title||'')}"></label><label><span class="label-title">Scope</span><select id="libraryDeckScope" ${current?'disabled':''}><option ${((current?.scope||defaultScope)==='Guild')?'selected':''}>Guild</option><option ${((current?.scope||defaultScope)==='Personal')?'selected':''}>Personal</option><option ${current?.scope==='Public'?'selected':''}>Public</option></select></label></div>${categoryFields(current)}<label><span class="label-title">Description</span><textarea id="libraryDeckDescription">${esc(current?.description||'')}</textarea></label><label><span class="label-title">Optional Bulk Cards</span><textarea id="libraryDeckBulk" placeholder="Question[TAB]Answer — one card per line"></textarea></label><p class="helper">Public material is visible to all signed-in members. Share only content you are authorized to redistribute.</p>`,async()=>{const title=$('#libraryDeckTitle').value.trim();if(!title)return toast('Deck title is required.','error');const scope=current?.scope||$('#libraryDeckScope').value;if(scope==='Guild'&&!state.profile.activeGroupId)return toast('Join a Guild first.','error');const key=scopeKey(scope,state.user.uid,state.profile.activeGroupId);const deck=current?{...current,title,description:$('#libraryDeckDescription').value.trim(),updatedAt:new Date().toISOString()}:{id:makeDeckId(title,scope,state.user.uid,state.profile.activeGroupId,crypto.randomUUID()),title,description:$('#libraryDeckDescription').value.trim(),scope,scopeKey:key,ownerUid:state.user.uid,groupId:scope==='Guild'?state.profile.activeGroupId:null,createdBy:state.profile.displayName,kind:'custom',createdAt:new Date().toISOString(),updatedAt:new Date().toISOString()};Object.assign(deck,readCategoryFields(current));const cards=$('#libraryDeckBulk').value.split(/\n+/).map(line=>line.split('\t')).filter(parts=>parts[0]?.trim()&&parts[1]?.trim()).map(parts=>{const question=parts[0].trim(),answer=parts.slice(1).join('\t').trim(),fp=cardFingerprint(question,{});return{id:`card_${fp}`,fingerprint:fp,scope,scopeKey:key,deckIds:[deck.id],source:'Original Deck',question,choices:{},correctAnswer:'',justifications:{_:answer},tags:[title],ownerUid:state.user.uid,importedAt:new Date().toISOString(),updatedAt:new Date().toISOString()};});await saveStudyImport({uid:state.user.uid,groupId:state.profile.activeGroupId,decks:[deck],cards});state.library=mergeUniqueLibrary(state.library,{decks:[deck],cards});state.selectedDeckId=deck.id;if(deck.lessonId||current?.lessonId||current?.kind==='lesson'){try{await publishDeckToCommunity(deck,rawDeckCards(deck));}catch(error){toast(`Deck saved; public sync needs retry: ${friendly(error)}`,'error');}}renderApp();},current?'Save Deck':'Create Deck');
+  modal(current?'Edit Deck':'Create Original Deck',`<div class="form-grid"><label><span class="label-title">Deck Title</span><input id="libraryDeckTitle" value="${escAttr(current?.title||'')}"></label><label><span class="label-title">Scope</span><select id="libraryDeckScope" ${current?'disabled':''}><option ${((current?.scope||defaultScope)==='Guild')?'selected':''}>Guild</option><option ${((current?.scope||defaultScope)==='Personal')?'selected':''}>Personal</option><option ${current?.scope==='Public'?'selected':''}>Public</option></select></label></div>${categoryFields(current)}<label><span class="label-title">Description</span><textarea id="libraryDeckDescription">${esc(current?.description||'')}</textarea></label><label><span class="label-title">Optional Bulk Cards</span><textarea id="libraryDeckBulk" placeholder="Question[TAB]Answer — one card per line"></textarea></label><p class="helper">Public material is visible to all signed-in members. Share only content you are authorized to redistribute.</p>`,async()=>{const title=$('#libraryDeckTitle').value.trim();if(!title)return toast('Deck title is required.','error');const scope=current?.scope||$('#libraryDeckScope').value;if(scope==='Guild'&&!state.profile.activeGroupId)return toast('Join a Guild first.','error');const key=scopeKey(scope,state.user.uid,state.profile.activeGroupId);const deck=current?{...current,title,description:$('#libraryDeckDescription').value.trim(),updatedAt:new Date().toISOString()}:{id:makeDeckId(title,scope,state.user.uid,state.profile.activeGroupId,randomId()),title,description:$('#libraryDeckDescription').value.trim(),scope,scopeKey:key,ownerUid:state.user.uid,groupId:scope==='Guild'?state.profile.activeGroupId:null,createdBy:state.profile.displayName,kind:'custom',createdAt:new Date().toISOString(),updatedAt:new Date().toISOString()};Object.assign(deck,readCategoryFields(current));const cards=$('#libraryDeckBulk').value.split(/\n+/).map(line=>line.split('\t')).filter(parts=>parts[0]?.trim()&&parts[1]?.trim()).map(parts=>{const question=parts[0].trim(),answer=parts.slice(1).join('\t').trim(),fp=cardFingerprint(question,{});return{id:`card_${fp}`,fingerprint:fp,scope,scopeKey:key,deckIds:[deck.id],source:'Original Deck',question,choices:{},correctAnswer:'',justifications:{_:answer},tags:[title],ownerUid:state.user.uid,importedAt:new Date().toISOString(),updatedAt:new Date().toISOString()};});await saveStudyImport({uid:state.user.uid,groupId:state.profile.activeGroupId,decks:[deck],cards});state.library=mergeUniqueLibrary(state.library,{decks:[deck],cards});state.selectedDeckId=deck.id;if(deck.lessonId||current?.lessonId||current?.kind==='lesson'){try{await publishDeckToCommunity(deck,rawDeckCards(deck));}catch(error){toast(`Deck saved; public sync needs retry: ${friendly(error)}`,'error');}}renderApp();},current?'Save Deck':'Create Deck');
   bindCategoryFields();
 }
 function libraryCardModal(deckId){ const deck=libraryDecks().find(d=>d.id===deckId);if(!deck)return;modal('Add Original Study Card',`<label><span class="label-title">Question / Prompt</span><textarea id="newCardQuestion"></textarea></label><div class="form-grid"><input id="newCardA" placeholder="A. Optional choice"><input id="newCardB" placeholder="B. Optional choice"><input id="newCardC" placeholder="C. Optional choice"><input id="newCardD" placeholder="D. Optional choice"><label><span class="label-title">Correct Choice</span><select id="newCardCorrect"><option value="">Simple Flashcard</option><option>A</option><option>B</option><option>C</option><option>D</option></select></label></div><label><span class="label-title">Answer / Explanation</span><textarea id="newCardExplanation"></textarea></label>`,async()=>{const question=$('#newCardQuestion').value.trim(),explanation=$('#newCardExplanation').value.trim();if(!question||!explanation)return toast('Question and explanation are required.','error');const choices={};['A','B','C','D'].forEach(l=>{const v=$(`#newCard${l}`).value.trim();if(v)choices[l]=v;});const correct=$('#newCardCorrect').value;if(correct&&!choices[correct])return toast('The selected correct choice needs text.','error');const fp=cardFingerprint(question,choices);const card={id:`card_${fp}`,fingerprint:fp,scope:deck.scope,scopeKey:deck.scopeKey,deckIds:[deck.id],source:'Original Card',question,choices,correctAnswer:correct,justifications:correct?{[correct]:explanation}:{_:explanation},tags:[deck.title],ownerUid:state.user.uid,importedAt:new Date().toISOString(),updatedAt:new Date().toISOString()};await saveStudyCard({uid:state.user.uid,groupId:state.profile.activeGroupId,card});state.library=mergeUniqueLibrary(state.library,{cards:[card],decks:[]});renderApp();},'Add Card'); }
 async function deleteLibraryDeckFlow(id){ const deck=libraryDecks().find(d=>d.id===id);if(!deck)return;await confirmModal('Delete Deck',`Delete “${esc(deck.title)}”? Cards shared with a Master deck remain in the Master bank.`,async()=>{await deleteStudyDeck({uid:state.user.uid,groupId:state.profile.activeGroupId,deck});state.library.decks=state.library.decks.filter(d=>!(d.id===deck.id&&d.scopeKey===deck.scopeKey));state.library.cards=state.library.cards.map(c=>c.scopeKey===deck.scopeKey?{...c,deckIds:(c.deckIds||[]).filter(x=>x!==deck.id)}:c);if(state.selectedDeckId===deck.id)state.selectedDeckId=null;renderApp();}); }
 function exportLibraryDeck(id){ const deck=libraryDecks().find(d=>d.id===id);if(!deck)return;const rows=libraryCardsForDeck(deck).map(c=>[c.question,c.correctAnswer,c.choices?.[c.correctAnswer]||'',c.justifications?.[c.correctAnswer]||c.justifications?._||'',c.domain,c.knowledgeStatement].map(v=>String(v||'').replace(/\t/g,' ')).join('\t'));downloadText(`${safeFile(deck.title)}.tsv`,`Question\tCorrect Letter\tCorrect Answer\tExplanation\tDomain\tKnowledge Statement\n${rows.join('\n')}`,'text/tab-separated-values'); }
-async function startGuildStudy(missedOnly){ const deck=libraryDecks().find(d=>d.id===$('#guildStudyDeck').value);if(!deck)return;let cards=libraryCardsForDeck(deck).filter(c=>!c.answerConflict&&c.correctAnswer&&Object.keys(c.choices||{}).length>=2);if(missedOnly)cards=cards.filter(c=>c.wasCorrectAtImport===false);cards=[...cards].sort(()=>Math.random()-.5).slice(0,30);if(!cards.length)return toast('No eligible questions in that Guild deck.','error');state.group.studySession={id:crypto.randomUUID(),active:true,title:missedOnly?'Guild Missed-Question Review':'Guild Question Review',deckId:deck.id,scopeKey:deck.scopeKey,cardKeys:cards.map(libraryCardKey),index:0,responses:{},scores:{},revealed:false,hostUid:state.user.uid,startedAt:new Date().toISOString()};await saveGroup(state.group);renderApp(); }
-async function submitGuildAnswer(letter){
-  const gs=state.group?.studySession,card=libraryCardFromKey(gs?.cardKeys?.[gs.index]); if(!gs||!card||gs.revealed)return;
-  gs.responses ||= {}; gs.responses[state.user.uid]={answer:letter,at:new Date().toISOString()}; await saveGroup(state.group); renderApp();
+async function startGuildStudy(missedOnly){ const deck=libraryDecks().find(d=>d.id===$('#guildStudyDeck').value);if(!deck)return;let cards=libraryCardsForDeck(deck).filter(c=>!c.answerConflict&&c.correctAnswer&&Object.keys(c.choices||{}).length>=2);if(missedOnly)cards=cards.filter(c=>c.wasCorrectAtImport===false);cards=[...cards].sort(()=>Math.random()-.5).slice(0,30);if(!cards.length)return toast('No eligible questions in that Guild deck.','error');state.group.studySession={id:randomId(),active:true,title:missedOnly?'Guild Missed-Question Review':'Guild Question Review',deckId:deck.id,scopeKey:deck.scopeKey,cardKeys:cards.map(libraryCardKey),index:0,participants:[state.user.uid],responses:{},scores:{},revealed:false,hostUid:state.user.uid,startedAt:new Date().toISOString()};await persistNewGuildStudySession();renderApp(); }
+async function guildCommand(type,extra={}){
+  const gs=state.group?.studySession;if(!gs)return;
+  state.group.studySession=await mutateGuildSession(state.group.id,{type,uid:state.user.uid,sessionId:gs.id,index:gs.index,at:new Date().toISOString(),...extra});renderApp();
 }
-async function revealGuildAnswer(){
-  const gs=state.group?.studySession; if(!gs||gs.revealed)return; const members=Object.values(state.group.members||{}); if(!allGuildMembersAnswered(gs,members))return toast('Every Guild member must lock in an answer first.','error');
-  const card=libraryCardFromKey(gs.cardKeys?.[gs.index]); gs.scores ||= {}; for(const m of members){const r=gs.responses?.[m.uid]; if(r){r.correct=r.answer===card.correctAnswer;if(r.correct)gs.scores[m.uid]=(gs.scores[m.uid]||0)+120;}}
-  gs.revealed=true; gs.revealedAt=new Date().toISOString(); await saveGroup(state.group); renderApp();
-}
-async function nextGuildQuestion(){const gs=state.group?.studySession;if(!gs)return;gs.index++;gs.responses={};gs.revealed=false;gs.revealedAt=null;await saveGroup(state.group);renderApp();}
-async function endGuildStudy(){if(!state.group?.studySession)return;state.group.studySession.active=false;state.group.studySession.endedAt=new Date().toISOString();await saveGroup(state.group);renderApp();}
+async function submitGuildAnswer(letter){try{await guildCommand('answer',{answer:letter});}catch(error){toast(friendly(error),'error');}}
+async function revealGuildAnswer(){const card=libraryCardFromKey(state.group?.studySession?.cardKeys?.[state.group?.studySession?.index]);if(!card)return;try{await guildCommand('reveal',{correctAnswer:card.correctAnswer});}catch(error){toast(friendly(error),'error');}}
+async function nextGuildQuestion(){try{await guildCommand('next');}catch(error){toast(friendly(error),'error');}}
+async function endGuildStudy(){try{await guildCommand('end');}catch(error){toast(friendly(error),'error');}}
 
 function renderGuild(){
   const color=state.group?.color||'#7c4dff';
@@ -1075,7 +1095,7 @@ function calendarDay(d,month){ const iso=dateIso(d), events=allEvents().filter(e
 function bindCalendar(){ $('#prevMonth')?.addEventListener('click',()=>{state.currentMonth.setMonth(state.currentMonth.getMonth()-1);renderApp();}); $('#nextMonth')?.addEventListener('click',()=>{state.currentMonth.setMonth(state.currentMonth.getMonth()+1);renderApp();}); $('#newEvent')?.addEventListener('click',()=>eventModal()); $$('[data-date]').forEach(d=>d.ondblclick=()=>eventModal({start:d.dataset.date+'T07:00',end:d.dataset.date+'T08:00'})); $$('[data-event]').forEach(b=>b.onclick=()=>eventModal(allEvents().find(e=>e.id===b.dataset.event))); $('#connectGoogleCal')?.addEventListener('click',async()=>{try{await connectGoogleCalendar();toast('Google Calendar connected for this browser session.');}catch(e){toast(friendly(e),'error');}}); $('#downloadUpcomingIcs')?.addEventListener('click',()=>{const e=allEvents().find(x=>new Date(x.end)>=new Date()); if(!e)return toast('No upcoming events to download.','error'); downloadIcs(e,groupEmails());}); }
 function eventModal(event={}){
   const isEdit=!!event.id;
-  modal(isEdit?'Edit Calendar Event':'Create Calendar Event',`<div class="calendar-event-grid"><label><span class="label-title">Title</span><input id="evTitle" value="${escAttr(event.title||'CISA Study Session')}"></label><label><span class="label-title">Scope</span><select id="evScope"><option ${event.scope==='Personal'?'selected':''}>Personal</option><option ${event.scope==='Guild'?'selected':''}>Guild</option><option ${event.scope==='Both'?'selected':''}>Both</option></select></label><label><span class="label-title">Start</span><input id="evStart" type="datetime-local" value="${toLocalInput(event.start||todayIso()+'T07:00')}"></label><label><span class="label-title">End</span><input id="evEnd" type="datetime-local" value="${toLocalInput(event.end||todayIso()+'T08:00')}"></label><label><span class="label-title">Recurrence</span><select id="evRecurrence"><option value="">Does Not Repeat</option><option value="RRULE:FREQ=DAILY" ${event.rrule==='RRULE:FREQ=DAILY'?'selected':''}>Daily</option><option value="RRULE:FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR" ${event.rrule==='RRULE:FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR'?'selected':''}>Weekdays</option><option value="RRULE:FREQ=WEEKLY" ${event.rrule==='RRULE:FREQ=WEEKLY'?'selected':''}>Weekly</option></select></label><label><span class="label-title">Plan Me A Session</span><select id="evPlan"><option value="no">No</option><option value="yes" ${event.planGenerated?'selected':''}>Yes</option></select></label></div><label><span class="label-title">Description</span><textarea id="evDesc">${esc(event.description||'')}</textarea></label>`,async()=>{ const title=$('#evTitle').value.trim(); const start=$('#evStart').value,end=$('#evEnd').value; if(!title||!start||!end||new Date(start)>=new Date(end))return toast('Add a valid title, start, and end time.','error'); const ev={...event,id:event.id||crypto.randomUUID(),title,scope:$('#evScope').value,start:new Date(start).toISOString(),end:new Date(end).toISOString(),description:$('#evDesc').value.trim(),rrule:$('#evRecurrence').value,planGenerated:$('#evPlan').value==='yes'}; upsertEvent(ev); if(ev.planGenerated) addBonusFromEvent(ev); await saveAll({group:true}); renderApp(); },isEdit?'Save Event':'Create Event',isEdit?`<button class="danger-button" data-delete-modal-event="${event.id}">Delete</button><button class="secondary-button" data-ics-modal-event="${event.id}">Download ICS</button><button class="secondary-button" data-google-modal-event="${event.id}">Send To Google</button>`:'');
+  modal(isEdit?'Edit Calendar Event':'Create Calendar Event',`<div class="calendar-event-grid"><label><span class="label-title">Title</span><input id="evTitle" value="${escAttr(event.title||'CISA Study Session')}"></label><label><span class="label-title">Scope</span><select id="evScope"><option ${event.scope==='Personal'?'selected':''}>Personal</option><option ${event.scope==='Guild'?'selected':''}>Guild</option><option ${event.scope==='Both'?'selected':''}>Both</option></select></label><label><span class="label-title">Start</span><input id="evStart" type="datetime-local" value="${toLocalInput(event.start||todayIso()+'T07:00')}"></label><label><span class="label-title">End</span><input id="evEnd" type="datetime-local" value="${toLocalInput(event.end||todayIso()+'T08:00')}"></label><label><span class="label-title">Recurrence</span><select id="evRecurrence"><option value="">Does Not Repeat</option><option value="RRULE:FREQ=DAILY" ${event.rrule==='RRULE:FREQ=DAILY'?'selected':''}>Daily</option><option value="RRULE:FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR" ${event.rrule==='RRULE:FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR'?'selected':''}>Weekdays</option><option value="RRULE:FREQ=WEEKLY" ${event.rrule==='RRULE:FREQ=WEEKLY'?'selected':''}>Weekly</option></select></label><label><span class="label-title">Plan Me A Session</span><select id="evPlan"><option value="no">No</option><option value="yes" ${event.planGenerated?'selected':''}>Yes</option></select></label></div><label><span class="label-title">Description</span><textarea id="evDesc">${esc(event.description||'')}</textarea></label>`,async()=>{ const title=$('#evTitle').value.trim(); const start=$('#evStart').value,end=$('#evEnd').value; if(!title||!start||!end||new Date(start)>=new Date(end))return toast('Add a valid title, start, and end time.','error'); const ev={...event,id:event.id||randomId(),title,scope:$('#evScope').value,start:new Date(start).toISOString(),end:new Date(end).toISOString(),description:$('#evDesc').value.trim(),rrule:$('#evRecurrence').value,planGenerated:$('#evPlan').value==='yes'}; upsertEvent(ev); if(ev.planGenerated) addBonusFromEvent(ev); await saveAll({group:true}); renderApp(); },isEdit?'Save Event':'Create Event',isEdit?`<button class="danger-button" data-delete-modal-event="${event.id}">Delete</button><button class="secondary-button" data-ics-modal-event="${event.id}">Download ICS</button><button class="secondary-button" data-google-modal-event="${event.id}">Send To Google</button>`:'');
   setTimeout(()=>{$('[data-delete-modal-event]')?.addEventListener('click',()=>{deleteEvent(event.id);$('.modal-backdrop')?.remove();renderApp();}); $('[data-ics-modal-event]')?.addEventListener('click',()=>downloadIcs(event,groupEmails())); $('[data-google-modal-event]')?.addEventListener('click',async()=>{try{await createGoogleEvent(event,groupEmails());toast('Sent to Google Calendar.');}catch(e){toast(friendly(e),'error');}});},0);
 }
 function allEvents(){ return [...(state.profile.calendarEvents||[]),...(state.group?.events||[])]; }
@@ -1088,7 +1108,7 @@ function renderNotebook(){ const notes=filteredNotes(); const selected=state.pro
   return `<div class="notes-layout"><div class="panel"><div class="section-head"><div><p class="eyebrow">Notebook</p><h3>Notes Library</h3></div><button class="primary-button small" id="newNote">New Note</button></div><div class="button-row"><button class="secondary-button small" data-note-filter="Personal">Personal</button><button class="secondary-button small" data-note-filter="Guild">Guild</button><button class="secondary-button small" data-note-filter="Public">Public</button></div><div class="note-list">${notes.length?notes.map(n=>`<button class="note-card ${n.id===state.selectedNoteId?'active':''}" data-note="${n.id}"><h4>${esc(n.title)}</h4><p class="helper">${esc(n.scope)} · ${fmtDate(n.updatedAt||n.createdAt)}</p></button>`).join(''):'<div class="empty">No notes yet.</div>'}</div></div><div class="panel"><div class="section-head"><div><p class="eyebrow">Editor</p><h3>${selected?esc(selected.title):'No Note Selected'}</h3></div><div class="button-row">${selected?'<button class="secondary-button small" id="exportDoc">Export Word-Compatible .doc</button><button class="secondary-button small" id="exportMd">Export Markdown</button><button class="danger-button small" id="deleteNote">Delete</button>':''}</div></div>${selected?noteEditor(selected):'<div class="empty">Create a note to start writing.</div>'}</div></div>`; }
 function filteredNotes(){ return state.profile.notes || []; }
 function noteEditor(n){ return `<div class="editor-box"><div class="form-grid"><input id="noteTitle" value="${escAttr(n.title)}"><select id="noteScope"><option ${n.scope==='Personal'?'selected':''}>Personal</option><option ${n.scope==='Guild'?'selected':''}>Guild</option><option ${n.scope==='Public'?'selected':''}>Public</option></select></div><textarea id="noteBody">${esc(n.body||'')}</textarea><div class="button-row"><button class="primary-button" id="saveNote">Save Note</button></div><div class="markdown-preview">${markdownPreview(n.body||'')}</div></div>`; }
-function bindNotebook(){ $('#newNote')?.addEventListener('click',()=>{ const n={id:crypto.randomUUID(),title:'Untitled Note',scope:'Personal',body:'',createdAt:new Date().toISOString(),updatedAt:new Date().toISOString()}; state.profile.notes.unshift(n); state.selectedNoteId=n.id; saveProfileDebounced(); renderApp(); }); $$('[data-note]').forEach(b=>b.onclick=()=>{state.selectedNoteId=b.dataset.note;renderApp();}); $('#saveNote')?.addEventListener('click',()=>{const n=state.profile.notes.find(x=>x.id===state.selectedNoteId); if(!n)return; n.title=$('#noteTitle').value.trim()||'Untitled Note'; n.scope=$('#noteScope').value; n.body=$('#noteBody').value; n.updatedAt=new Date().toISOString(); if(n.scope==='Guild'&&state.group){state.group.notes ||= []; state.group.notes=upsert(state.group.notes,{id:n.id,title:n.title,body:n.body,author:state.profile.displayName,createdAt:n.createdAt,updatedAt:n.updatedAt,scope:'Guild'});} award({xp:5,coins:2,reason:'Note Saved',type:'Notebook'}); saveAll({group:true}); renderApp();}); $('#deleteNote')?.addEventListener('click',()=>confirmModal('Delete Note','Delete this note?',()=>{state.profile.notes=state.profile.notes.filter(n=>n.id!==state.selectedNoteId); state.selectedNoteId=null;saveProfileDebounced();renderApp();})); $('#exportMd')?.addEventListener('click',()=>exportNote('md')); $('#exportDoc')?.addEventListener('click',()=>exportNote('doc')); }
+function bindNotebook(){ $('#newNote')?.addEventListener('click',()=>{ const n={id:randomId(),title:'Untitled Note',scope:'Personal',body:'',createdAt:new Date().toISOString(),updatedAt:new Date().toISOString()}; state.profile.notes.unshift(n); state.selectedNoteId=n.id; saveProfileDebounced(); renderApp(); }); $$('[data-note]').forEach(b=>b.onclick=()=>{state.selectedNoteId=b.dataset.note;renderApp();}); $('#saveNote')?.addEventListener('click',()=>{const n=state.profile.notes.find(x=>x.id===state.selectedNoteId); if(!n)return; n.title=$('#noteTitle').value.trim()||'Untitled Note'; n.scope=$('#noteScope').value; n.body=$('#noteBody').value; n.updatedAt=new Date().toISOString(); if(n.scope==='Guild'&&state.group){state.group.notes ||= []; state.group.notes=upsert(state.group.notes,{id:n.id,title:n.title,body:n.body,author:state.profile.displayName,createdAt:n.createdAt,updatedAt:n.updatedAt,scope:'Guild'});} award({xp:5,coins:2,reason:'Note Saved',type:'Notebook'}); saveAll({group:true}); renderApp();}); $('#deleteNote')?.addEventListener('click',()=>confirmModal('Delete Note','Delete this note?',()=>{state.profile.notes=state.profile.notes.filter(n=>n.id!==state.selectedNoteId); state.selectedNoteId=null;saveProfileDebounced();renderApp();})); $('#exportMd')?.addEventListener('click',()=>exportNote('md')); $('#exportDoc')?.addEventListener('click',()=>exportNote('doc')); }
 function exportNote(type){ const n=state.profile.notes.find(x=>x.id===state.selectedNoteId); if(!n)return; const text=`# ${n.title}\n\n${n.body||''}`; downloadText(`${safeFile(n.title)}.${type==='doc'?'doc':'md'}`, type==='doc'?`<html><body><h1>${esc(n.title)}</h1><pre>${esc(n.body||'')}</pre></body></html>`:text, type==='doc'?'application/msword':'text/markdown'); }
 
 function renderRewards(){
@@ -1108,7 +1128,7 @@ function bindRewards(){
   $('#revertAvatarPreview')?.addEventListener('click',()=>{state.previewAvatar=null;renderApp();});
   $$('[data-equip-avatar]').forEach(b=>b.onclick=()=>equipAvatar(b.dataset.equipAvatar)); $$('[data-buy-avatar]').forEach(b=>b.onclick=()=>buyAvatar(b.dataset.buyAvatar));
 }
-function buyShop(id){ const i=SHOP_ITEMS.find(x=>x.id===id); if(!i)return; if(state.profile.stats.coins<i.cost)return toast('Not enough Audit Coins.','error'); confirmModal(`Buy ${i.title}`,`Spend ${i.cost} Audit Coins?`,()=>{state.profile.stats.coins-=i.cost; if(i.kind==='consumable')state.profile.stats.streakFreezes=(state.profile.stats.streakFreezes||0)+1; if(i.kind==='boost')state.profile.inventory.boosts.unshift({id:crypto.randomUUID(),multiplier:i.multiplier,durationMinutes:i.durationMinutes,used:false,reason:'Shop Purchase'}); if(i.kind==='chest')state.profile.inventory.chests.unshift({id:crypto.randomUUID(),type:i.chestType,opened:false,reason:'Shop Purchase'}); awardRawActivity({xp:0,coins:-i.cost,reason:`Purchased ${i.title}`,type:'Shop'}); saveProfileDebounced(); renderApp();},'Buy'); }
+function buyShop(id){ const i=SHOP_ITEMS.find(x=>x.id===id); if(!i)return; if(state.profile.stats.coins<i.cost)return toast('Not enough Audit Coins.','error'); confirmModal(`Buy ${i.title}`,`Spend ${i.cost} Audit Coins?`,()=>{state.profile.stats.coins-=i.cost; if(i.kind==='consumable')state.profile.stats.streakFreezes=(state.profile.stats.streakFreezes||0)+1; if(i.kind==='boost')state.profile.inventory.boosts.unshift({id:randomId(),multiplier:i.multiplier,durationMinutes:i.durationMinutes,used:false,reason:'Shop Purchase'}); if(i.kind==='chest')state.profile.inventory.chests.unshift({id:randomId(),type:i.chestType,opened:false,reason:'Shop Purchase'}); awardRawActivity({xp:0,coins:-i.cost,reason:`Purchased ${i.title}`,type:'Shop'}); saveProfileDebounced(); renderApp();},'Buy'); }
 function openChest(id){ const c=state.profile.inventory.chests.find(x=>x.id===id); if(!c)return; const ranges={bronze:[20,60],silver:[55,120],gold:[110,240]}; const [min,max]=ranges[c.type]||ranges.bronze; const coins=rand(min,max), xp=rand(Math.round(min/2),Math.round(max/2)); c.opened=true;c.openedAt=new Date().toISOString(); award({xp,coins,reason:`Opened ${titleCase(c.type)} Chest`,type:'Chest'}); showChestModal(c.type,xp,coins); saveProfileDebounced(); renderApp(); }
 function activateBoost(id){ const b=state.profile.inventory.boosts.find(x=>x.id===id); if(!b)return; b.used=true; b.activatedAt=new Date().toISOString(); b.endsAt=new Date(Date.now()+b.durationMinutes*60000).toISOString(); state.profile.activeBoost={...b}; showBoostModal(b); saveProfileDebounced(); renderApp(); }
 function buyAvatar(id){ const i=AVATAR_ITEMS.find(x=>x.id===id); if(!i)return; if(levelInfo().level<i.unlockLevel)return toast('This item is still locked.','error'); if(state.profile.stats.coins<i.cost)return toast('Not enough Audit Coins.','error'); confirmModal(`Buy ${i.title}`,`Spend ${i.cost} Audit Coins?`,()=>{state.profile.stats.coins-=i.cost; state.profile.inventory.ownedItems.push(i.id); equipItem(i); awardRawActivity({xp:0,coins:-i.cost,reason:`Purchased Avatar Item: ${i.title}`,type:'Avatar'}); saveProfileDebounced(); renderApp();},'Buy And Equip'); }
@@ -1141,6 +1161,8 @@ function bindProfile(){
 }
 
 function bindView(){
+  if(EXPERIENCE_VIEWS.includes(state.activeView)){bindExperience(state.activeView,experienceContext());return;}
+  if(state.activeView==='profile')bindExperienceSettings(experienceContext());
   ({command:bindCommand,room:bindRoom,plan:bindPlan,practice:bindPractice,tools:bindTools,guild:bindGuild,calendar:bindCalendar,notebook:bindNotebook,rewards:bindRewards,profile:bindProfile}[state.activeView]||(()=>{}))();
 }
 
@@ -1188,9 +1210,9 @@ function award({xp=0,coins=0,reason='Reward',type='Activity'}={},options={}){
   if(!options.skipQuest) autoCompleteQuestForActivity(type);
   const after=levelInfo().level; showXpPop(xp,coins,reason); if(after>before){unlockForLevel(after);showCelebration(`Level ${after} Reached`,`You unlocked new rewards. Check Rewards for avatar items and inventory.`);}
 }
-function awardRawActivity({xp=0,coins=0,reason='Activity',type='Activity'}={}){ state.profile.activity ||= []; state.profile.activity.unshift({id:crypto.randomUUID(),date:new Date().toISOString(),type,reason,xp,coins,level:levelInfo().level}); state.profile.activity=state.profile.activity.slice(0,200); }
-function unlockForLevel(level){ if(level%3===0) state.profile.inventory.chests.unshift({id:crypto.randomUUID(),type:level>=6?'silver':'bronze',opened:false,reason:`Level ${level} Reward`}); if(level%4===0) state.profile.inventory.boosts.unshift({id:crypto.randomUUID(),multiplier:1.5,durationMinutes:30,used:false,reason:`Level ${level} Reward`}); }
-function maybeAddChest(type='bronze',chance=.1){ if(Math.random()<chance) state.profile.inventory.chests.unshift({id:crypto.randomUUID(),type,opened:false,reason:'Bonus Drop'}); }
+function awardRawActivity({xp=0,coins=0,reason='Activity',type='Activity'}={}){ state.profile.activity ||= []; state.profile.activity.unshift({id:randomId(),date:new Date().toISOString(),type,reason,xp,coins,level:levelInfo().level}); state.profile.activity=state.profile.activity.slice(0,200); }
+function unlockForLevel(level){ if(level%3===0) state.profile.inventory.chests.unshift({id:randomId(),type:level>=6?'silver':'bronze',opened:false,reason:`Level ${level} Reward`}); if(level%4===0) state.profile.inventory.boosts.unshift({id:randomId(),multiplier:1.5,durationMinutes:30,used:false,reason:`Level ${level} Reward`}); }
+function maybeAddChest(type='bronze',chance=.1){ if(Math.random()<chance) state.profile.inventory.chests.unshift({id:randomId(),type,opened:false,reason:'Bonus Drop'}); }
 function activeBoost(){ const b=state.profile?.activeBoost; if(!b || !b.endsAt) return null; if(new Date(b.endsAt)<=new Date()){ state.profile.activeBoost=null; saveProfileDebounced(); return null; } return b; }
 function boostRemainingText(b){ const ms=new Date(b.endsAt)-new Date(); const mins=Math.max(0,Math.ceil(ms/60000)); return `${mins} Min Left`; }
 function activityItem(a){ const iconName=a.type==='QAE'?'qae':a.type==='Chest'?'chest-gold':a.type==='Shop'?'coin':a.type==='Streak'?'streak':a.type==='Notebook'?'notebook':a.type==='Arcade'?'arcade':'xp'; return `<div class="activity-item"><span class="app-icon ${iconName}">${svgIcon(iconName)}</span><div><strong>${esc(a.reason||'Activity')}</strong><small>${titleCase(a.type||'Activity')} · ${fmtDateTime(a.date)}</small></div><div class="gain">${a.xp?`+${a.xp} XP`:''}${a.coins?` ${a.coins>0?'+':''}${a.coins} Coins`:''}</div></div>`; }
@@ -1215,6 +1237,7 @@ async function deleteProfileFlow(){
 }
 
 function avatarSvg(eq={}){
+  const avatarFilterId=`avShadow-${++avatarSequence}`;
   const color=eq.baseColor||'#2fb7ff', cape=eq.cape||'none', glasses=eq.glasses||'round', eyes=eq.eyes||'normal', hat=eq.hat||'none', badge=eq.badge||'none';
   const mood = eyes==='star'?'victory':eyes==='focus'?'locked-in':'focused';
   const smile=mood==='victory'?'M64 109c15 17 38 17 53 0':mood==='locked-in'?'M70 112h40':'M67 112c12 10 34 10 46 0';
@@ -1224,7 +1247,7 @@ function avatarSvg(eq={}){
   const glassEl=glasses==='shield'?`<path d="M43 55h38l-6 23H49l-6-23Zm56 0h38l-6 23h-26l-6-23Z" fill="#111827" opacity=".92"/><path d="M80 61h19" stroke="#111827" stroke-width="5"/>`:glasses==='round'?`<circle cx="62" cy="64" r="19" fill="none" stroke="#14213d" stroke-width="5"/><circle cx="98" cy="64" r="19" fill="none" stroke="#14213d" stroke-width="5"/><path d="M81 64h-2" stroke="#14213d" stroke-width="5"/>`:'';
   const hatEl=hat==='crown'?`<path d="M52 35l13-14 15 17 17-17 14 14v15H52V35Z" fill="#ffd166" stroke="#fff" stroke-width="4"/>`:hat==='grad'?`<path d="M48 37l42-18 42 18-42 18Z" fill="#14213d"/><path d="M68 50h44v16c-11 8-33 8-44 0Z" fill="#14213d"/><path d="M132 37v27" stroke="#ffd166" stroke-width="5"/>`:hat==='headset'?`<path d="M45 70c0-32 20-49 45-49s45 17 45 49" fill="none" stroke="#14213d" stroke-width="8" stroke-linecap="round"/><rect x="36" y="70" width="18" height="28" rx="8" fill="#14213d"/><rect x="126" y="70" width="18" height="28" rx="8" fill="#14213d"/>`:'';
   const badgeEl=badge==='cisa'?`<circle cx="126" cy="114" r="15" fill="#ffd166" stroke="#fff" stroke-width="4"/><text x="126" y="119" text-anchor="middle" font-size="13" font-weight="900" fill="#14213d">C</text>`:badge==='fire'?`<path d="M126 132c9-3 13-9 13-17 0-8-6-13-10-18 1 8-4 10-8 15-1-4-3-6-6-8 1 6-5 10-5 17 1 8 7 12 16 11Z" fill="#ff5c8a" stroke="#fff" stroke-width="3"/>`:badge==='coffee'?`<rect x="115" y="98" width="20" height="22" rx="5" fill="#fff"/><path d="M135 103c10 1 10 12 0 13" fill="none" stroke="#fff" stroke-width="5"/><path d="M120 95c0-8 8-8 8-16" stroke="#fff" stroke-width="4" stroke-linecap="round" opacity=".75"/>`:'';
-  return `<svg class="avatar-svg" viewBox="0 0 180 180" aria-label="User avatar" role="img"><defs><filter id="avShadow" x="-20%" y="-20%" width="140%" height="140%"><feDropShadow dx="0" dy="10" stdDeviation="8" flood-color="#111827" flood-opacity=".22"/></filter></defs>${capePath}<circle cx="90" cy="90" r="72" fill="${color}" filter="url(#avShadow)"/><path d="M42 88c-15-8-23-23-21-41 22 4 39 18 44 42-8 5-16 4-23-1ZM138 88c15-8 23-23 21-41-22 4-39 18-44 42 8 5 16 4 23-1Z" fill="#fff" opacity=".22"/><ellipse cx="62" cy="65" rx="26" ry="28" fill="#fff"/><ellipse cx="98" cy="65" rx="26" ry="28" fill="#fff"/>${eyeEl}${glassEl}<path d="M84 87h12l-6 10-6-10Z" fill="#ffb347"/><path d="${smile}" fill="none" stroke="#fff" stroke-width="6" stroke-linecap="round" opacity=".9"/>${hatEl}${badgeEl}</svg>`;
+  return `<svg class="avatar-svg" viewBox="0 0 180 180" aria-label="User avatar" role="img"><defs><filter id="${avatarFilterId}" x="-20%" y="-20%" width="140%" height="140%"><feDropShadow dx="0" dy="10" stdDeviation="8" flood-color="#111827" flood-opacity=".22"/></filter></defs>${capePath}<circle cx="90" cy="90" r="72" fill="${color}" filter="url(#${avatarFilterId})"/><path d="M42 88c-15-8-23-23-21-41 22 4 39 18 44 42-8 5-16 4-23-1ZM138 88c15-8 23-23 21-41-22 4-39 18-44 42 8 5 16 4 23-1Z" fill="#fff" opacity=".22"/><ellipse cx="62" cy="65" rx="26" ry="28" fill="#fff"/><ellipse cx="98" cy="65" rx="26" ry="28" fill="#fff"/>${eyeEl}${glassEl}<path d="M84 87h12l-6 10-6-10Z" fill="#ffb347"/><path d="${smile}" fill="none" stroke="#fff" stroke-width="6" stroke-linecap="round" opacity=".9"/>${hatEl}${badgeEl}</svg>`;
 }
 function eyeSvg(eyes){ if(eyes==='star')return `<path d="M76 64l4 8 9 1-7 6 2 9-8-5-8 5 2-9-7-6 9-1z" fill="#14213d"/><path d="M124 64l4 8 9 1-7 6 2 9-8-5-8 5 2-9-7-6 9-1z" fill="#14213d"/>`; if(eyes==='focus')return `<path d="M66 72h20M114 72h20" stroke="#14213d" stroke-width="9" stroke-linecap="round"/>`; return `<circle cx="76" cy="76" r="8" fill="#14213d"/><circle cx="124" cy="76" r="8" fill="#14213d"/>`; }
 function glassesSvg(g){ if(g==='round')return `<circle cx="76" cy="76" r="18" fill="none" stroke="#14213d" stroke-width="5"/><circle cx="124" cy="76" r="18" fill="none" stroke="#14213d" stroke-width="5"/><path d="M94 76h12" stroke="#14213d" stroke-width="5"/>`; if(g==='shield')return `<path d="M56 60h40l-8 34H64zM104 60h40l-8 34h-24z" fill="rgba(20,33,61,.35)" stroke="#14213d" stroke-width="4"/><path d="M96 72h8" stroke="#14213d" stroke-width="5"/>`; return ''; }
@@ -1380,4 +1403,154 @@ function matchExistingLessons(){
     for(const {deck,lesson} of candidates){const updated={...deck,lessonId:lesson.id,lessonTitle:lesson.title,domainId:lesson.domainId,categoryOverride:false,updatedAt:new Date().toISOString()};await saveStudyDeck({uid:state.user.uid,groupId:state.profile.activeGroupId,deck:updated});state.library.decks=state.library.decks.map(d=>d.id===deck.id&&d.scopeKey===deck.scopeKey?updated:d);}
     if(state.group){state.group.studyLibraryUpdatedAt=new Date().toISOString();await saveGroup(state.group);}renderApp();toast(`${candidates.length} deck categories matched. Use Sync existing lesson decks to add them to Public.`);
   },'Apply Matches');
+}
+
+function experienceContext(){
+  state.profile.v3 ||= {dailyGoal:20,studyMinutes:10,activity:[],lessonProgress:{},importReceipts:{},reviewReceipts:{}};
+  return {profile:state.profile,user:state.user,group:state.group,library:state.library,level:levelInfo().level,
+    avatar:()=>avatarSvg(state.profile.inventory.equipped),navigate:navigateTo,render:renderApp,toast,
+    save:()=>saveProfileDebounced(true),saveQuiet:()=>saveProfileDebounced(),refresh:refreshStudyLibrary,download:downloadText,
+    review:saveExperienceReview,worldAction:saveExperienceWorldAction,importBatch:saveExperienceBatch,
+    completeLesson:async lesson=>{
+      const profile=state.profile,uid=state.user.uid,group=state.group,id=lesson.lessonId||lesson.id;
+      const assertContext=()=>{if(state.user?.uid!==uid||state.profile!==profile)throw new Error('Your account changed. Reopen the lesson.');};
+      profile.v3.lessonProgress ||= {};profile.v3.lessonReceipts ||= {};
+      const existing=profile.v3.lessonReceipts[id];
+      if(existing?.complete){await saveProfile(profile);assertContext();return;}
+      await rewardExperience({id:`lesson:${uid}:${id}`,type:'lesson.completed',lessonId:id,domainId:lesson.domainId,correct:true},'solo',{uid,profile,group});assertContext();
+      if(!existing?.awarded){award({xp:8,coins:3,reason:`Concept learned: ${lesson.title}`,type:'Microlearning'});profile.v3.lessonReceipts[id]={awarded:true};}
+      profile.v3.lessonProgress[id]=new Date().toISOString();await saveProfile(profile);assertContext();profile.v3.lessonReceipts[id]={complete:true};await saveProfile(profile);assertContext();
+
+    }};
+}
+async function rewardExperience(event,worldMode='solo',context={}){
+  if(!event?.id||!event.type)throw new Error('Study rewards need a unique activity ID.');
+  const profile=context.profile||state.profile,uid=context.uid||state.user?.uid,group=Object.hasOwn(context,'group')?context.group:state.group;
+  const assertContext=()=>{if(!uid||state.user?.uid!==uid||state.profile!==profile)throw new Error('Account changed while saving. Sign back in to finish the review.');};
+  assertContext();profile.v3 ||= {};const existing=profile.v3.activity||[];
+  if(existing.some(e=>e.id===event.id))return;
+  const action={type:'study-answer',id:event.id,correct:!!event.correct,cardId:event.cardId||event.lessonId};
+  if(worldMode==='coop'&&group){try{const result=await mutateGuildWorld(group.id,action);assertContext();group.questWorld=result.world;}catch(error){assertContext();profile.v3.pendingWorld ||= [];if(!profile.v3.pendingWorld.some(e=>e.id===action.id))profile.v3.pendingWorld.push({...action,groupId:group.id});toast('Study saved. Guild island reward is pending sync.','error');}}
+  else profile.v3.world=advanceWorld(createWorld(profile.v3.world),action).world;
+  assertContext();profile.v3.activity=appendActivityEvent(existing,{...event,occurredAt:new Date().toISOString()});
+  window.dispatchEvent(new CustomEvent('controlquest:activity',{detail:event}));
+}
+let experienceReviewLock=false;
+async function saveExperienceReview(card,{rating,selectedAnswer,eventId,mode='pocket-quest',worldMode='solo'}){
+  if(experienceReviewLock)throw new Error('Your previous answer is still saving.');
+  if(!state.user?.uid||!state.profile)throw new Error('Sign in before saving a review.');
+  if(typeof eventId!=='string'||!eventId.trim()||eventId.length>250||['__proto__','constructor','prototype'].includes(eventId))throw new Error('A valid review event ID is required.');
+  if(!card?.id||!card.scopeKey||card.answerConflict)throw new Error('Choose a question with a verified answer key.');
+  const uid=state.user.uid,profile=state.profile,library=state.library,group=state.group;
+  const assertContext=()=>{if(state.user?.uid!==uid||state.profile!==profile)throw new Error('Account changed while saving. Sign back in to finish the review.');};
+  const persist=async()=>{assertContext();await saveProfile(profile);assertContext();if(profile.activeGroupId){await updateMemberSummary(profile.activeGroupId,profile);assertContext();}};
+  const hasChoices=Object.keys(card.choices||{}).length>=2;
+  if(hasChoices&&(!Object.hasOwn(card.choices,selectedAnswer)||!Object.hasOwn(card.choices,card.correctAnswer)))throw new Error('Select an available answer before saving this question.');
+  profile.v3 ||= {};profile.v3.reviewReceipts ||= {};
+  const receipts=profile.v3.reviewReceipts;
+  let receipt=Object.hasOwn(receipts,eventId)?receipts[eventId]:null;
+  experienceReviewLock=true;
+  try{
+    const digest=sha256Hex;
+    const cardIdentity=await digest(studyIdentity(card));assertContext();
+    if(receipt?.cardIdentity&&receipt.cardIdentity!==cardIdentity)throw new Error('This review ID belongs to a different question.');
+    if(typeof receipt==='string'||receipt?.complete){await persist();return;}
+    if(!receipt?.event){
+      const reviewId=`review_${await digest(`${uid}|${eventId}`)}`;
+      assertContext();
+      const existing=library.reviews.find(e=>e.uid===uid&&(e.id===reviewId||e.sessionId===eventId));
+      const correct=hasChoices?selectedAnswer===card.correctAnswer:rating!=='Again';
+      const effectiveRating=correct?rating:'Again',reviewedAt=new Date();
+      const logical=uniqueStudyCards(library.cards,library.progress,library.reviews,{uid:uid,decks:library.decks}).find(c=>studyIdentity(c)===studyIdentity(card));
+      const saved=logical?.effectiveProgress||library.progress[progressKey(card)];
+      const previous=saved&&(!saved.uid||saved.uid===uid)?saved:defaultProgress(card,uid);
+      const event=existing||{...createReviewEvent({uid:uid,card,deckId:card.deckIds?.[0]||'',mode,rating:effectiveRating,correct,responseTimeMs:0,sessionId:eventId,groupId:profile.activeGroupId,wasNew:!(previous.repetitions||0)}),id:reviewId,reviewedAt:reviewedAt.toISOString()};
+      let updates=[];
+      if(!existing){
+        const next=rateCard(card,previous,effectiveRating,profile.preferences.studySettings||DEFAULT_REVIEW_SETTINGS,reviewedAt);
+        next.uid=uid;next.lastReviewEventId=reviewId;
+        updates=(logical?.aliases||[card]).map(alias=>({...next,id:progressKey(alias),cardId:alias.id,scope:alias.scope,scopeKey:alias.scopeKey}));
+      }
+      receipt={event,updates,cardIdentity,domainId:logical?.domainId||'',worldMode,reviewSaved:!!existing,historyRecorded:false};
+      receipts[eventId]=receipt;
+      // Save the exact intended update first. After a partial network failure or
+      // reload, retries replay these snapshots instead of incrementing again.
+    }
+    if(!receipt.intentPersisted){await persist();receipt.intentPersisted=true;}
+    if(!receipt.reviewSaved){
+      await Promise.all([...receipt.updates.map(p=>saveStudyProgress(uid,p)),saveStudyReview(uid,receipt.event)]);
+      assertContext();
+      for(const p of receipt.updates)library.progress[p.id]=p;
+      if(!library.reviews.some(e=>e.id===receipt.event.id))library.reviews.unshift(receipt.event);
+      library.reviews=library.reviews.slice(0,1000);receipt.reviewSaved=true;
+    }
+    const event=receipt.event;
+    await rewardExperience({id:event.id,type:'study.reviewed',cardId:event.cardId,domainId:receipt.domainId,rating:event.rating,correct:event.correct},receipt.worldMode||worldMode,{uid,profile,group});
+    assertContext();
+    if(!receipt.historyRecorded){
+      profile.studyHistory ||= {reviews:0,correct:0,incorrect:0};
+      profile.studyHistory.reviews=(Number(profile.studyHistory.reviews)||0)+1;
+      const outcome=event.correct?'correct':'incorrect';profile.studyHistory[outcome]=(Number(profile.studyHistory[outcome])||0)+1;
+      award({xp:event.correct?4:2,coins:event.correct?2:1,reason:event.correct?'Pocket Quest recall':'Pocket Quest repair',type:'Flashcards'});
+      receipt.historyRecorded=true;
+    }
+    receipts[eventId]={complete:true,cardIdentity:receipt.cardIdentity,savedAt:event.reviewedAt};
+    // Keep recent retry protection without letting this profile map grow past
+    // Firestore's document budget. Pending write snapshots must always survive.
+    const completed=Object.entries(receipts).filter(([,value])=>typeof value==='string'||value?.complete===true);
+    const completedAt=value=>{const time=Date.parse(typeof value==='string'?value:value?.savedAt);return Number.isFinite(time)?time:0;};
+    completed.sort((a,b)=>Number(b[0]===eventId)-Number(a[0]===eventId)||completedAt(b[1])-completedAt(a[1])||a[0].localeCompare(b[0]));
+    for(const [id] of completed.slice(500))delete receipts[id];
+    await persist();
+  }finally{experienceReviewLock=false;}
+}
+async function saveExperienceWorldAction(event,mode='solo'){
+  const command={...event,id:event.id||randomId()};
+  if(mode==='coop'){
+    if(!state.group)throw new Error('Join a Guild to build a shared island.');
+    const pending=state.profile.v3.pendingWorld||[];
+    for(const reward of pending.filter(e=>e.groupId===state.group.id)){const result=await mutateGuildWorld(state.group.id,reward);state.group.questWorld=result.world;state.profile.v3.pendingWorld=state.profile.v3.pendingWorld.filter(e=>e.id!==reward.id);}
+    const result=await mutateGuildWorld(state.group.id,command);state.group.questWorld=result.world;toast(result.feedback?.message||result.feedback||'Your island is saved.');await saveProfileDebounced(true);
+  }else{const result=advanceWorld(createWorld(state.profile.v3.world),command);state.profile.v3.world=result.world;toast(result.feedback?.message||result.feedback||'Your island is saved.');await saveProfileDebounced(true);}
+}
+async function saveExperienceBatch(item,{bundle,operationId}){
+  const user=state.user,profile=state.profile,library=state.library,group=state.group,uid=user?.uid,groupId=profile?.activeGroupId;
+  const assertContext=()=>{if(state.user?.uid!==uid||state.profile!==profile||state.profile.activeGroupId!==groupId)throw new Error('Your account or Guild changed. Preview this batch again.');};
+  if(!uid||!bundle.decks.every(d=>d.ownerUid===uid&&(d.scope!=='Guild'||d.groupId===groupId)))throw new Error('Your account or Guild changed. Preview this batch again.');
+  profile.v3 ||= {};profile.v3.importReceipts ||= {};const receipt=profile.v3.importReceipts[operationId]||{privateSaved:false,publicSaved:false};
+  const persist=async()=>{await saveProfile(profile);assertContext();};
+  const lesson=LESSONS.find(l=>l.id===item.lessonId);Object.assign(bundle.decks[0],{lessonId:item.lessonId||'',lessonTitle:lesson?.title||'',domainId:lesson?.domainId||'',categoryOverride:false});
+  if(!receipt.privateSaved&&item.scope!=='Public'){
+    for(const deck of bundle.decks){deck.createdBy=profile.displayName;deck.contributors=[profile.displayName];deck.importOperationId=operationId;}
+    await saveStudyImport({uid,groupId,decks:bundle.decks,cards:bundle.cards});assertContext();
+    state.library=mergeUniqueLibrary(state.library,bundle);receipt.privateSaved=true;profile.v3.importReceipts[operationId]=receipt;await persist();
+  }
+  if((item.sharePublic||item.scope==='Public')&&!receipt.publicSaved){
+    const contributions=await buildPublicContributions({deck:bundle.decks[0],cards:bundle.cards,uid,name:profile.displayName});assertContext();
+    await savePublicContributions(uid,contributions,`${bundle.decks[0].scopeKey}|${bundle.decks[0].id}`);assertContext();receipt.publicSaved=true;
+    await refreshCommunityLibrary();assertContext();
+  }
+  profile.v3.importReceipts[operationId]={...receipt,complete:true,completedAt:new Date().toISOString()};
+  if(item.scope==='Guild'&&group){group.studyLibraryUpdatedAt=new Date().toISOString();await saveGroup(group);assertContext();}
+  await persist();return {success:true,deckId:bundle.lessonDeckId,questionCount:bundle.cards.length};
+}
+
+async function startDemoSession(){
+  enableDemoStorage();state.demo=true;state.firebase={enabled:false};state.user={uid:'controlquest-demo',email:'demo@controlquest.local'};
+  const savedDemo=await loadProfile(state.user.uid);state.profile=savedDemo||defaultProfile(state.user);state.profile=migrateProfile(state.profile,state.user);
+  state.profile.displayName='Explorer';state.profile.preferences.onboardingComplete=true;if(!savedDemo)state.profile.preferences.theme='light';
+  state.profile.preferences.pageTours=Object.fromEntries(NAV.map(([id])=>[id,true]));
+  state.profile.activeGroupId='ollies-demo-guild';
+  state.group=(await loadGroup(state.profile.activeGroupId))||{...defaultGroup(state.profile,'Ollie’s Field Club'),id:state.profile.activeGroupId};
+  await saveGroup(state.group);await saveProfile(state.profile);
+  const loaded=await loadStudyLibrary(state.user.uid,state.profile.activeGroupId);
+  if(!loaded.cards?.length){
+    for(const lesson of CISA_MICROLESSONS){const q=lesson.checkpoint;const bundle=buildImportBundle({questions:[{question:q.question,choices:q.choices,correctAnswer:q.correctAnswer,justifications:{[q.correctAnswer]:q.rationale},domain:lesson.domain,domainNumber:Number(lesson.domainId.slice(1)),knowledgeStatement:lesson.title}],title:lesson.title,lessonId:lesson.id,scope:'Guild',uid:state.user.uid,groupId:state.group.id,importedBy:'Ollie',source:'Original concept checkpoint'});await saveStudyImport({uid:state.user.uid,groupId:state.group.id,decks:bundle.decks,cards:bundle.cards});}
+  }
+  await refreshStudyLibrary();applyTheme();startClock();renderApp();
+}
+
+async function persistNewGuildStudySession(){
+  const session=state.group.studySession;try{state.group.studySession=await mutateGuildSession(state.group.id,{type:'start',uid:state.user.uid,session});}
+  catch(error){state.group=await loadGroup(state.profile.activeGroupId);toast(friendly(error),'error');}
 }

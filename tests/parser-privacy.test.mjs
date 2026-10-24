@@ -1,0 +1,10 @@
+import assert from 'node:assert/strict';
+import {parseQaePaste,cleanSharedExplanation} from '../js/qae-parser.js';
+import {buildPublicContributions,aggregateCommunityLibrary} from '../js/community-library.js';
+const text=`Question 1 of 1\nQuestion\nWhat is BEST?\nA. Risk\nB. Convenience\nA is the correct answer.\nJustification\nA. Risk first.\nB. Not a priority.\nDomain1 Information Systems Auditing Process\nKnowledge Statement1B1Audit Project Management\nYour result is incorrect.\nYour answer is B.\nCorrect answer is A.`;
+const parsed=parseQaePaste(text);assert.equal(parsed.questions.length,1);assert.equal(parsed.questions[0].justifications.B,'Not a priority.');
+const old={...parsed.questions[0],justifications:{B:'Not a priority.\nDomain1 Test\nYour answer is B.'}};
+const submissions=await buildPublicContributions({deck:{id:'d',scopeKey:'g',kind:'lesson',title:'Audit Project Management'},cards:[old],uid:'u',name:'Member'});
+assert.ok(!JSON.stringify(submissions).includes('Your answer'));assert.equal(submissions[0].justifications.B,'Not a priority.');
+const shared=aggregateCommunityLibrary([{...submissions[0],justifications:old.justifications}]);assert.ok(!JSON.stringify(shared).includes('Your answer'));
+assert.equal(cleanSharedExplanation('Legitimate explanation.'),'Legitimate explanation.');console.log('Concatenated Domain1 parser boundaries and public explanation privacy passed');

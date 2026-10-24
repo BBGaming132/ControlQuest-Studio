@@ -1,0 +1,11 @@
+import assert from 'node:assert/strict';
+import {askLocalCoach,askBrowserCoach,prepareBrowserCoach,BROWSER_COACH_MODEL} from '../js/local-coach.js';
+const original=globalThis.fetch;let payload;
+globalThis.fetch=async(url,options)=>{payload=JSON.parse(options.body);assert.equal(String(url),'http://localhost:11434/api/chat');return {ok:true,json:async()=>({message:{content:'Local answer'}})};};
+assert.equal(await askLocalCoach({question:'Why?',context:{rationale:'Management owns risk.'}}),'Local answer');assert.equal(payload.stream,false);assert.ok(payload.messages[1].content.includes('Management owns risk.'));
+await assert.rejects(askLocalCoach({endpoint:'https://untrusted.example',question:'test'}),/localhost/);
+await assert.rejects(askLocalCoach({endpoint:'http://name:secret@localhost:11434'}),/Invalid/);
+await assert.rejects(askBrowserCoach({question:'test'}),/Download/);
+assert.equal(BROWSER_COACH_MODEL,'Qwen2.5-0.5B-Instruct-q4f32_1-MLC');
+if(!globalThis.navigator?.gpu)await assert.rejects(prepareBrowserCoach(),/WebGPU/);
+globalThis.fetch=original;console.log('Local coach request contract, endpoint limits and unsupported-browser fallback passed');

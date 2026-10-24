@@ -1,0 +1,15 @@
+import assert from 'node:assert/strict';
+import {reduceGuildSession as reduce} from '../js/guild-session.js';
+let s=reduce(null,{type:'start',uid:'a',session:{id:'session',cardKeys:['one','two']}});
+s=reduce(s,{type:'join',sessionId:s.id,uid:'b'});
+s=reduce(s,{type:'answer',sessionId:s.id,index:0,uid:'a',answer:'A',at:'now'});
+assert.throws(()=>reduce(s,{type:'reveal',sessionId:s.id,index:0,uid:'a',correctAnswer:'A'}));
+s=reduce(s,{type:'answer',sessionId:s.id,index:0,uid:'b',answer:'B',at:'now'});
+assert.equal(s.responses.a.answer,'A');assert.equal(s.responses.b.answer,'B');
+s=reduce(s,{type:'reveal',sessionId:s.id,index:0,uid:'a',correctAnswer:'A',at:'now'});
+s=reduce(s,{type:'reveal',sessionId:s.id,index:0,uid:'a',correctAnswer:'A',at:'now'});assert.equal(s.scores.a,120);
+s=reduce(s,{type:'next',sessionId:s.id,index:0,uid:'a'});assert.equal(s.index,1);
+assert.throws(()=>reduce(s,{type:'next',sessionId:s.id,index:0,uid:'a'}));
+assert.throws(()=>reduce(s,{type:'answer',sessionId:s.id,index:1,uid:'outsider',answer:'A'}));
+assert.throws(()=>reduce(s,{type:'start',uid:'b',session:{id:'other'}}));
+console.log('Guild session stale commands, participant gating and exactly-once scoring passed');

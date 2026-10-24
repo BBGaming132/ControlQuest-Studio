@@ -2,8 +2,8 @@ import { firebaseConfig } from '../config/firebase-config.js';
 
 let app, auth, db, currentUnsub;
 let ready = false;
-const localKey = 'controlquest_v24_local_state';
-const localStudyKey = 'controlquest_v27_study_library';
+let localKey = 'controlquest_v24_local_state';
+let localStudyKey = 'controlquest_v27_study_library';
 
 export async function initFirebase() {
   if (!firebaseConfig?.enabled) return { enabled: false, reason: 'Firebase Disabled' };
@@ -87,18 +87,19 @@ export async function loadGroup(groupId) {
   const snap = await fs().getDoc(groupRef(groupId));
   return snap.exists() ? snap.data() : null;
 }
-export async function saveGroup(group) {
-  if (!group?.id) return;
-  if (!ready) { const local = loadLocal() || {}; local.group = group; saveLocal(local); return; }
-  await fs().setDoc(groupRef(group.id), withStamp(group), { merge: true });
+export async function saveGroup(group,{includeLiveState=false}={}) {
+  if(!group?.id)return;
+  const snapshot={...group};
+  // Live question and island state are owned by command transactions. A stale
+  // settings/import/member snapshot must never roll back another player's turn.
+  if(!includeLiveState){delete snapshot.studySession;delete snapshot.questWorld;}
+  if(!ready){const local=loadLocal()||{};local.group={...(local.group?.id===group.id?local.group:{}),...snapshot};saveLocal(local);return;}
+  await fs().setDoc(groupRef(group.id),withStamp(snapshot),{merge:true});
 }
-export async function updateMemberSummary(groupId, profile) {
-  if (!groupId || !profile) return;
-  const group = await loadGroup(groupId);
-  if (!group) return;
-  group.members ||= {};
-  group.members[profile.uid] = publicSummary(profile);
-  await saveGroup(group);
+export async function updateMemberSummary(groupId,profile){
+  if(!groupId||!profile)return;
+  if(!ready){const group=await loadGroup(groupId);if(!group)return;group.members ||= {};group.members[profile.uid]=publicSummary(profile);await saveGroup(group);return;}
+  await fs().setDoc(groupRef(groupId),withStamp({members:{[profile.uid]:publicSummary(profile)}}),{merge:true});
 }
 export function publicSummary(profile) {
   return {
@@ -201,7 +202,8 @@ export async function saveStudyImport({ uid, groupId, decks = [], cards = [] }) 
       const old = cardMap.get(key) || {};
       cardMap.set(key, { ...old, ...c, deckIds: [...new Set([...(old.deckIds || []), ...(c.deckIds || [])])] });
     });
-    saveLocalStudy({ ...local, decks: [...deckMap.values()], cards: [...cardMap.values()] });
+    const progress={...(local.progress||{})};for(const c of cards.filter(c=>c.wasCorrectAtImport===false)){const id=`${c.scopeKey}__${c.id}`;progress[id]={...(progress[id]||{}),id,uid,cardId:c.id,scope:c.scope,scopeKey:c.scopeKey,importedMiss:true};}
+    saveLocalStudy({ ...local, decks: [...deckMap.values()], cards: [...cardMap.values()],progress });
     return;
   }
   const operations = [];
@@ -214,6 +216,7 @@ export async function saveStudyImport({ uid, groupId, decks = [], cards = [] }) 
     const { arrayUnion } = fs();
     operations.push(batch => batch.set(ref, { ...withStamp(card), deckIds: arrayUnion(...(card.deckIds || [])) }, { merge: true }));
   }
+  for(const card of cards.filter(c=>c.wasCorrectAtImport===false)){const id=`${card.scopeKey}__${card.id}`;operations.push(batch=>batch.set(docRefFor('Personal',uid,null,'progress',id),{id,uid,cardId:card.id,scope:card.scope,scopeKey:card.scopeKey,importedMiss:true},{merge:true}));}
   await commitBatchOperations(operations);
 }
 
@@ -325,3 +328,20 @@ export function subscribeCommunityLibrary(onChange,onError) {
   const unsubscribers=['publicLessonContributions','publicLessonStatus'].map(name=>fs().onSnapshot(fs().collection(db,name),onChange,onError));
   return ()=>unsubscribers.forEach(stop=>stop());
 }
+
+// Atomic reducers prevent one player's answer from replacing a teammate's update.
+export async function mutateGuildSession(groupId,command){
+  const {reduceGuildSession}=await import('./guild-session.js');
+  if(!ready)return serializeLocalGuild(groupId,async()=>{const group=await loadGroup(groupId);if(!group)throw new Error('Guild not found');group.studySession=reduceGuildSession(group.studySession,command);await saveGroup(group,{includeLiveState:true});return group.studySession;});
+  return fs().runTransaction(db,async transaction=>{const ref=groupRef(groupId),snapshot=await transaction.get(ref);if(!snapshot.exists())throw new Error('Guild not found');const next=reduceGuildSession(snapshot.data().studySession,command);transaction.update(ref,{studySession:next});return next;});
+}
+export async function mutateGuildWorld(groupId,event){
+  const {createWorld,advanceWorld}=await import('./quest-world.js');
+  if(!ready)return serializeLocalGuild(groupId,async()=>{const group=await loadGroup(groupId);if(!group)throw new Error('Guild not found');const result=advanceWorld(createWorld(group.questWorld),event);group.questWorld=result.world;if(result.changed)await saveGroup(group,{includeLiveState:true});return result;});
+  return fs().runTransaction(db,async transaction=>{const ref=groupRef(groupId),snapshot=await transaction.get(ref);if(!snapshot.exists())throw new Error('Guild not found');const result=advanceWorld(createWorld(snapshot.data().questWorld),event);if(result.changed)transaction.update(ref,{questWorld:result.world});return result;});
+}
+
+export function enableDemoStorage(){ready=false;localKey='controlquest_demo_v3_profile';localStudyKey='controlquest_demo_v3_study';}
+
+const localGuildQueues=new Map();
+async function serializeLocalGuild(id,action){const next=(localGuildQueues.get(id)||Promise.resolve()).catch(()=>{}).then(action);localGuildQueues.set(id,next);try{return await next;}finally{if(localGuildQueues.get(id)===next)localGuildQueues.delete(id);}}

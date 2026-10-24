@@ -81,7 +81,7 @@ function parseBlock(block, fallbackNumber){
   }
 
   const justifications = {};
-  const justMatch = body.match(/Justification\s*([\s\S]*?)(?:\n\s*Domain\b|\nDomain\s*\n|\n\s*Incorrect|\n\s*Correct|$)/i);
+  const justMatch = body.match(/Justification\s*([\s\S]*?)(?:\n\s*Domain(?=\s|\d)|\n\s*Knowledge Statement|\n\s*Task Statement|\n\s*Your (?:answer|result)|\n\s*Time Spent|\n\s*Difficulty Level|\n\s*Incorrect|\n\s*Correct|$)/i);
   const justText = clean(justMatch?.[1] || '');
   if (justText) {
     const positions = [];
@@ -158,4 +158,8 @@ export function flashcardFromParsedMiss(q){
     back,
     sourceQuestionId: q.id
   };
+}
+
+export function cleanSharedExplanation(value){
+  return String(value||'').split(/(?:^|\n)\s*(?:Domain(?=\s|[1-5])|Knowledge Statement|Task Statement|Your (?:answer|result)|Correct answer is|Time Spent|Difficulty Level)/i)[0].trim();
 }
