@@ -1,0 +1,54 @@
+import assert from 'node:assert/strict';
+import { createWorld,advanceWorld,getQuestBoard,questProgress,renderQuestWorld,renderPlayerCard } from '../js/quest-world.js';
+const answer=(world,n,correct=true)=>advanceWorld(world,{type:'study-answer',id:`answer-${n}`,correct});
+let world=createWorld();
+assert.equal(world.energy,3);assert.equal(world.plots.length,3);assert.deepEqual(createWorld({questWorld:world}),world);
+const initial=JSON.stringify(world);
+let result=answer(world,1);assert.equal(result.world.energy,6);assert.equal(result.world.studyTurns,1);assert.equal(JSON.stringify(world),initial,'Reducer must not mutate input');
+world=result.world;result=answer(world,1);assert.equal(result.changed,false);assert.equal(result.duplicate,true);assert.equal(result.world.energy,6);
+assert.equal(advanceWorld(world,{type:'study-answer',correct:true}).changed,false);
+assert.equal(advanceWorld(world,{type:'study-answer',id:'bad',correct:'yes'}).changed,false);
+world=advanceWorld(world,{type:'travel',zone:'grove'}).world;
+assert.equal(advanceWorld(world,{type:'plant'}).changed,false);
+world=advanceWorld(world,{type:'plant',plot:0,id:'plant-0'}).world;
+assert.equal(world.resources.seeds,2);assert.equal(world.energy,5);
+assert.equal(advanceWorld(world,{type:'harvest',plot:0}).changed,false);
+for(let n=2;n<=4;n++)world=answer(world,n).world;
+assert.ok(world.energy<=world.maxEnergy);assert.equal(world.plots[0].readyAt,4);
+world=advanceWorld(world,{type:'harvest',plot:0,id:'harvest-0'}).world;
+assert.equal(world.resources.crops,2);assert.equal(world.resources.seeds,3);assert.equal(world.plots[0],null);assert.equal(world.stats.harvested,1);
+result=advanceWorld(world,{type:'harvest',plot:0,id:'harvest-0'});assert.equal(result.duplicate,true);assert.equal(result.world.resources.crops,2);
+const energyBefore=world.energy;
+world=advanceWorld(world,{type:'gather',resource:'wood',id:'gather-wood'}).world;assert.equal(world.resources.wood,2);assert.equal(world.energy,energyBefore-1);
+assert.equal(advanceWorld(world,{type:'gather',resource:'crystal'}).changed,false,'Resource gathering must occur in its zone');
+world=advanceWorld(world,{type:'travel',zone:'observatory'}).world;world=advanceWorld(world,{type:'gather',resource:'crystal'}).world;
+assert.equal(world.resources.crystal,1);
+world=advanceWorld(world,{type:'travel',zone:'harbor'}).world;world=advanceWorld(world,{type:'craft',recipe:'lantern',id:'craft-lantern'}).world;
+assert.equal(world.resources.wood,0);assert.equal(world.resources.crystal,0);assert.equal(world.resources.lanterns,1);assert.equal(world.stats.crafted,1);
+world=advanceWorld(world,{type:'craft',recipe:'seeds'}).world;assert.equal(world.resources.crops,0);assert.equal(world.resources.seeds,6);
+let misses={...createWorld(),energy:0};
+for(let n=0;n<3;n++)misses=advanceWorld(misses,{type:'study-answer',id:`miss-${n}`,correct:false}).world;
+assert.equal(misses.energy,1);assert.equal(misses.stats.incorrect,3);assert.equal(misses.studyTurns,3);
+assert.equal(advanceWorld({...misses,energy:0},{type:'gather',resource:'wood'}).needsStudy,false,'Wrong-zone feedback comes before focus requirement');
+misses.zone='grove';assert.equal(advanceWorld({...misses,energy:0},{type:'gather',resource:'wood'}).needsStudy,true);
+let questWorld=createWorld();const quest=getQuestBoard(questWorld)[0];questWorld=advanceWorld(questWorld,{type:'select-quest',questId:quest.id}).world;
+assert.equal(questWorld.activeQuest.objective,'correct');
+assert.equal(advanceWorld(questWorld,{type:'claim-quest'}).changed,false);
+for(let n=0;n<quest.target;n++)questWorld=advanceWorld(questWorld,{type:'study-answer',id:`quest-answer-${n}`,correct:true}).world;
+assert.equal(questProgress(questWorld).complete,true);
+questWorld=advanceWorld(questWorld,{type:'claim-quest',id:'claim-1'}).world;assert.equal(questWorld.activeQuest,null);assert.equal(questWorld.resources.coins,quest.reward);assert.equal(questWorld.stats.quests,1);assert.equal(questWorld.cycle,1);assert.notEqual(getQuestBoard(questWorld)[0].id,quest.id);
+assert.equal(advanceWorld(questWorld,{type:'claim-quest',id:'claim-1'}).duplicate,true);
+const hacked=createWorld({version:1,energy:-500,maxEnergy:1e9,resources:{seeds:-10,wood:Infinity},buildings:{beacon:1e9},plots:[{readyAt:'oops'}]});
+assert.equal(hacked.energy,0);assert.equal(hacked.maxEnergy,18);assert.equal(hacked.resources.seeds,0);assert.equal(hacked.buildings.beacon,6);assert.equal(hacked.plots[0],null);
+const markup=renderQuestWorld(world,{playerName:'<script>bad()</script>',mode:'coop',playerNames:['Ty','Bennett']});
+assert.ok(markup.includes('Turn-based co-op'));assert.ok(markup.includes('&lt;script&gt;'));assert.ok(!markup.includes('<script>bad'));
+assert.ok(markup.includes('data-qw-study'));assert.ok(markup.includes('data-qw-mode="coop"'));assert.ok(markup.includes('aria-live="polite"'));assert.ok(markup.includes('Lantern Harbor'));
+assert.ok(renderPlayerCard({name:'Ollie'}).includes('Ollie the audit owl'));
+// A long answer/action stream remains serializable, bounded and nonnegative.
+let simulation=createWorld();for(let n=0;n<2200;n++){
+ simulation=advanceWorld(simulation,{type:'study-answer',id:`sim-${n}`,correct:n%3!==0}).world;
+ if(n%4===0){simulation=advanceWorld(simulation,{type:'travel',zone:'grove'}).world;simulation=advanceWorld(simulation,{type:'gather',resource:'wood'}).world;}
+ assert.ok(simulation.energy>=0&&simulation.energy<=simulation.maxEnergy);
+}
+assert.equal(simulation.seenEvents.length,2000);assert.deepEqual(createWorld(JSON.parse(JSON.stringify(simulation))),simulation);
+console.log('Quest world: immutable/idempotent study turns, garden lifecycle, resources, crafting, quests, bounded save state and accessible rendering passed.');

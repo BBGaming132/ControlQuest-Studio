@@ -1,77 +1,39 @@
-# ControlQuest Studio v2.8
+# ControlQuest Studio 3.0
 
-ControlQuest Studio v2.8 aligns the study workflow with the routine selected by the Guild:
+A mobile-friendly CISA study adventure with QAE Word imports, honest spaced-repetition progress, short concept lessons and a persistent solo/cooperative island.
 
-- Monday: review the prior week, missed questions, and due adaptive cards.
-- Tuesday through Friday: complete new ISACA QAE sets and import the results.
-- Weekend Flex: complete one self-directed block on Saturday or Sunday. Studying on both days can earn two activity days, but skipping one weekend day does not break the streak.
+## The daily loop
 
-## Major Updates
+Open Today → start a Pocket Quest → answer and read the rationale → rate recall → take an island action → continue. A saved queue resumes after refresh. The daily target counts distinct questions practiced, and recommendations prioritize unresolved misses and due reviews.
 
-### Study Room And Study Plan
-- Date-aware Study Room checklists for Monday recap, Tuesday–Friday new sets, and Weekend Flex.
-- A single shared Weekend Flex requirement shown across Saturday and Sunday.
-- Cleaner weekly roadmap cards with required-task progress.
-- Optional reinforcement remains available without blocking completion of the core plan.
+- Batch Import: multiple Word/text files, editable lesson matches, per-file sharing, retry/cancel/resume.
+- Mastery Atlas: unique questions, unresolved misses, unseen cards, due reviews and durable mastery in each exam domain.
+- Concept Trails: 60 original micro-lessons, scenarios, retrieval prompts, spoken audio and checkpoint questions.
+- Lantern Isles: illustrated solo/Guild world with planting, harvesting, crafting, landmarks and rotating quests powered by study.
+- Existing libraries, public lesson aggregation, avatars, Guild sessions, calendar and study history remain available.
+- Optional local AI: desktop Ollama or an explicitly downloaded WebGPU browser model. Core study planning needs no AI service.
+- Wayforge activity bridge: recent event export with unique IDs; a receiving/verification API still needs to be built.
 
-### Practice Import
-- Paste or Word-document import with a question preview before saving.
-- Word filenames automatically become the proposed session label.
-- Imported questions continue to build the lesson deck, Master QAE Question Bank, Master Missed Questions deck, and adaptive review history.
-- Long question and missed-question lists are constrained to scrollable workspaces.
-- QAE trend visualization includes dates, percentages, and question-volume tooltips.
+[Release guide and deployment notes](docs/V3_RELEASE.md) · [Verified CISA and AI sources](docs/CISA_SOURCES.md) · [Existing lesson/public library guide](docs/LESSON_LIBRARY_GUIDE.md)
 
-### Adaptive Study Tools
-- Multiple-choice selection before revealing an adaptive flashcard.
-- Again, Hard, Good, and Easy ratings with visual confidence faces.
-- Same-session reappearance is described in cards rather than hours.
-- Review progress saves after answer selection, reveal, and rating.
-- Mastered cards remain accessible through Review Mastered Cards.
-- Deck Library uses varied accents and a scrollable layout for large libraries.
+## Try it without an account
 
-### Guild Study
-- Member answers remain private until all Guild members have locked an answer.
-- Reveal becomes available only after everyone answers.
-- Results and explanations appear simultaneously after reveal.
-- Guild scores move members through an animated starship race.
+Choose Explore the island on the login screen, or append `?demo=1` to the site URL. The demo uses original sample questions and a separate local save; it does not read or change production Firebase data.
 
-### Games And Rewards
-- Assurance Odyssey is a persistent space-adventure review campaign with saved progress.
-- Confidence Climb, Missed Question Gauntlet, and 60-Second Audit Sprint remain available as overlays.
-- Starships are available as unlockable/equippable reward items and appear in Guild races and Assurance Odyssey.
+## Develop and verify
 
-### Guild Branding
-- Custom Guild images accept PNG, JPEG, or WebP files up to 10 MB.
-- Images are resized and compressed in the browser before Firebase storage.
-- Guild images use a centered contain layout so the complete image is shown instead of being cropped.
+Node 22+:
 
-## Deployment
+```sh
+npm ci
+npm test
+npm run build
+```
 
-1. Back up the current GitHub repository.
-2. Preserve the working `config/firebase-config.js` from the live site.
-3. Replace the remaining repository files with the complete v2.8 package.
-4. Restore the working `config/firebase-config.js`.
-5. Publish the included `firebase.rules` only if they differ from the currently deployed study-library rules.
-6. Commit and wait for GitHub Pages to finish deploying.
-7. Hard refresh the website with `Ctrl + Shift + R`.
+The app remains buildless at the repository root for GitHub Pages. `dist/` provides an equivalent static output for other hosts. Keep the existing `config/firebase-config.js`. Deploy the included `firebase.rules` if the earlier public-library rules have not already been deployed. No hosting migration is required for this release.
 
-Do not mix individual JavaScript files from earlier releases with v2.8. The full package is designed and tested as one matching version.
+The scheduler is transparent spaced repetition, not a claim to reproduce Anki/FSRS. Mastery is a conservative statement about your imported question bank, not a predicted exam score. The island is a turn-based cooperative study game, not a full MMO or an anti-cheat economy. Local AI inference and live cross-account Firebase behavior still require device/account-specific validation.
 
-## Important Data Notes
+## Earlier releases
 
-- Website code is stored on GitHub.
-- User profiles, Guild state, study decks, cards, review progress, and review events are stored in Firebase.
-- Replacing website files does not delete Firebase study history.
-- Preserve `config/firebase-config.js` so the deployed app keeps its Firebase and Google Calendar configuration.
-
-## Validation Performed
-
-- JavaScript syntax validation for all modules.
-- QAE parser and adaptive-library smoke tests.
-- v2.8 feature-marker test.
-- Full primary-view rendering smoke test in a browser-like DOM.
-- Adaptive review interaction test: select answer, reveal, rate, and advance.
-- Guild reveal interaction test: concealed answers before reveal and visible results afterward.
-- Schedule test for Monday recap, Tuesday–Friday new sets, Weekend Flex, and non-breaking weekend gaps.
-
-Live Firebase and Google Calendar behavior still must be confirmed after deployment because the test environment does not have access to the production Firebase project or OAuth consent session.
+[v2.8 notes](README_V2_8.md) · [v2.7 notes](README_V2_7.md)

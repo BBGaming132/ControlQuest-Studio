@@ -1,3 +1,5 @@
+import { cleanSharedExplanation } from './qae-parser.js';
+import { sha256Hex } from './runtime-crypto.js';
 import { LESSONS, cardLesson, deckLesson } from './lesson-catalog.js';
 
 export const normalizeCommunityText = value => String(value||'').normalize('NFKC').toLowerCase().replace(/\s+/g,' ').trim();
@@ -5,10 +7,8 @@ export const normalizeCommunityText = value => String(value||'').normalize('NFKC
 export function communityQuestionKey(card) {
   return JSON.stringify([normalizeCommunityText(card.question),Object.values(card.choices||{}).map(normalizeCommunityText).sort()]);
 }
-async function digest(value){
-  const bytes=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(value));
-  return [...new Uint8Array(bytes)].map(b=>b.toString(16).padStart(2,'0')).join('');
-}
+const digest=sha256Hex;
+
 export async function buildPublicContributions({deck,cards,uid,name}) {
   const fallback=deckLesson(deck);
   const contributions=new Map();
@@ -22,14 +22,15 @@ export async function buildPublicContributions({deck,cards,uid,name}) {
     const id=await digest(`${uid}|${sourceKey}|${fingerprint}`);
     contributions.set(id,{id,ownerUid:uid,contributorName:name||'Member',sourceKey,sourceTitle:deck.title,
       sourceUploader:deck.createdBy||name||'Member',lessonId:lesson.id,fingerprint,identity,
-      question:card.question,choices:card.choices||{},correctAnswer:card.correctAnswer||'',justifications:card.justifications||{},
+      question:card.question,choices:card.choices||{},correctAnswer:card.correctAnswer||'',justifications:Object.fromEntries(Object.entries(card.justifications||{}).map(([key,value])=>[key,cleanSharedExplanation(value)])),
       source:card.source||'Study contribution',updatedAt:new Date().toISOString()});
   }
   return [...contributions.values()];
 }
 export function aggregateCommunityLibrary(contributions=[],statuses={}) {
   const groups=new Map();
-  for(const item of [...contributions].sort((a,b)=>a.id.localeCompare(b.id))){
+  for(const original of [...contributions].sort((a,b)=>a.id.localeCompare(b.id))){
+    const item={...original,justifications:Object.fromEntries(Object.entries(original.justifications||{}).map(([key,value])=>[key,cleanSharedExplanation(value)]))};
     const lesson=LESSONS.find(l=>l.id===item.lessonId);if(!lesson||!item.question)continue;
     const identity=communityQuestionKey(item);const key=JSON.stringify([lesson.id,identity]);
     if(!groups.has(key))groups.set(key,{lesson,items:[]});

@@ -1,3 +1,4 @@
+import { randomId } from './runtime-crypto.js';
 import { DAILY_CHALLENGE_BANK, BADGES, AVATAR_ITEMS, SHOP_ITEMS } from './content.js';
 import { todayISO, addDays, isStudyDay, isPaused } from './planner.js';
 
@@ -31,7 +32,7 @@ export function award(profile,{xp=0,coins=0,reason='Quest reward',source='manual
   profile.stats.xp=(profile.stats.xp||0)+realXp;
   profile.stats.coins=(profile.stats.coins||0)+coins;
   profile.progress.xpLog=profile.progress.xpLog||[];
-  profile.progress.xpLog.unshift({id:crypto.randomUUID(),xp:realXp,baseXp:xp,coins,reason,source,boost,meta,at:new Date().toISOString()});
+  profile.progress.xpLog.unshift({id:randomId(),xp:realXp,baseXp:xp,coins,reason,source,boost,meta,at:new Date().toISOString()});
   profile.progress.xpLog=profile.progress.xpLog.slice(0,500);
   updateBadges(profile);
   return {xp:realXp,coins,boost};
@@ -71,7 +72,7 @@ export function updateStreak(profile,date=todayISO()){
       const protectedDays=[]; let lost=false;
       for(let i=1;i<diff;i++){ const d=addDays(last,i); if(!isStudyDay(profile,d)||isPaused(profile,d)) continue; if((profile.stats.streakFreezes||0)>0){profile.stats.streakFreezes-=1; protectedDays.push(d);} else {lost=true;break;} }
       profile.progress.streakFreezeLog=profile.progress.streakFreezeLog||[];
-      protectedDays.forEach(d=>profile.progress.streakFreezeLog.unshift({id:crypto.randomUUID(),date:d,reason:'Auto-used for missed scheduled study day',at:new Date().toISOString()}));
+      protectedDays.forEach(d=>profile.progress.streakFreezeLog.unshift({id:randomId(),date:d,reason:'Auto-used for missed scheduled study day',at:new Date().toISOString()}));
       profile.stats.streak = lost ? 1 : (profile.stats.streak||0)+1;
     }
   }
@@ -80,10 +81,10 @@ export function updateStreak(profile,date=todayISO()){
   if(profile.stats.streak>0 && profile.stats.streak%7===0){ profile.stats.streakFreezes=(profile.stats.streakFreezes||0)+1; award(profile,{xp:25,coins:25,reason:'7-day streak bonus',source:'streak'}); }
   updateBadges(profile);
 }
-export function maybeAwardChest(profile,type='bronze',reason='Quest chest'){ profile.progress.chests=profile.progress.chests||[]; const chance= type==='gold'?0.8:type==='silver'?0.6:0.35; if(Math.random()<chance){ profile.progress.chests.unshift({id:crypto.randomUUID(),type,reason,opened:false,at:new Date().toISOString()}); return true;} return false; }
+export function maybeAwardChest(profile,type='bronze',reason='Quest chest'){ profile.progress.chests=profile.progress.chests||[]; const chance= type==='gold'?0.8:type==='silver'?0.6:0.35; if(Math.random()<chance){ profile.progress.chests.unshift({id:randomId(),type,reason,opened:false,at:new Date().toISOString()}); return true;} return false; }
 export function openChest(profile,chestId){ const chest=(profile.progress.chests||[]).find(c=>c.id===chestId); if(!chest || chest.opened) return null; const ranges={bronze:[20,60,10,25],silver:[60,140,25,55],gold:[140,280,60,120]}; const r=ranges[chest.type]||ranges.bronze; const xp=randomInt(r[0],r[1]), coins=randomInt(r[2],r[3]); chest.opened=true; chest.openedAt=new Date().toISOString(); chest.reward={xp,coins}; award(profile,{xp,coins,reason:`Opened ${chest.type} chest`,source:'chest'}); return chest.reward; }
-export function buyShopItem(profile,itemId){ const item=SHOP_ITEMS.find(i=>i.id===itemId); if(!item) throw new Error('Shop item not found.'); if((profile.stats.coins||0)<item.cost) throw new Error('Not enough coins yet.'); profile.stats.coins-=item.cost; profile.progress.purchases=profile.progress.purchases||[]; profile.progress.purchases.unshift({id:crypto.randomUUID(),itemId,at:new Date().toISOString(),cost:item.cost}); if(item.type==='streakFreeze') profile.stats.streakFreezes=(profile.stats.streakFreezes||0)+1; if(item.type==='xpBoost') profile.stats.currentXpBoost={multiplier:item.multiplier,endsAt:new Date(Date.now()+item.minutes*60000).toISOString()}; if(item.type==='chest') profile.progress.chests.unshift({id:crypto.randomUUID(),type:item.chest,reason:'Purchased in shop',opened:false,at:new Date().toISOString()}); profile.badges=[...new Set([...(profile.badges||[]),'shopper'])]; return item; }
-export function resetProfileForTesting(profile){ const backup=structuredClone(profile); const fresh=defaultProfile(profile.email); fresh.uid=profile.uid; fresh.displayName=profile.displayName; fresh.avatar=profile.avatar; fresh.groups=profile.groups||[]; fresh.activeGroupId=profile.activeGroupId||null; fresh.preferences={...fresh.preferences,...profile.preferences}; fresh.progress.resetBackups=[...(profile.progress?.resetBackups||[]),{id:crypto.randomUUID(),at:new Date().toISOString(),backup}]; return fresh; }
+export function buyShopItem(profile,itemId){ const item=SHOP_ITEMS.find(i=>i.id===itemId); if(!item) throw new Error('Shop item not found.'); if((profile.stats.coins||0)<item.cost) throw new Error('Not enough coins yet.'); profile.stats.coins-=item.cost; profile.progress.purchases=profile.progress.purchases||[]; profile.progress.purchases.unshift({id:randomId(),itemId,at:new Date().toISOString(),cost:item.cost}); if(item.type==='streakFreeze') profile.stats.streakFreezes=(profile.stats.streakFreezes||0)+1; if(item.type==='xpBoost') profile.stats.currentXpBoost={multiplier:item.multiplier,endsAt:new Date(Date.now()+item.minutes*60000).toISOString()}; if(item.type==='chest') profile.progress.chests.unshift({id:randomId(),type:item.chest,reason:'Purchased in shop',opened:false,at:new Date().toISOString()}); profile.badges=[...new Set([...(profile.badges||[]),'shopper'])]; return item; }
+export function resetProfileForTesting(profile){ const backup=structuredClone(profile); const fresh=defaultProfile(profile.email); fresh.uid=profile.uid; fresh.displayName=profile.displayName; fresh.avatar=profile.avatar; fresh.groups=profile.groups||[]; fresh.activeGroupId=profile.activeGroupId||null; fresh.preferences={...fresh.preferences,...profile.preferences}; fresh.progress.resetBackups=[...(profile.progress?.resetBackups||[]),{id:randomId(),at:new Date().toISOString(),backup}]; return fresh; }
 export function dailyChallenges(profile,date=todayISO()){ const seed=[...date].reduce((a,c)=>a+c.charCodeAt(0),0)+(profile.displayName||'').length; const copy=[...DAILY_CHALLENGE_BANK]; const selected=[]; for(let i=0;i<3;i++){ const idx=(seed+i*7)%copy.length; selected.push(copy.splice(idx%copy.length,1)[0]); } return selected; }
 export function isAvatarItemUnlocked(profile,type,id){
   const item=AVATAR_ITEMS[type]?.find(x=>x.id===id);

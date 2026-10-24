@@ -1,0 +1,9 @@
+{
+  "name":"controlquest-studio",
+  "version":"3.0.0",
+  "private":true,
+  "type":"module",
+  "scripts":{"build":"node scripts/build.mjs","test":"node scripts/test.mjs"},
+  "devDependencies":{"jsdom":"30.1.3","mammoth":"1.13.0"},
+  "engines":{"node":">=22"}
+}
