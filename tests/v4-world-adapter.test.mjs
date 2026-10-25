@@ -6,9 +6,9 @@ import {createWorld,advanceWorld} from '../js/quest-world.js';
 const source=await readFile(new URL('../js/app.js',import.meta.url),'utf8');
 const adapter=source.slice(source.indexOf('let experienceWorldLock='),source.indexOf('async function saveExperienceBatch('));
 const deferred=()=>{let resolve;const promise=new Promise(r=>{resolve=r;});return {promise,resolve};};
-function fixture(){
- const profile={uid:'user-a',activeGroupId:'guild-a',v3:{world:createWorld(),pendingWorld:[]}};
- const state={user:{uid:'user-a'},profile,group:{id:'guild-a',questWorld:createWorld()}};
+function fixture({guild=false}={}){
+ const profile={uid:'user-a',activeGroupId:guild?'guild-a':null,v3:{world:createWorld(),pendingWorld:[]}};
+ const state={user:{uid:'user-a'},profile,group:guild?{id:'guild-a',questWorld:createWorld()}:null};
  const hooks={beforeSave:null,beforeGuild:null,failSave:false};
  const calls={saves:[],guild:[],toasts:[]};
  let serial=0;
@@ -43,6 +43,8 @@ await assert.rejects(concurrent.move({type:'travel',zone:'observatory'}),/still 
 await assert.rejects(concurrent.review(null,{}),/island move is still saving/);
 hold.resolve();await first;assert.equal(concurrent.profile.v3.world.zone,'grove');assert.equal(concurrent.calls.saves.length,1);
 
+const shared=fixture({guild:true});await shared.move({type:'travel',zone:'grove'},'solo');assert.equal(shared.state.group.questWorld.zone,'grove','a legacy solo argument cannot bypass the one active Guild island');assert.equal(shared.profile.v3.world.zone,'harbor','personal archive is preserved');
+
 const reviewInFlight=fixture();reviewInFlight.context.experienceReviewLock=true;
 await assert.rejects(reviewInFlight.move({type:'travel',zone:'grove'}),/saving|finish/i);
 assert.equal(reviewInFlight.calls.saves.length,0);reviewInFlight.context.experienceReviewLock=false;
@@ -59,20 +61,20 @@ switched.hooks.beforeSave=()=>{switched.state.user={uid:'user-b'};switched.state
 await assert.rejects(switched.move({type:'travel',zone:'grove'}),/account or Guild changed/i);
 assert.equal(nextProfile.v3.world.zone,'harbor','old account completion cannot mutate the newly signed-in account');assert.equal(switched.calls.toasts.length,0);
 
-const changedGuild=fixture(),otherGuild={id:'guild-b',questWorld:createWorld()};
+const changedGuild=fixture({guild:true}),otherGuild={id:'guild-b',questWorld:createWorld()};
 changedGuild.hooks.beforeGuild=()=>{changedGuild.state.group=otherGuild;changedGuild.profile.activeGroupId='guild-b';};
 await assert.rejects(changedGuild.move({type:'travel',zone:'grove'},'coop'),/account or Guild changed/i);
 assert.equal(otherGuild.questWorld.zone,'harbor');assert.equal(changedGuild.calls.saves.length,0);
 
 // Firestore replaces snapshots on every notification, including the move's own write.
 // A refreshed object for the same Guild is not an account or Guild switch.
-const refreshed=fixture();let replacement;
+const refreshed=fixture({guild:true});let replacement;
 refreshed.hooks.beforeGuild=()=>{replacement={id:'guild-a',questWorld:createWorld()};refreshed.state.group=replacement;};
 const refreshedResult=await refreshed.move({type:'travel',zone:'grove'},'coop');
 assert.equal(refreshedResult.changed,true);assert.equal(refreshed.state.group.questWorld.zone,'grove');
 assert.strictEqual(refreshed.state.group,replacement,'apply to the current same-ID snapshot, not a detached captured object');
 
-const replay=fixture();replay.profile.v3.pendingWorld=[{id:'reward-a',type:'study-answer',correct:true,groupId:'guild-a'},{id:'reward-b',type:'study-answer',correct:true,groupId:'guild-b'}];
+const replay=fixture({guild:true});replay.profile.v3.pendingWorld=[{id:'reward-a',type:'study-answer',correct:true,groupId:'guild-a'},{id:'reward-b',type:'study-answer',correct:true,groupId:'guild-b'}];
 await replay.move({type:'travel',zone:'grove'},'coop');
 assert.deepEqual(replay.calls.guild.map(c=>c.id),['guild-a','guild-a']);
 assert.equal(replay.profile.v3.pendingWorld.length,1);assert.equal(replay.profile.v3.pendingWorld[0].groupId,'guild-b');

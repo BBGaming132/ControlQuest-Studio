@@ -39,7 +39,8 @@ export function createWorld(saved={}) {
     buildings:{beacon:0,greenhouse:0,telescope:0},plots:[null,null,null],
     stats:{study:0,correct:0,incorrect:0,harvested:0,gathered:0,crafted:0,built:0,quests:0},
     activeQuest:null,practiceCharge:0,seenEvents:[],lastFeedback:null,
-    workshop:{progress:0,ready:0,collected:0},settlement:{expansions:0,deliveries:0},journal:[]};
+    workshop:{progress:0,ready:0,collected:0},settlement:{expansions:0,deliveries:0},journal:[],
+    automation:{enabled:true},project:{building:'beacon',progress:0,target:3,funded:false},expedition:{steps:0,summits:0}};
   const world={...base,...clone(valid),resources:{...base.resources,...valid.resources},buildings:{...base.buildings,...valid.buildings},stats:{...base.stats,...valid.stats}};
   world.zone=WORLD_ZONES.some(z=>z.id===world.zone)?world.zone:'harbor';
   world.maxEnergy=integer(world.maxEnergy,12,18);world.energy=integer(world.energy,0,world.maxEnergy);
@@ -47,10 +48,15 @@ export function createWorld(saved={}) {
   for(const name of Object.keys(base.resources))world.resources[name]=integer(world.resources[name]);
   for(const name of Object.keys(base.stats))world.stats[name]=integer(world.stats[name]);
   for(const name of Object.keys(base.buildings))world.buildings[name]=integer(world.buildings[name],0,WORLD_BUILDINGS[name].maxLevel);
-  world.plots=base.plots.map((_,i)=>{const plot=valid.plots?.[i];return plot&&Number.isFinite(plot.readyAt)?{plantedAt:integer(plot.plantedAt),readyAt:integer(plot.readyAt)}:null;});
+  world.plots=base.plots.map((_,i)=>{const plot=valid.plots?.[i];return plot&&Number.isFinite(plot.readyAt)?{plantedAt:integer(plot.plantedAt),readyAt:integer(plot.readyAt),...(plot.automatic===true?{automatic:true}:{})}:null;});
   world.seenEvents=Array.isArray(world.seenEvents)?world.seenEvents.filter(v=>typeof v==='string').slice(-2000):[];
   world.practiceCharge=integer(world.practiceCharge,0,2);
   world.workshop={progress:integer(valid.workshop?.progress,0,2),ready:integer(valid.workshop?.ready,0,50),collected:integer(valid.workshop?.collected)};
+  world.automation={enabled:valid.automation?.enabled!==false};
+  const project=valid.project,building=Object.hasOwn(WORLD_BUILDINGS,project?.building)?project.building:'beacon';
+  world.project={building,progress:integer(project?.progress,0,2),target:3,funded:project?.funded===true};
+  if(world.project.funded&&world.buildings[building]>=WORLD_BUILDINGS[building].maxLevel)world.project.funded=false;
+  world.expedition={steps:integer(valid.expedition?.steps),summits:integer(valid.expedition?.summits)};
   world.settlement={expansions:integer(valid.settlement?.expansions),deliveries:integer(valid.settlement?.deliveries)};
   world.journal=Array.isArray(valid.journal)?valid.journal.filter(entry=>entry&&typeof entry.message==='string').slice(-8).map(entry=>({message:entry.message.slice(0,300),turn:integer(entry.turn),tone:String(entry.tone||'success').slice(0,20)})):[];
   if(world.activeQuest&&!questPatterns.some(p=>p.objective===world.activeQuest.objective))world.activeQuest=null;
@@ -74,8 +80,9 @@ export function questProgress(world) {
 }
 export function advanceWorld(saved,event={}) {
   const world=createWorld(saved),before=clone(world);
-  const reject=(message,needsStudy=false)=>({world,changed:false,feedback:{tone:'hint',message},needsStudy});
+  const reject=(message,needsStudy=false)=>({world:before,changed:false,feedback:{tone:'hint',message},needsStudy});
   if(event.id&&world.seenEvents.includes(String(event.id)))return {...reject('That action is already saved.'),duplicate:true};
+  if(event.sceneZone!==undefined){if(!WORLD_ZONES.some(z=>z.id===event.sceneZone))return reject('Choose a valid place on the island.');world.zone=event.sceneZone;}
   const spend=amount=>world.energy>=amount;
   const costs=(resources={})=>Object.entries(resources).every(([key,n])=>world.resources[key]>=n);
   let feedback='',tone='success',reward=null;
@@ -91,10 +98,24 @@ export function advanceWorld(saved,event={}) {
       world.studyTurns++;world.stats.study++;
       world.workshop.progress++;
       if(world.workshop.progress>=3){world.workshop.progress=0;world.workshop.ready=Math.min(50,world.workshop.ready+1);}
-      if(event.correct===true){world.stats.correct++;world.energy=Math.min(world.maxEnergy,world.energy+3);world.practiceCharge=0;feedback=`Good recall. +${world.energy-before.energy} focus. Your crops and workshop advance.`;tone='correct';}
-      else{world.stats.incorrect++;world.practiceCharge++;if(world.practiceCharge>=3){world.practiceCharge=0;world.energy=Math.min(world.maxEnergy,world.energy+1);feedback='Keep practicing. +1 focus for working through three misses.';}else feedback=`A useful practice step. ${world.practiceCharge}/3 toward one focus. Your garden still grows.`;tone='practice';}
-      if(world.workshop.ready>before.workshop.ready)feedback+=' A supply crate is ready to collect!';
+      if(event.correct===true){world.stats.correct++;world.energy=Math.min(world.maxEnergy,world.energy+3);world.practiceCharge=0;feedback=`Good recall. +${world.energy-before.energy} focus.`;tone='correct';}
+      else{world.stats.incorrect++;world.practiceCharge++;if(world.practiceCharge>=3){world.practiceCharge=0;world.energy=Math.min(world.maxEnergy,world.energy+1);feedback='A useful repair. +1 focus for three practice steps.';}else feedback=`A useful repair. ${world.practiceCharge}/3 toward one focus.`;tone='practice';}
+      if(world.automation.enabled){
+        const results=advanceCrew(world,event.correct);
+        feedback+=' '+results.join(' ');
+      }else if(world.workshop.ready>before.workshop.ready)feedback+=' A supply crate is ready to collect!';
       break;
+    }
+    case 'plan-build':{
+      if(!Object.hasOwn(WORLD_BUILDINGS,event.building))return reject('Choose a landmark on the island.');
+      if(world.project.funded)return reject('Your crew is already building. Answer questions to finish this project before choosing another.');
+      if(world.buildings[event.building]>=WORLD_BUILDINGS[event.building].maxLevel)return reject('That landmark is fully restored. Choose another project.');
+      world.project={building:event.building,progress:0,target:3,funded:false};
+      world.automation.enabled=true;feedback=`Crew assigned to ${WORLD_BUILDINGS[event.building].name}. Your saved answers bring supplies and build it.`;tone='build';break;
+    }
+    case 'set-automation':{
+      if(typeof event.enabled!=='boolean')return reject('Choose whether your island crew works automatically.');
+      world.automation.enabled=event.enabled;feedback=event.enabled?'Island crew ready: answers now collect supplies, tend crops and build your chosen project.':'Automatic crew paused. Your colony is safe; manual actions remain available.';break;
     }
     case 'collect-output':{
       if(!world.workshop.ready)return reject(`Answer ${3-world.workshop.progress} more questions to finish the next supply crate.`,true);
@@ -154,8 +175,9 @@ export function advanceWorld(saved,event={}) {
       world.energy--;world.resources[resource]+=resource==='wood'?2:1;world.stats.gathered++;feedback=resource==='wood'?'Found two pieces of fallen timber.':'A little starlight, carefully bottled.';tone='gather';break;
     }
     case 'build':{
-      const spec=WORLD_BUILDINGS[event.building];if(!spec)return reject('Choose a landmark to upgrade.');
+      const spec=Object.hasOwn(WORLD_BUILDINGS,event.building)?WORLD_BUILDINGS[event.building]:null;if(!spec)return reject('Choose a landmark to upgrade.');
       if(world.zone!==spec.zone)return reject(`Visit ${WORLD_ZONES.find(z=>z.id===spec.zone).name} to work on this landmark.`);
+      if(world.project.funded&&world.project.building===event.building)return reject('Your crew is already building this landmark. Answer questions to finish it.');
       const level=world.buildings[event.building];if(level>=spec.maxLevel)return reject('This landmark is fully restored. Other quests keep the adventure going.');
       const wood=spec.wood+level,crystal=spec.crystal+Math.floor(level/2);
       if(!spend(spec.energy))return reject('Answer a few questions to power this upgrade.',true);
@@ -189,7 +211,54 @@ export function advanceWorld(saved,event={}) {
   const deltas=['energy',...Object.keys(world.resources)].map(key=>({key,amount:(key==='energy'?world.energy:world.resources[key])-(key==='energy'?before.energy:before.resources[key])})).filter(delta=>delta.amount!==0);
   world.lastFeedback={tone,message:feedback,id:String(event.id||`${event.type}-${world.studyTurns}-${world.stats.quests}`),action:event.type,deltas};
   world.journal=[...world.journal,{message:feedback,turn:world.studyTurns,tone}].slice(-8);
-  return {world:createWorld(world),changed:true,feedback:world.lastFeedback,reward,needsStudy:false};
+  return {world:createWorld(world),changed:true,feedback:world.lastFeedback,reward,needsStudy:false,consequences:colonyEconomySummary(world)};
+}
+
+/** A saved answer is one crew turn. No wall-clock timers or browser-authored currency outside this island. */
+function advanceCrew(w,correct){
+  const notes=[];
+  const coins=correct?2:1;w.resources.coins+=coins;notes.push(`+${coins} island coins.`);
+  if(w.workshop.ready){
+    const count=w.workshop.ready;w.resources.wood+=count*(1+Math.floor(w.buildings.beacon/2));w.resources.crystal+=count*(1+Math.floor(w.buildings.telescope/2));w.resources.seeds+=count;w.workshop.collected+=count;w.workshop.ready=0;
+    notes.push(`Crew banked ${count} supply ${count===1?'crate':'crates'}: timber, starlight and seeds.`);
+  }
+  let harvests=0,planted=0;
+  for(let i=0;i<w.plots.length;i++){
+    const plot=w.plots[i];
+    if(plot?.automatic&&plot.readyAt<=w.studyTurns){w.resources.crops+=2+Math.min(2,w.buildings.greenhouse);w.resources.seeds++;w.stats.harvested++;w.plots[i]=null;harvests++;}
+    if(!w.plots[i]&&w.resources.seeds>0){w.resources.seeds--;w.plots[i]={plantedAt:w.studyTurns,readyAt:w.studyTurns+3,automatic:true};planted++;}
+  }
+  if(harvests)notes.push(`Crew harvested ${harvests} garden ${harvests===1?'plot':'plots'} and replanted.`);
+  else if(planted)notes.push(`Crew planted ${planted} garden ${planted===1?'plot':'plots'}.`);
+  const project=w.project,spec=WORLD_BUILDINGS[project.building],level=w.buildings[project.building];
+  if(level<spec.maxLevel){
+    const timber=spec.wood+level,starlight=spec.crystal+Math.floor(level/2);
+    if(!project.funded&&w.resources.wood>=timber&&w.resources.crystal>=starlight&&w.energy>=spec.energy){
+      w.resources.wood-=timber;w.resources.crystal-=starlight;w.energy-=spec.energy;project.funded=true;notes.push(`Construction started: ${spec.name}.`);
+    }
+    if(project.funded){
+      project.progress++;
+      if(project.progress>=project.target){
+        w.buildings[project.building]++;w.stats.built++;notes.push(`${spec.name} built to level ${w.buildings[project.building]}!`);
+        const keys=Object.keys(WORLD_BUILDINGS),next=keys.find(key=>w.buildings[key]<WORLD_BUILDINGS[key].maxLevel&&key!==project.building)||keys.find(key=>w.buildings[key]<WORLD_BUILDINGS[key].maxLevel)||project.building;
+        w.project={building:next,progress:0,target:3,funded:false};
+      }else notes.push(`Construction ${project.progress}/${project.target}.`);
+    }
+  }
+  if(correct){
+    w.expedition.steps++;
+    if(w.expedition.steps%12===0){w.expedition.summits++;w.resources.coins+=12;w.settlement.expansions++;notes.push(`Summit ${w.expedition.summits} reached! +12 island coins; a new hillside home opens.`);}
+    else if(w.expedition.steps%3===0)notes.push(`Mountain trail checkpoint ${w.expedition.steps%12}/12 reached.`);
+  }
+  return notes;
+}
+export function getExpedition(saved){
+  const w=createWorld(saved),step=w.expedition.steps%12;
+  return {name:['Cloudcap Trail','Moonrise Ridge','Skyglass Summit'][w.expedition.summits%3],steps:step,target:12,summits:w.expedition.summits,checkpoint:Math.floor(step/3),pct:Math.round(step/12*100),nextReward:'12 island coins and a hillside home',description:'Correct saved recalls move your explorer up the mountain. Misses still grow your crops and supply the crew.'};
+}
+export function colonyEconomySummary(saved){
+  const w=createWorld(saved),p=w.project,spec=WORLD_BUILDINGS[p.building],level=w.buildings[p.building];
+  return {automatic:w.automation.enabled,nextSupplyIn:3-w.workshop.progress,supplyCratesBanked:w.workshop.collected,project:{...p,name:spec.name,level,nextLevel:Math.min(spec.maxLevel,level+1),maxed:level>=spec.maxLevel,required:{wood:spec.wood+level,crystal:spec.crystal+Math.floor(level/2),energy:spec.energy}},expedition:getExpedition(w),lastChanges:w.lastFeedback?.deltas||[],explanation:'Each saved answer earns island coins and advances crops. Every three answers your crew banks supplies. Funded projects build over three answers. Correct recalls climb the mountain.'};
 }
 
 function icon(name){
