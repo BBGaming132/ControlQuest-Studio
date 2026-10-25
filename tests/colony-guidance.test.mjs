@@ -9,7 +9,7 @@ assert.equal(migrated.studyTurns,17);assert.equal(migrated.resources.wood,5);ass
 assert.deepEqual(migrated.workshop,{progress:0,ready:0,collected:0});
 assert.deepEqual(migrated.settlement,{expansions:0,deliveries:0});
 assert.deepEqual(legacy,{version:1,zone:'grove',studyTurns:17,energy:4,resources:{wood:5},buildings:{beacon:2},stats:{quests:4}});
-let w=createWorld();for(let i=0;i<3;i++)w=answer(w,`crate-${i}`,false);
+let w=createWorld({version:1,automation:{enabled:false}});for(let i=0;i<3;i++)w=answer(w,`crate-${i}`,false);
 assert.equal(w.workshop.ready,1,'Every three saved answers grow the colony, including repairs');
 assert.equal(w.workshop.progress,0);assert.equal(nextWorldStep(w).action.type,'collect-output');
 assert.equal(answer(w,'crate-2',false).workshop.ready,1,'Retry must not duplicate production');
@@ -36,7 +36,7 @@ assert.ok(!renderQuestWorld(w).includes('2 visible homes'));
 assert.equal(advanceWorld({...w,zone:'grove'},{type:'deliver'}).changed,false);
 assert.equal(advanceWorld({...w,energy:0},{type:'deliver'}).needsStudy,true);
 // Every suggested action is actionable; mission suggestions guide missing resources and travel.
-w=createWorld();let suggested=nextWorldStep(w);assert.equal(suggested.action.type,'select-quest');
+w=createWorld({version:1,automation:{enabled:false}});let suggested=nextWorldStep(w);assert.equal(suggested.action.type,'select-quest');
 w=advanceWorld(w,suggested.action).world;assert.equal(nextWorldStep(w).action.type,'study');
 for(let i=0;i<3;i++)w=answer(w,`mission-${i}`);
 assert.equal(nextWorldStep(w).action.type,'claim-quest','A completed mission wins over collecting output');

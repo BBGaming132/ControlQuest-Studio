@@ -1,4 +1,9 @@
-# ControlQuest Studio 3.1
+# ControlQuest Studio 3.2
+
+Blue skies, a playable island and question-powered adventures. Start a study round from Today, explore Island on foot, or choose a challenge in Games. Your saved answers grow crops, deliver materials and send the crew to work on construction. Guild members build one shared island; independent explorers use their own saved world.
+
+- [Playable island release notes](docs/V3_2_RELEASE.md)
+
 
 A guided CISA study companion with personal spaced recall, shared lesson libraries and a study-powered colony.
 

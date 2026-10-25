@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { createWorld,advanceWorld,getQuestBoard,questProgress,renderQuestWorld,renderPlayerCard } from '../js/quest-world.js';
 const answer=(world,n,correct=true)=>advanceWorld(world,{type:'study-answer',id:`answer-${n}`,correct});
-let world=createWorld();
+let world=createWorld({version:1,automation:{enabled:false}});
 assert.equal(world.energy,3);assert.equal(world.plots.length,3);assert.deepEqual(createWorld({questWorld:world}),world);
 const initial=JSON.stringify(world);
 let result=answer(world,1);assert.equal(result.world.energy,6);assert.equal(result.world.studyTurns,1);assert.equal(JSON.stringify(world),initial,'Reducer must not mutate input');
@@ -31,7 +31,7 @@ for(let n=0;n<3;n++)misses=advanceWorld(misses,{type:'study-answer',id:`miss-${n
 assert.equal(misses.energy,1);assert.equal(misses.stats.incorrect,3);assert.equal(misses.studyTurns,3);
 assert.equal(advanceWorld({...misses,energy:0},{type:'gather',resource:'wood'}).needsStudy,false,'Wrong-zone feedback comes before focus requirement');
 misses.zone='grove';assert.equal(advanceWorld({...misses,energy:0},{type:'gather',resource:'wood'}).needsStudy,true);
-let questWorld=createWorld();const quest=getQuestBoard(questWorld)[0];questWorld=advanceWorld(questWorld,{type:'select-quest',questId:quest.id}).world;
+let questWorld=createWorld({version:1,automation:{enabled:false}});const quest=getQuestBoard(questWorld)[0];questWorld=advanceWorld(questWorld,{type:'select-quest',questId:quest.id}).world;
 assert.equal(questWorld.activeQuest.objective,'correct');
 assert.equal(advanceWorld(questWorld,{type:'claim-quest'}).changed,false);
 for(let n=0;n<quest.target;n++)questWorld=advanceWorld(questWorld,{type:'study-answer',id:`quest-answer-${n}`,correct:true}).world;
@@ -45,7 +45,7 @@ assert.ok(markup.includes('Turn-based co-op'));assert.ok(markup.includes('&lt;sc
 assert.ok(markup.includes('data-qw-study'));assert.ok(markup.includes('data-qw-mode="coop"'));assert.ok(markup.includes('aria-live="polite"'));assert.ok(markup.includes('Lantern Harbor'));
 assert.ok(renderPlayerCard({name:'Ollie'}).includes('Ollie the audit owl'));
 // A long answer/action stream remains serializable, bounded and nonnegative.
-let simulation=createWorld();for(let n=0;n<2200;n++){
+let simulation=createWorld({version:1,automation:{enabled:false}});for(let n=0;n<2200;n++){
  simulation=advanceWorld(simulation,{type:'study-answer',id:`sim-${n}`,correct:n%3!==0}).world;
  if(n%4===0){simulation=advanceWorld(simulation,{type:'travel',zone:'grove'}).world;simulation=advanceWorld(simulation,{type:'gather',resource:'wood'}).world;}
  assert.ok(simulation.energy>=0&&simulation.energy<=simulation.maxEnergy);

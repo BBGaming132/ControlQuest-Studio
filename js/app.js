@@ -59,7 +59,7 @@ const state = {
 
 const PRIMARY_NAV = [
   ['command','Today','home'],['feed','Study','cards'],
-  ['adventure','Island','arcade'],['library','Library','notebook']
+  ['adventure','Island','arcade'],['arcade','Games','timer'],['library','Library','notebook']
 ];
 const TOOL_NAV = [
   ['mastery','Your progress','target'],['learn','Short lessons','notebook'],
@@ -295,6 +295,17 @@ function renderStatusStrip(){
   const level=levelInfo().level;
   return `<div class="cq-learning-strip" aria-label="Your learning momentum"><span>Level ${level} · ${(state.profile.stats.xp||0).toLocaleString()} XP</span><span>${state.profile.stats.streak||0} day study streak</span><button class="text-button small" data-go="rewards">Your avatar & rewards →</button></div>`;
 }
+function renderArcadeHub(){
+ const deck=selectedLibraryDeck();
+ const games=[['confidence-climb','Mountain climb','target','Answer questions to climb toward the summit.'],['space-odyssey','Assurance Odyssey','arcade','A question-powered campaign with a persistent ship and upgrades.'],['missed-gauntlet','Mistake rescue','qae','Repair missed questions in a three-heart challenge.'],['speed-audit','Audit sprint','timer','An optional timed challenge for quick recall.']];
+ return `<section class="cq-arcade-hub"><header class="cq-page-head"><div><p class="eyebrow">PLAY WITH WHAT YOU KNOW</p><h1>Choose your adventure.</h1><p>Every saved answer builds your recall and advances ${state.group?'your Guild’s shared island':'your island'}. Your missed questions return for practice.</p></div></header><div class="panel">${deck?deckPicker('games'):'<p>Add question files to play with your own lessons.</p><button class="primary-button" data-go="import">Import questions</button>'}<details class="cq-explain"><summary>Choose a domain, lesson or question type</summary>${renderDeckFilters()}</details></div><div class="cq-arcade-grid">${games.map(([id,title,icon,copy])=>`<article class="panel"><span class="app-icon ${icon}">${svgIcon(icon)}</span><h2>${title}</h2><p>${copy}</p><button class="primary-button" data-arcade-game="${id}" ${deck?'':'disabled'}>Play ${title}</button></article>`).join('')}<article class="panel"><span class="app-icon guild">${svgIcon('guild')}</span><h2>Guild starship race</h2><p>Join a live question round. Everyone’s recall stays personal; the island grows together.</p><button class="primary-button" id="arcadeGuild">${state.group?'Play together':'Set up a Guild'}</button></article><article class="panel"><span class="app-icon cards">${svgIcon('cards')}</span><h2>Island expedition</h2><p>Explore on foot, choose a building, and answer questions to send the crew to work.</p><button class="primary-button" data-go="adventure">Explore the island</button></article></div></section>`;
+}
+function bindArcadeHub(){
+ bindDeckFilters();
+ document.querySelector('[data-deck-picker="games"]')?.addEventListener('change',event=>{state.selectedDeckId=event.target.value;renderApp();});
+ $$('[data-arcade-game]').forEach(button=>button.onclick=()=>startLibraryGame(button.dataset.arcadeGame));
+ $('#arcadeGuild')?.addEventListener('click',()=>{if(!state.group)return navigateTo('guild');state.toolsTab='guild-study';navigateTo('tools');});
+}
 function renderLibraryHub(){
   const cards=[
     ['tools','cards','Your decks','Search questions, filter by domain or lesson, edit categories, and play a deck.'],
@@ -305,7 +316,7 @@ function renderLibraryHub(){
   return `<div class="cq-library-hub"><header class="cq-section-title"><div><p class="eyebrow">YOUR STUDY SHELF</p><h1>Everything has a home.</h1><p>Start with Study for a guided session. Come here when you want to choose a lesson, organize files or check your progress.</p></div><button class="primary-button" data-go="feed">Start studying →</button></header><div class="cq-library-grid">${cards.map(([view,icon,title,body])=>`<button data-go="${view}"><span class="app-icon">${svgIcon(icon)}</span><strong>${title}</strong><p>${body}</p><span>Open →</span></button>`).join('')}</div><section class="panel cq-library-together"><p class="eyebrow">BETTER TOGETHER</p><h2>A shared library. Your own learning.</h2><p class="helper">Your recall history and study settings are personal. Guild members can share lesson decks, meet for live questions, and build one Guild island together.</p><div class="button-row"><button class="secondary-button" data-go="guild">${state.group?'Open your Guild':'Find your Guild'}</button><button class="secondary-button" data-go="room">Study together</button></div></section><details class="cq-explain"><summary>Looking for another tool?</summary><p>Open <strong>More tools</strong> in the menu for your calendar, exam study plan, practice log, notes, avatar and settings.</p></details></div>`;
 }
 function showQuickGuide(){
-  modal('Your next small step',`<div class="cq-guide-path"><div><h3>1. Start with Today</h3><p>Your next session is chosen from missed questions, due reviews and new concepts. Five minutes counts.</p></div><div><h3>2. Study, then understand</h3><p>Choose an answer, reveal the explanation, and rate your recall. Again means soon; Good means you remembered it. A wrong answer always comes back for repair.</p></div><div><h3>3. Build something</h3><p>Each saved answer advances your island. Spend focus to grow crops, gather materials and restore your colony.</p></div></div><p class="helper">Library holds imports, decks, lessons and progress. More tools holds settings and your Guild. My island is yours; Guild island belongs to your active Guild. You choose which world receives study progress.</p>`,()=>navigateTo('command'),'Go to Today');
+  modal('Your study expedition',`<div class="cq-guide-path"><div><h3>1. Start with Today</h3><p>Your next session is chosen from missed questions, due reviews and new concepts. Five minutes counts.</p></div><div><h3>2. Study, then understand</h3><p>Choose an answer, reveal the explanation, and rate your recall. Again means soon; Good means you remembered it. A wrong answer always comes back for repair.</p></div><div><h3>3. Build something</h3><p>Each saved answer advances your island. Spend focus to grow crops, gather materials and restore your colony.</p></div></div><p class="helper">Library holds imports, decks, lessons and progress. More tools holds settings and your Guild. Your active Guild shares one island. Without a Guild, your island belongs to you. Saved answers power the crew and construction automatically.</p>`,()=>navigateTo('command'),'Go to Today');
 }
 function bindCommon(){
   $('#endDemo')?.addEventListener('click',()=>{location.search='';});
@@ -335,6 +346,7 @@ function renderGlobalOverlay(){
 
 function renderView(){
   if(EXPERIENCE_VIEWS.includes(state.activeView))return renderExperience(state.activeView,experienceContext())+(['command','feed'].includes(state.activeView)?renderMissionShortcut(state.profile):'');
+  if(state.activeView==='arcade')return renderArcadeHub();
   if(state.activeView==='library')return renderLibraryHub();
   if(state.activeView==='profile')return renderExperienceSettings(experienceContext())+renderMissionPanel(experienceContext())+renderProfile();
   const views = {command:renderCommand,room:renderRoom,plan:renderPlan,practice:renderPractice,tools:renderTools,guild:renderGuild,calendar:renderCalendar,notebook:renderNotebook,rewards:renderRewards,profile:renderProfile};
@@ -930,11 +942,12 @@ function renderGuildStudySession(gs){
 }
 function allGuildMembersAnswered(gs,members=Object.values(state.group?.members||{})){const ids=gs.participants||members.map(m=>m.uid);return ids.length>0&&ids.every(uid=>gs.responses?.[uid]?.answer);}
 async function recordLocalGuildReviewIfNeeded(gs,card){
-  if(!state.profile||!state.user||!gs?.revealed)return; state.profile.guildReviewRecorded ||= {}; const marker=`${gs.id}:${gs.index}`; if(state.profile.guildReviewRecorded[marker])return;
-  const answer=gs.responses?.[state.user.uid]?.answer; if(!answer)return; const correct=answer===card.correctAnswer; const old=state.library.progress[progressKey(card)]||defaultProgress(card,state.user.uid); const rating=correct?'Good':'Again'; const next=rateCard(card,old,rating,state.profile.preferences.studySettings||DEFAULT_REVIEW_SETTINGS);
-  const event=createReviewEvent({uid:state.user.uid,card,deckId:gs.deckId,mode:'guild-study',rating,correct,responseTimeMs:0,sessionId:gs.id,groupId:state.profile.activeGroupId,wasNew:!(old.repetitions||0)});
-  state.library.progress[progressKey(card)]=next; state.library.reviews.unshift(event); state.profile.guildReviewRecorded[marker]=new Date().toISOString(); state.profile.studyHistory.reviews=(state.profile.studyHistory.reviews||0)+1; state.profile.studyHistory.correct=(state.profile.studyHistory.correct||0)+(correct?1:0); state.profile.studyHistory.incorrect=(state.profile.studyHistory.incorrect||0)+(correct?0:1);
-  await Promise.all([saveStudyProgress(state.user.uid,next),saveStudyReview(state.user.uid,event),saveProfileDebounced(true)]);
+  if(!state.profile||!state.user||!gs?.revealed||experienceReviewLock||experienceWorldLock)return;
+  const profile=state.profile,uid=state.user.uid;
+  const answer=gs.responses?.[state.user.uid]?.answer;if(!answer)return;
+  const marker=`${gs.id}:${gs.index}`;state.profile.guildReviewRecorded ||= {};
+  if(state.profile.guildReviewRecorded[marker])return;
+  try{await saveExperienceReview(card,{rating:answer===card.correctAnswer?'Good':'Again',selectedAnswer:answer,eventId:`guild:${marker}:${state.user.uid}`,mode:'guild-study'});if(state.profile!==profile||state.user?.uid!==uid)return;profile.guildReviewRecorded[marker]=new Date().toISOString();await saveProfile(profile);}catch(error){toast(friendly(error),'error');}
 }
 
 function renderStudyGamesTab(){
@@ -1185,6 +1198,7 @@ function bindProfile(){
 }
 
 function bindView(){
+  if(state.activeView==='arcade'){bindArcadeHub();return;}
   if(EXPERIENCE_VIEWS.includes(state.activeView)){bindExperience(state.activeView,experienceContext());return;}
   if(state.activeView==='profile'){bindExperienceSettings(experienceContext());bindMissionPanel(experienceContext());}
   ({command:bindCommand,room:bindRoom,plan:bindPlan,practice:bindPractice,tools:bindTools,guild:bindGuild,calendar:bindCalendar,notebook:bindNotebook,rewards:bindRewards,profile:bindProfile}[state.activeView]||(()=>{}))();
@@ -1192,7 +1206,7 @@ function bindView(){
 
 function showOnboarding(){
   const p=state.profile;
-  modal('Welcome. Let’s make this easy.',`<div class="onboarding-intro"><div class="avatar small">${avatarSvg(p.inventory.equipped)}</div><p>Study a little, understand a little more, and watch your island grow. You can change these choices any time in Settings.</p></div><div class="form-grid"><label><span class="label-title">What should we call you?</span><input id="obName" value="${escAttr(p.displayName)}" maxlength="80"></label><label><span class="label-title">Appearance</span><select id="obTheme"><option value="dark" ${p.preferences.theme==='dark'?'selected':''}>Dark</option><option value="light" ${p.preferences.theme==='light'?'selected':''}>Light</option></select></label><label><span class="label-title">A comfortable daily goal</span><select id="obGoal">${[5,10,20,30].map(n=>`<option value="${n}" ${n===20?'selected':''}>${n} questions</option>`).join('')}</select></label></div><p class="helper">Start on Today. If you have QAE exports ready, Library → Import files accepts them together. Your personal review history stays yours.</p>`,async()=>{p.displayName=$('#obName').value.trim()||p.displayName;p.preferences.theme=$('#obTheme').value;p.v3 ||= {};p.v3.dailyGoal=Number($('#obGoal').value);p.preferences.onboardingComplete=true;p.preferences.guidedWelcomeSeen=true;await saveProfileDebounced(true);applyTheme();navigateTo('command');},'Start on Today');
+  modal('Welcome to your island.',`<div class="onboarding-intro"><div class="avatar small">${avatarSvg(p.inventory.equipped)}</div><p>Study a little, understand a little more, and watch your island grow. You can change these choices any time in Settings.</p></div><div class="form-grid"><label><span class="label-title">What should we call you?</span><input id="obName" value="${escAttr(p.displayName)}" maxlength="80"></label><label><span class="label-title">Appearance</span><select id="obTheme"><option value="dark" ${p.preferences.theme==='dark'?'selected':''}>Dark</option><option value="light" ${p.preferences.theme==='light'?'selected':''}>Light</option></select></label><label><span class="label-title">A comfortable daily goal</span><select id="obGoal">${[5,10,20,30].map(n=>`<option value="${n}" ${n===20?'selected':''}>${n} questions</option>`).join('')}</select></label></div><p class="helper">Start on Today. If you have QAE exports ready, Library → Import files accepts them together. Your personal review history stays yours.</p>`,async()=>{p.displayName=$('#obName').value.trim()||p.displayName;p.preferences.theme=$('#obTheme').value;p.v3 ||= {};p.v3.dailyGoal=Number($('#obGoal').value);p.preferences.onboardingComplete=true;p.preferences.guidedWelcomeSeen=true;await saveProfileDebounced(true);applyTheme();navigateTo('command');},'Start on Today');
 }
 function startFullTour(){showQuickGuide();}
 function startTour(page,markComplete=false,after=null){ cleanupTour(); const steps=tourSteps(page); let idx=0; const show=()=>{ cleanupTour(); if(idx>=steps.length){ if(markComplete){ state.profile.preferences.pageTours ||= {}; state.profile.preferences.pageTours[page]=true; saveProfileDebounced(); } if(after) after(); return; } const step=steps[idx++]; const el=document.querySelector(`[data-tour="${step.target}"]`) || document.querySelector(step.selector||'body'); if(!el){show();return;} el.scrollIntoView({block:'center',inline:'center',behavior:'smooth'}); setTimeout(()=>positionTour(el,step,idx,steps.length,show,after),260);}; show(); state.tour={page,show}; window.addEventListener('resize',tourResize,{once:true}); }
@@ -1424,6 +1438,7 @@ function experienceContext(){
     avatar:()=>avatarSvg(state.profile.inventory.equipped),navigate:navigateTo,render:renderApp,toast,
     save,saveQuiet:()=>{if(isCurrent())saveProfileDebounced();},refresh:refreshStudyLibrary,download:downloadText,
     review:saveExperienceReview,worldAction:saveExperienceWorldAction,importBatch:saveExperienceBatch,
+    getWorld:()=>createWorld(state.group?state.group.questWorld:state.profile.v3.world),
     completeLesson:async lesson=>{
       if(experienceWorldLock||experienceReviewLock)throw new Error('Your previous move is still saving. Try this lesson check again in a moment.');
       experienceReviewLock=true;
@@ -1433,7 +1448,7 @@ function experienceContext(){
       profile.v3.lessonProgress ||= {};profile.v3.lessonReceipts ||= {};
       const existing=profile.v3.lessonReceipts[id];
       if(existing?.complete){await saveProfile(profile);assertContext();return;}
-      await rewardExperience({id:`lesson:${uid}:${id}`,type:'lesson.completed',lessonId:id,domainId:lesson.domainId,correct:true},profile.v3.preferredWorldMode==='coop'&&group&&profile.v3.preferredWorldGroupId===group.id?'coop':'solo',{uid,profile,group});assertContext();
+      await rewardExperience({id:`lesson:${uid}:${id}`,type:'lesson.completed',lessonId:id,domainId:lesson.domainId,correct:true},group?'coop':'solo',{uid,profile,group});assertContext();
       if(!existing?.awarded){award({xp:8,coins:3,reason:`Concept learned: ${lesson.title}`,type:'Microlearning'});profile.v3.lessonReceipts[id]={awarded:true};}
       profile.v3.lessonProgress[id]=new Date().toISOString();await saveProfile(profile);assertContext();profile.v3.lessonReceipts[id]={complete:true};await saveProfile(profile);assertContext();
       }finally{experienceReviewLock=false;}
@@ -1452,14 +1467,15 @@ async function rewardExperience(event,worldMode='solo',context={}){
   window.dispatchEvent(new CustomEvent('controlquest:activity',{detail:event}));
 }
 let experienceReviewLock=false;
-async function saveExperienceReview(card,{rating,selectedAnswer,eventId,mode='pocket-quest',worldMode='solo'}){
+async function saveExperienceReview(card,{rating,selectedAnswer,eventId,mode='pocket-quest',worldMode}){
   if(experienceReviewLock)throw new Error('Your previous answer is still saving.');
   if(experienceWorldLock)throw new Error('Your island move is still saving. Try this answer again in a moment.');
   if(!state.user?.uid||!state.profile)throw new Error('Sign in before saving a review.');
   if(typeof eventId!=='string'||!eventId.trim()||eventId.length>250||['__proto__','constructor','prototype'].includes(eventId))throw new Error('A valid review event ID is required.');
   if(!card?.id||!card.scopeKey||card.answerConflict)throw new Error('Choose a question with a verified answer key.');
   const uid=state.user.uid,profile=state.profile,library=state.library,group=state.group;
-  const assertContext=()=>{if(state.user?.uid!==uid||state.profile!==profile)throw new Error('Account changed while saving. Sign back in to finish the review.');};
+  worldMode=group?'coop':'solo';
+  const assertContext=()=>{if(state.user?.uid!==uid||state.profile!==profile)throw new Error('Account changed while saving. Sign back in to finish the review.');if((state.group?.id||null)!==(group?.id||null))throw new Error('Your Guild changed. Return to the original Guild to finish this review.');};
   const persist=async()=>{assertContext();await saveProfile(profile);assertContext();if(profile.activeGroupId){await updateMemberSummary(profile.activeGroupId,profile);assertContext();}};
   const hasChoices=Object.keys(card.choices||{}).length>=2;
   if(hasChoices&&(!Object.hasOwn(card.choices,selectedAnswer)||!Object.hasOwn(card.choices,card.correctAnswer)))throw new Error('Select an available answer before saving this question.');
@@ -1472,6 +1488,7 @@ async function saveExperienceReview(card,{rating,selectedAnswer,eventId,mode='po
     const cardIdentity=await digest(studyIdentity(card));assertContext();
     if(receipt?.cardIdentity&&receipt.cardIdentity!==cardIdentity)throw new Error('This review ID belongs to a different question.');
     if(typeof receipt==='string'||receipt?.complete){await persist();return;}
+    if(receipt?.event&&(receipt.worldGroupId??(receipt.worldMode==='coop'?receipt.event.groupId:null)??null)!==(group?.id||null))throw new Error('Return to the original Guild or personal island to finish this pending review.');
     if(!receipt?.event){
       const reviewId=`review_${await digest(`${uid}|${eventId}`)}`;
       assertContext();
@@ -1488,7 +1505,7 @@ async function saveExperienceReview(card,{rating,selectedAnswer,eventId,mode='po
         next.uid=uid;next.lastReviewEventId=reviewId;
         updates=(logical?.aliases||[card]).map(alias=>({...next,id:progressKey(alias),cardId:alias.id,scope:alias.scope,scopeKey:alias.scopeKey}));
       }
-      receipt={event,updates,cardIdentity,domainId:logical?.domainId||'',worldMode,reviewSaved:!!existing,historyRecorded:false};
+      receipt={event,updates,cardIdentity,domainId:logical?.domainId||'',worldMode,worldGroupId:group?.id||null,reviewSaved:!!existing,historyRecorded:false};
       receipts[eventId]=receipt;
       // Save the exact intended update first. After a partial network failure or
       // reload, retries replay these snapshots instead of incrementing again.
@@ -1523,6 +1540,7 @@ async function saveExperienceReview(card,{rating,selectedAnswer,eventId,mode='po
 }
 let experienceWorldLock=false;
 async function saveExperienceWorldAction(event,mode='solo'){
+  mode=state.group?'coop':'solo';
   if(experienceWorldLock)throw new Error('Your previous island move is still saving.');
   if(experienceReviewLock)throw new Error('Your study answer is still saving. Try your island move again in a moment.');
   const profile=state.profile,uid=state.user?.uid,group=state.group;
