@@ -1,3 +1,4 @@
+import {renderMissionPanel,bindMissionPanel,renderMissionShortcut} from './mission-panel.js';
 import { randomId, sha256Hex } from './runtime-crypto.js';
 import { EXPERIENCE_VIEWS, renderExperience, bindExperience, renderExperienceSettings, bindExperienceSettings } from './experience.js';
 import { CISA_MICROLESSONS } from './cisa-learning.js';
@@ -56,13 +57,24 @@ const state = {
   spaceQuest: null
 };
 
-const NAV = [
-  ['command','Today','home'],['feed','Pocket Quest','cards'],['adventure','My Adventure','arcade'],
-  ['mastery','Mastery Atlas','target'],['learn','Concept Trails','notebook'],['tools','Deck Library','cards'],
-  ['import','Batch Import','qae'],['room','Live Study','guild'],['guild','My Guild','guild'],
-  ['rewards','Avatar & Rewards','avatar'],['practice','Practice Log','qae'],['plan','Study Plan','roadmap'],
-  ['calendar','Calendar','calendar'],['profile','Preferences','target']
+const PRIMARY_NAV = [
+  ['command','Today','home'],['feed','Study','cards'],
+  ['adventure','Island','arcade'],['library','Library','notebook']
 ];
+const TOOL_NAV = [
+  ['mastery','Your progress','target'],['learn','Short lessons','notebook'],
+  ['tools','Manage decks','cards'],['import','Import files','qae'],
+  ['room','Study together','guild'],['guild','Your Guild','guild'],
+  ['rewards','Avatar & rewards','avatar'],['practice','Practice log','qae'],
+  ['plan','Exam study plan','roadmap'],['calendar','Calendar','calendar'],
+  ['notebook','Notes','notebook'],['profile','Settings & connections','target']
+];
+const NAV = [...PRIMARY_NAV,...TOOL_NAV];
+function navigationSection(view){return ['mastery','learn','tools','import'].includes(view)?'library':view;}
+function renderNavigation(){
+  const item=([id,label,iconName],primary=false)=>`<button class="nav-btn ${navigationSection(state.activeView)===id||state.activeView===id?'active':''}" data-view="${id}" ${state.activeView===id?'aria-current="page"':''}><span class="app-icon ${iconName}">${svgIcon(iconName)}</span><span>${label}</span></button>`;
+  return `<nav class="nav-list" aria-label="Main navigation"><div class="cq-primary-nav">${PRIMARY_NAV.map(n=>item(n,true)).join('')}</div><details class="cq-nav-more" ${state.moreToolsOpen?'open':''}><summary>More tools <span aria-hidden="true">⌄</span></summary><div>${TOOL_NAV.map(n=>item(n)).join('')}</div></details></nav>`;
+}
 
 init();
 
@@ -90,7 +102,7 @@ async function init(){
         startClock();
         renderApp();
         if (!profile.preferences?.onboardingComplete) setTimeout(()=>showOnboarding(), 500);
-        else if (!profile.preferences?.pageTours?.command) setTimeout(()=>startTour('command', true), 500);
+        else if (!profile.preferences?.guidedWelcomeSeen) { profile.preferences.guidedWelcomeSeen=true; saveProfileDebounced(); }
       } catch (error) {
         console.error('ControlQuest Auth/Profile Startup Failed', error);
         renderBootFallback('Profile Startup Failed', friendly(error));
@@ -213,22 +225,22 @@ function renderAuth(){
     <div class="auth-card">
       <div class="auth-visual">
         <div class="avatar big">${avatarSvg(defaultProfile({uid:'x',email:'guest@controlquest.local'}).inventory.equipped)}</div>
-        <p class="eyebrow">Gamified CISA Study Companion</p>
-        <h1>Master The Audit Mindset.</h1>
-        <p>Use ControlQuest as the adaptive, gamified layer on top of ISACA QAE, your course lessons, calendars, and your study Guild.</p>
-        <div class="proof-row"><span>Firebase Sync</span><span>Guild Study Rooms</span><span>Daily Quests</span><span>XP + Audit Coins</span></div>
+        <p class="eyebrow">YOUR DAILY LEARNING ADVENTURE</p>
+        <h1>Build your knowledge. Grow your world.</h1>
+        <p>One guided question at a time. Understand the answer, build lasting recall, and turn your study into a growing island.</p>
+        <div class="proof-row"><span>Guided daily study</span><span>Short lessons</span><span>Shared adventures</span><span>Your own pace</span></div>
       </div>
       <div class="auth-form">
         <div class="auth-tabs"><button class="${state.activeAuthTab==='login'?'active':''}" data-auth-tab="login">Log In</button><button class="${state.activeAuthTab==='create'?'active':''}" data-auth-tab="create">Create Account</button></div>
         ${!state.firebase.enabled ? `<div class="soft"><strong>Firebase Is Not Connected.</strong><p class="helper">${esc(state.firebase.reason || 'Paste your Firebase values into config/firebase-config.js and set enabled: true.')}</p></div>` : ''}
         <form id="loginForm" class="auth-panel ${state.activeAuthTab==='login'?'active':''}">
-          <button class="secondary-button full" type="button" id="exploreDemo">Explore the island · no account needed</button><h2>Welcome Back</h2><p class="helper">Log in with your Firebase Authentication email and password.</p>
+          <button class="secondary-button full" type="button" id="exploreDemo">Explore the island · no account needed</button><h2>Welcome Back</h2><p class="helper">Your questions, recall history and island will be waiting.</p>
           <label><span>Email</span><input type="email" id="loginEmail" autocomplete="email" required></label>
           <label><span>Password</span><input type="password" id="loginPassword" autocomplete="current-password" required></label>
           <div class="button-row"><button class="primary-button" type="submit">Log In</button><button class="text-button" type="button" id="resetPasswordBtn">Reset Password</button></div>
         </form>
         <form id="createForm" class="auth-panel ${state.activeAuthTab==='create'?'active':''}">
-          <h2>Create Your Account</h2><p class="helper">This creates a Firebase Authentication account and then walks you through onboarding.</p>
+          <h2>Create Your Account</h2><p class="helper">Choose a comfortable daily goal. We will show you where to begin.</p>
           <label><span>Email</span><input type="email" id="createEmail" autocomplete="email" required></label>
           <label><span>Password</span><input type="password" id="createPassword" autocomplete="new-password" minlength="6" required></label>
           <button class="primary-button full" type="submit">Create Account</button>
@@ -251,7 +263,7 @@ function renderApp(){
     <aside class="sidebar" id="sidebar">
       <button class="icon-button mobile-close" id="closeMenu">Close</button>
       <div class="brand"><img src="assets/icons/logo-mark.svg" alt=""><h1>ControlQuest</h1></div>
-      <nav class="nav-list">${NAV.map(([id,label,iconName])=>`<button class="nav-btn ${state.activeView===id?'active':''}" data-view="${id}"><span class="app-icon ${iconName}">${svgIcon(iconName)}</span><span>${label}</span></button>`).join('')}</nav>
+      ${renderNavigation()}
       <div class="side-player"><div class="avatar tiny">${avatarSvg(state.profile.inventory.equipped)}</div><div><strong>${esc(state.profile.displayName)}</strong><span>Level ${levelInfo().level} · ${state.profile.stats.streak} Day Streak</span>${state.group?`<span class="side-guild">${guildEmblem(state.group,'mini')} ${esc(state.group.name)}</span>`:''}</div></div>
     </aside>
     <main class="main">
@@ -260,10 +272,10 @@ function renderApp(){
         <div class="top-actions">${top}</div>
       </div>
       ${state.demo?'<div class="cq-demo-notice">DEMO WORLD · Original sample questions · Saves on this device only <button id="endDemo">Exit demo</button></div>':''}
-      ${renderStatusStrip()}
+      ${state.activeView==='command'?'':renderStatusStrip()}
       <section id="viewRoot">${renderView()}</section>
     </main>
-    <nav class="cq-bottom-nav" aria-label="Main navigation">${[['command','⌂','Today'],['feed','▤','Study'],['adventure','♧','World'],['mastery','◉','Progress'],['learn','✦','Learn']].map(([id,icon,label])=>`<button data-mobile-view="${id}" class="${state.activeView===id?'active':''}"><span>${icon}</span>${label}</button>`).join('')}</nav>
+    <nav class="cq-bottom-nav" aria-label="Main navigation">${PRIMARY_NAV.map(([id,label,icon])=>`<button data-mobile-view="${id}" class="${navigationSection(state.activeView)===id?'active':''}" ${state.activeView===id?'aria-current="page"':''}><span>${svgIcon(icon)}</span>${label}</button>`).join('')}</nav>
     ${renderGlobalOverlay()}`;
   bindCommon();
   bindView();
@@ -280,18 +292,28 @@ function getTopbar(){
 }
 function pageTitle(){ return NAV.find(n=>n[0]===state.activeView)?.[1] || 'ControlQuest'; }
 function renderStatusStrip(){
-  const lvl = levelInfo(); const acc = qaeAccuracy(); const daily = dailyQuestCount();
-  const tiles = [
-    ['xp',`${state.profile.stats.xp||0}`,'Total XP'],['coin',`${state.profile.stats.coins||0}`,'Audit Coins'],['streak',`${state.profile.stats.streak||0}`,'Day Streak'],['qae',`${acc}%`,'QAE Accuracy'],['roadmap',`${Math.round(state.profile.stats.roadmapPct||0)}%`,'Roadmap']
+  const level=levelInfo().level;
+  return `<div class="cq-learning-strip" aria-label="Your learning momentum"><span>Level ${level} · ${(state.profile.stats.xp||0).toLocaleString()} XP</span><span>${state.profile.stats.streak||0} day study streak</span><button class="text-button small" data-go="rewards">Your avatar & rewards →</button></div>`;
+}
+function renderLibraryHub(){
+  const cards=[
+    ['tools','cards','Your decks','Search questions, filter by domain or lesson, edit categories, and play a deck.'],
+    ['import','qae','Import files','Upload a batch of Word exports and review the lesson matches together.'],
+    ['mastery','target','Your progress','See due, missed and mastered questions for each domain, plus lesson coverage.'],
+    ['learn','notebook','Short lessons','Read or listen to a concept, then test your understanding.']
   ];
-  return `<div class="status-strip" data-tour="kpis">${tiles.map(([iconName,val,label])=>`<div class="stat-tile"><span class="app-icon ${iconName}">${svgIcon(iconName)}</span><div><span>${val}</span><small>${label}</small></div></div>`).join('')}</div>`;
+  return `<div class="cq-library-hub"><header class="cq-section-title"><div><p class="eyebrow">YOUR STUDY SHELF</p><h1>Everything has a home.</h1><p>Start with Study for a guided session. Come here when you want to choose a lesson, organize files or check your progress.</p></div><button class="primary-button" data-go="feed">Start studying →</button></header><div class="cq-library-grid">${cards.map(([view,icon,title,body])=>`<button data-go="${view}"><span class="app-icon">${svgIcon(icon)}</span><strong>${title}</strong><p>${body}</p><span>Open →</span></button>`).join('')}</div><section class="panel cq-library-together"><p class="eyebrow">BETTER TOGETHER</p><h2>A shared library. Your own learning.</h2><p class="helper">Your recall history and study settings are personal. Guild members can share lesson decks, meet for live questions, and build one Guild island together.</p><div class="button-row"><button class="secondary-button" data-go="guild">${state.group?'Open your Guild':'Find your Guild'}</button><button class="secondary-button" data-go="room">Study together</button></div></section><details class="cq-explain"><summary>Looking for another tool?</summary><p>Open <strong>More tools</strong> in the menu for your calendar, exam study plan, practice log, notes, avatar and settings.</p></details></div>`;
+}
+function showQuickGuide(){
+  modal('Your next small step',`<div class="cq-guide-path"><div><h3>1. Start with Today</h3><p>Your next session is chosen from missed questions, due reviews and new concepts. Five minutes counts.</p></div><div><h3>2. Study, then understand</h3><p>Choose an answer, reveal the explanation, and rate your recall. Again means soon; Good means you remembered it. A wrong answer always comes back for repair.</p></div><div><h3>3. Build something</h3><p>Each saved answer advances your island. Spend focus to grow crops, gather materials and restore your colony.</p></div></div><p class="helper">Library holds imports, decks, lessons and progress. More tools holds settings and your Guild. My island is yours; Guild island belongs to your active Guild. You choose which world receives study progress.</p>`,()=>navigateTo('command'),'Go to Today');
 }
 function bindCommon(){
   $('#endDemo')?.addEventListener('click',()=>{location.search='';});
+  $('.cq-nav-more')?.addEventListener('toggle',e=>{state.moreToolsOpen=e.currentTarget.open;});
   $$('[data-mobile-view]').forEach(b=>b.onclick=()=>navigateTo(b.dataset.mobileView));
   $$('.nav-btn').forEach(b=>b.onclick=()=>{state.lastScrollTop=$('#sidebar .nav-list')?.scrollTop||0;navigateTo(b.dataset.view);requestAnimationFrame(()=>{const nav=$('#sidebar .nav-list'); if(nav)nav.scrollTop=state.lastScrollTop;});});
   $('#themeSelect')?.addEventListener('change',e=>{state.profile.preferences.theme=e.target.value;applyTheme();saveProfileDebounced();});
-  $('#helpBtn')?.addEventListener('click',()=>startTour(state.activeView,false));
+  $('#helpBtn')?.addEventListener('click',()=>showQuickGuide());
   $('#logoutBtn')?.addEventListener('click',()=>signOutUser());
   $('#openMenu')?.addEventListener('click',()=>$('#sidebar')?.classList.add('open'));
   $('#closeMenu')?.addEventListener('click',()=>$('#sidebar')?.classList.remove('open'));
@@ -302,8 +324,9 @@ function bindCommon(){
 function navigateTo(view){
   if(state.activeView!==view)window.speechSynthesis?.cancel();
   if(state.activeView==='rewards' && view!=='rewards') state.previewAvatar=null;
-  state.activeView=view;
+  state.activeView=NAV.some(n=>n[0]===view)?view:'command';
   renderApp();
+  window.scrollTo?.({top:0,behavior:'instant'});
 }
 
 function renderGlobalOverlay(){
@@ -311,8 +334,9 @@ function renderGlobalOverlay(){
 }
 
 function renderView(){
-  if(EXPERIENCE_VIEWS.includes(state.activeView))return renderExperience(state.activeView,experienceContext());
-  if(state.activeView==='profile')return renderExperienceSettings(experienceContext())+renderProfile();
+  if(EXPERIENCE_VIEWS.includes(state.activeView))return renderExperience(state.activeView,experienceContext())+(['command','feed'].includes(state.activeView)?renderMissionShortcut(state.profile):'');
+  if(state.activeView==='library')return renderLibraryHub();
+  if(state.activeView==='profile')return renderExperienceSettings(experienceContext())+renderMissionPanel(experienceContext())+renderProfile();
   const views = {command:renderCommand,room:renderRoom,plan:renderPlan,practice:renderPractice,tools:renderTools,guild:renderGuild,calendar:renderCalendar,notebook:renderNotebook,rewards:renderRewards,profile:renderProfile};
   return (views[state.activeView]||renderCommand)();
 }
@@ -1162,29 +1186,15 @@ function bindProfile(){
 
 function bindView(){
   if(EXPERIENCE_VIEWS.includes(state.activeView)){bindExperience(state.activeView,experienceContext());return;}
-  if(state.activeView==='profile')bindExperienceSettings(experienceContext());
+  if(state.activeView==='profile'){bindExperienceSettings(experienceContext());bindMissionPanel(experienceContext());}
   ({command:bindCommand,room:bindRoom,plan:bindPlan,practice:bindPractice,tools:bindTools,guild:bindGuild,calendar:bindCalendar,notebook:bindNotebook,rewards:bindRewards,profile:bindProfile}[state.activeView]||(()=>{}))();
 }
 
 function showOnboarding(){
-  const p=state.profile; const settings=deepMerge(DEFAULT_REVIEW_SETTINGS,p.preferences.studySettings||{});
-  modal('Welcome To ControlQuest Studio', `<div class="onboarding-intro"><div class="avatar small">${avatarSvg(p.inventory.equipped)}</div><div><p class="helper">Set up your personal CISA study system. These choices are private to your account and can be changed later in Profile.</p><strong>After setup, a responsive tour will highlight the exact buttons and sections you need.</strong></div></div>
-    <h3>1. Account And Appearance</h3><div class="form-grid"><label><span class="label-title">Display Name</span><input id="obName" value="${escAttr(p.displayName)}"></label><label><span class="label-title">Theme Preference</span><select id="obTheme"><option value="dark" ${p.preferences.theme==='dark'?'selected':''}>Dark</option><option value="light" ${p.preferences.theme==='light'?'selected':''}>Light</option></select></label><label><span class="label-title">Timezone</span><select id="obTimezone">${TIMEZONES.map(t=>`<option value="${t}" ${t===p.timezone?'selected':''}>${t}</option>`).join('')}</select></label></div>
-    <h3>2. Exam And Study Rhythm</h3><div class="form-grid"><label><span class="label-title">Start Date</span><input id="obStart" type="date" value="${p.roadmap.startDate||todayIso()}"></label><label><span class="label-title">Target Exam Date</span><input id="obExam" type="date" value="${p.roadmap.examDate||'2026-09-26'}"></label><label><span class="label-title">Default Session Length</span><input id="obDuration" type="number" min="5" max="240" value="${p.preferences.defaultStudyDuration||60}"></label><label><span class="label-title">Daily QAE Goal</span><input id="obGoal" type="number" min="1" max="150" value="${p.preferences.dailyQaeGoal||10}"></label><label><span class="label-title">Calendar Preference</span><select id="obCalendar"><option value="ics" ${p.preferences.calendarProvider==='ics'?'selected':''}>ICS Download / Invite Files</option><option value="google" ${p.preferences.calendarProvider==='google'?'selected':''}>Google Calendar OAuth</option><option value="apple" ${p.preferences.calendarProvider==='apple'?'selected':''}>Apple / iCalendar Import</option></select></label></div>
-    <h3>3. Adaptive Review Load</h3><div class="form-grid"><label><span class="label-title">New Cards Per Day</span><input id="obNewCards" type="number" min="1" max="100" value="${settings.newCardsPerDay}"></label><label><span class="label-title">Maximum Reviews Per Day</span><input id="obMaxReviews" type="number" min="5" max="500" value="${settings.maxReviewsPerDay}"></label><label><span class="label-title">Desired Retention</span><input id="obRetention" type="number" min="75" max="99" value="${Math.round((settings.desiredRetention||.9)*100)}"></label></div>
-    <h3>4. Optional Course Link</h3><label><span class="label-title">Udemy Course Link</span><input id="obUdemy" placeholder="Optional Udemy course link" value="${escAttr(p.preferences.links.udemy||'')}"></label>`, async()=>{
-      const start=$('#obStart').value, exam=$('#obExam').value, dur=Number($('#obDuration').value), goal=Number($('#obGoal').value),newCards=Number($('#obNewCards').value),maxReviews=Number($('#obMaxReviews').value),retention=Number($('#obRetention').value);
-      if(!start||!exam||parseLocal(start)>parseLocal(exam))return toast('Start Date must be on or before Target Exam Date.','error');
-      if(!dur||dur<5||dur>240)return toast('Session length must be 5 to 240 minutes.','error');
-      if(!goal||goal<1||goal>150)return toast('Daily QAE Goal must be 1 to 150.','error');
-      if(!Number.isInteger(newCards)||newCards<1||newCards>100)return toast('New Cards Per Day must be 1 to 100.','error');
-      if(!Number.isInteger(maxReviews)||maxReviews<5||maxReviews>500)return toast('Maximum Reviews Per Day must be 5 to 500.','error');
-      if(!Number.isFinite(retention)||retention<75||retention>99)return toast('Desired Retention must be 75% to 99%.','error');
-      p.displayName=$('#obName').value.trim()||p.displayName; p.preferences.theme=$('#obTheme').value; p.timezone=$('#obTimezone').value; p.roadmap.startDate=start; p.roadmap.examDate=exam; p.preferences.defaultStudyDuration=dur; p.preferences.dailyQaeGoal=goal; p.preferences.calendarProvider=$('#obCalendar').value; p.preferences.links.udemy=$('#obUdemy').value.trim(); p.preferences.studySettings={...settings,newCardsPerDay:newCards,maxReviewsPerDay:maxReviews,desiredRetention:retention/100}; p.preferences.onboardingComplete=true; p.preferences.pageTours ||= {}; await saveProfileDebounced(true); applyTheme(); renderApp(); setTimeout(()=>startTour('command',true),400);
-    }, 'Start My Quest');
+  const p=state.profile;
+  modal('Welcome. Let’s make this easy.',`<div class="onboarding-intro"><div class="avatar small">${avatarSvg(p.inventory.equipped)}</div><p>Study a little, understand a little more, and watch your island grow. You can change these choices any time in Settings.</p></div><div class="form-grid"><label><span class="label-title">What should we call you?</span><input id="obName" value="${escAttr(p.displayName)}" maxlength="80"></label><label><span class="label-title">Appearance</span><select id="obTheme"><option value="dark" ${p.preferences.theme==='dark'?'selected':''}>Dark</option><option value="light" ${p.preferences.theme==='light'?'selected':''}>Light</option></select></label><label><span class="label-title">A comfortable daily goal</span><select id="obGoal">${[5,10,20,30].map(n=>`<option value="${n}" ${n===20?'selected':''}>${n} questions</option>`).join('')}</select></label></div><p class="helper">Start on Today. If you have QAE exports ready, Library → Import files accepts them together. Your personal review history stays yours.</p>`,async()=>{p.displayName=$('#obName').value.trim()||p.displayName;p.preferences.theme=$('#obTheme').value;p.v3 ||= {};p.v3.dailyGoal=Number($('#obGoal').value);p.preferences.onboardingComplete=true;p.preferences.guidedWelcomeSeen=true;await saveProfileDebounced(true);applyTheme();navigateTo('command');},'Start on Today');
 }
-
-function startFullTour(){ const pages=['command','room','plan','practice','tools','guild','calendar','notebook','rewards','profile']; let idx=0; const next=()=>{ if(idx>=pages.length){toast('Full tour complete.');return;} state.activeView=pages[idx++]; renderApp(); setTimeout(()=>startTour(state.activeView,false,next),300);}; next(); }
+function startFullTour(){showQuickGuide();}
 function startTour(page,markComplete=false,after=null){ cleanupTour(); const steps=tourSteps(page); let idx=0; const show=()=>{ cleanupTour(); if(idx>=steps.length){ if(markComplete){ state.profile.preferences.pageTours ||= {}; state.profile.preferences.pageTours[page]=true; saveProfileDebounced(); } if(after) after(); return; } const step=steps[idx++]; const el=document.querySelector(`[data-tour="${step.target}"]`) || document.querySelector(step.selector||'body'); if(!el){show();return;} el.scrollIntoView({block:'center',inline:'center',behavior:'smooth'}); setTimeout(()=>positionTour(el,step,idx,steps.length,show,after),260);}; show(); state.tour={page,show}; window.addEventListener('resize',tourResize,{once:true}); }
 function tourResize(){ if(state.tour) setTimeout(()=>startTour(state.tour.page,false),150); }
 function positionTour(el,step,idx,total,next,after){ const r=el.getBoundingClientRect(); const hi=document.createElement('div'); hi.className='tour-highlight'; const pad=8; hi.style.left=`${Math.max(8,r.left-pad)}px`; hi.style.top=`${Math.max(8,r.top-pad)}px`; hi.style.width=`${Math.min(innerWidth-16,r.width+pad*2)}px`; hi.style.height=`${Math.min(innerHeight-16,r.height+pad*2)}px`; const card=document.createElement('div'); card.className='tour-card'; const width=Math.min(390,innerWidth-32); let left=Math.min(innerWidth-width-16,Math.max(16,r.left)); let top=(r.bottom+16<innerHeight-190)?r.bottom+16:r.top-210; top=Math.min(innerHeight-190,Math.max(16,top)); card.style.left=`${left}px`; card.style.top=`${top}px`; card.innerHTML=`<p class="eyebrow">${pageTitle()} Help</p><h3>${idx} / ${total}: ${esc(step.title)}</h3><p>${esc(step.text)}</p><div class="button-row spaced"><button class="text-button tour-skip" data-tour-close>Close</button><button class="primary-button" data-tour-next>${idx===total?'Finish':'Next'}</button></div>`; document.body.append(hi,card); $('[data-tour-close]',card).onclick=()=>{cleanupTour(); if(after)after();}; $('[data-tour-next]',card).onclick=next; }
@@ -1354,7 +1364,7 @@ function linkDeckLesson(id){
 
 function categoryFields(deck){
   const lesson=deckLesson(deck)||inferDeckLesson(deck,state.library.cards),domain=deck?.domainId||lesson?.domainId||'';
-  return `<div class="form-grid"><label><span class="label-title">Domain category</span><select id="editCategoryDomain"><option value="">Unassigned / Mixed</option>${ISACA_STUDY_PLAN.map(d=>`<option value="${d.id}" ${domain===d.id?'selected':''}>${esc(d.domain)} · ${esc(d.name)}</option>`).join('')}</select></label><label><span class="label-title">Lesson category</span><select id="editCategoryLesson">${lessonOptions(lesson?.id||'',domain)}</select></label><label><span class="label-title">Tags (comma separated)</span><input id="editCategoryTags" value="${escAttr((deck?.tags||[]).join(', '))}" placeholder="June imports, review, Ty"></label></div>`;
+  return `<div class="form-grid"><label><span class="label-title">Domain category</span><select id="editCategoryDomain"><option value="">Unassigned / Mixed</option>${ISACA_STUDY_PLAN.map(d=>`<option value="${d.id}" ${domain===d.id?'selected':''}>${esc(d.domain)} · ${esc(d.name)}</option>`).join('')}</select></label><label><span class="label-title">Lesson category</span><select id="editCategoryLesson">${lessonOptions(lesson?.id||'',domain)}</select></label><label><span class="label-title">Tags (comma separated)</span><input id="editCategoryTags" value="${escAttr((deck?.tags||[]).join(', '))}" placeholder="June imports, review, study group"></label></div>`;
 }
 function bindCategoryFields(){
   $('#editCategoryDomain')?.addEventListener('change',()=>{$('#editCategoryLesson').innerHTML=lessonOptions('',$('#editCategoryDomain').value);});
@@ -1407,20 +1417,26 @@ function matchExistingLessons(){
 
 function experienceContext(){
   state.profile.v3 ||= {dailyGoal:20,studyMinutes:10,activity:[],lessonProgress:{},importReceipts:{},reviewReceipts:{}};
-  return {profile:state.profile,user:state.user,group:state.group,library:state.library,level:levelInfo().level,
+  const profile=state.profile,user=state.user;
+  const isCurrent=()=>state.profile===profile&&state.user?.uid===user.uid;
+  const save=async()=>{if(!isCurrent())throw new Error('Your account changed. Reopen this page.');await saveProfile(profile);if(!isCurrent())throw new Error('Your account changed. Reopen this page.');if(profile.activeGroupId){await updateMemberSummary(profile.activeGroupId,profile);if(!isCurrent())throw new Error('Your account changed. Reopen this page.');}};
+  return {profile,user,group:state.group,library:state.library,level:levelInfo().level,isCurrent,
     avatar:()=>avatarSvg(state.profile.inventory.equipped),navigate:navigateTo,render:renderApp,toast,
-    save:()=>saveProfileDebounced(true),saveQuiet:()=>saveProfileDebounced(),refresh:refreshStudyLibrary,download:downloadText,
+    save,saveQuiet:()=>{if(isCurrent())saveProfileDebounced();},refresh:refreshStudyLibrary,download:downloadText,
     review:saveExperienceReview,worldAction:saveExperienceWorldAction,importBatch:saveExperienceBatch,
     completeLesson:async lesson=>{
+      if(experienceWorldLock||experienceReviewLock)throw new Error('Your previous move is still saving. Try this lesson check again in a moment.');
+      experienceReviewLock=true;
+      try{
       const profile=state.profile,uid=state.user.uid,group=state.group,id=lesson.lessonId||lesson.id;
       const assertContext=()=>{if(state.user?.uid!==uid||state.profile!==profile)throw new Error('Your account changed. Reopen the lesson.');};
       profile.v3.lessonProgress ||= {};profile.v3.lessonReceipts ||= {};
       const existing=profile.v3.lessonReceipts[id];
       if(existing?.complete){await saveProfile(profile);assertContext();return;}
-      await rewardExperience({id:`lesson:${uid}:${id}`,type:'lesson.completed',lessonId:id,domainId:lesson.domainId,correct:true},'solo',{uid,profile,group});assertContext();
+      await rewardExperience({id:`lesson:${uid}:${id}`,type:'lesson.completed',lessonId:id,domainId:lesson.domainId,correct:true},profile.v3.preferredWorldMode==='coop'&&group&&profile.v3.preferredWorldGroupId===group.id?'coop':'solo',{uid,profile,group});assertContext();
       if(!existing?.awarded){award({xp:8,coins:3,reason:`Concept learned: ${lesson.title}`,type:'Microlearning'});profile.v3.lessonReceipts[id]={awarded:true};}
       profile.v3.lessonProgress[id]=new Date().toISOString();await saveProfile(profile);assertContext();profile.v3.lessonReceipts[id]={complete:true};await saveProfile(profile);assertContext();
-
+      }finally{experienceReviewLock=false;}
     }};
 }
 async function rewardExperience(event,worldMode='solo',context={}){
@@ -1430,7 +1446,7 @@ async function rewardExperience(event,worldMode='solo',context={}){
   assertContext();profile.v3 ||= {};const existing=profile.v3.activity||[];
   if(existing.some(e=>e.id===event.id))return;
   const action={type:'study-answer',id:event.id,correct:!!event.correct,cardId:event.cardId||event.lessonId};
-  if(worldMode==='coop'&&group){try{const result=await mutateGuildWorld(group.id,action);assertContext();group.questWorld=result.world;}catch(error){assertContext();profile.v3.pendingWorld ||= [];if(!profile.v3.pendingWorld.some(e=>e.id===action.id))profile.v3.pendingWorld.push({...action,groupId:group.id});toast('Study saved. Guild island reward is pending sync.','error');}}
+  if(worldMode==='coop'&&group){try{const result=await mutateGuildWorld(group.id,action);assertContext();if(state.group?.id===group.id)state.group.questWorld=result.world;else group.questWorld=result.world;}catch(error){assertContext();profile.v3.pendingWorld ||= [];if(!profile.v3.pendingWorld.some(e=>e.id===action.id))profile.v3.pendingWorld.push({...action,groupId:group.id});toast('Study saved. Guild island reward is pending sync.','error');}}
   else profile.v3.world=advanceWorld(createWorld(profile.v3.world),action).world;
   assertContext();profile.v3.activity=appendActivityEvent(existing,{...event,occurredAt:new Date().toISOString()});
   window.dispatchEvent(new CustomEvent('controlquest:activity',{detail:event}));
@@ -1438,6 +1454,7 @@ async function rewardExperience(event,worldMode='solo',context={}){
 let experienceReviewLock=false;
 async function saveExperienceReview(card,{rating,selectedAnswer,eventId,mode='pocket-quest',worldMode='solo'}){
   if(experienceReviewLock)throw new Error('Your previous answer is still saving.');
+  if(experienceWorldLock)throw new Error('Your island move is still saving. Try this answer again in a moment.');
   if(!state.user?.uid||!state.profile)throw new Error('Sign in before saving a review.');
   if(typeof eventId!=='string'||!eventId.trim()||eventId.length>250||['__proto__','constructor','prototype'].includes(eventId))throw new Error('A valid review event ID is required.');
   if(!card?.id||!card.scopeKey||card.answerConflict)throw new Error('Choose a question with a verified answer key.');
@@ -1504,14 +1521,33 @@ async function saveExperienceReview(card,{rating,selectedAnswer,eventId,mode='po
     await persist();
   }finally{experienceReviewLock=false;}
 }
+let experienceWorldLock=false;
 async function saveExperienceWorldAction(event,mode='solo'){
+  if(experienceWorldLock)throw new Error('Your previous island move is still saving.');
+  if(experienceReviewLock)throw new Error('Your study answer is still saving. Try your island move again in a moment.');
+  const profile=state.profile,uid=state.user?.uid,group=state.group;
+  if(!uid||!profile)throw new Error('Sign in before making an island move.');
+  if(mode==='coop'&&!group)throw new Error('Join a Guild to build a shared island.');
+  const assertContext=()=>{if(state.user?.uid!==uid||state.profile!==profile||(mode==='coop'&&(state.group?.id!==group.id||profile.activeGroupId!==group.id)))throw new Error('Your account or Guild changed. Reopen the island before making another move.');};
   const command={...event,id:event.id||randomId()};
-  if(mode==='coop'){
-    if(!state.group)throw new Error('Join a Guild to build a shared island.');
-    const pending=state.profile.v3.pendingWorld||[];
-    for(const reward of pending.filter(e=>e.groupId===state.group.id)){const result=await mutateGuildWorld(state.group.id,reward);state.group.questWorld=result.world;state.profile.v3.pendingWorld=state.profile.v3.pendingWorld.filter(e=>e.id!==reward.id);}
-    const result=await mutateGuildWorld(state.group.id,command);state.group.questWorld=result.world;toast(result.feedback?.message||result.feedback||'Your island is saved.');await saveProfileDebounced(true);
-  }else{const result=advanceWorld(createWorld(state.profile.v3.world),command);state.profile.v3.world=result.world;toast(result.feedback?.message||result.feedback||'Your island is saved.');await saveProfileDebounced(true);}
+  experienceWorldLock=true;
+  try{
+    assertContext();let result;
+    if(mode==='coop'){
+      const pending=[...(profile.v3.pendingWorld||[])].filter(e=>e.groupId===group.id);
+      for(const reward of pending){const synced=await mutateGuildWorld(group.id,reward);assertContext();state.group.questWorld=synced.world;profile.v3.pendingWorld=(profile.v3.pendingWorld||[]).filter(e=>e.id!==reward.id);}
+      result=await mutateGuildWorld(group.id,command);assertContext();state.group.questWorld=result.world;
+      await saveProfile(profile);assertContext();
+    }else{
+      const previous=profile.v3.world;
+      result=advanceWorld(createWorld(previous),command);
+      if(result.changed){
+        profile.v3.world=result.world;
+        try{await saveProfile(profile);assertContext();}catch(error){if(profile.v3.world===result.world)profile.v3.world=previous;throw error;}
+      }
+    }
+    assertContext();toast(result.feedback?.message||'Your island is saved.');return result;
+  }finally{experienceWorldLock=false;}
 }
 async function saveExperienceBatch(item,{bundle,operationId}){
   const user=state.user,profile=state.profile,library=state.library,group=state.group,uid=user?.uid,groupId=profile?.activeGroupId;

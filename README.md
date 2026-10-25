@@ -1,4 +1,15 @@
-# ControlQuest Studio 3.0
+# ControlQuest Studio 3.1
+
+A guided CISA study companion with personal spaced recall, shared lesson libraries and a study-powered colony.
+
+Start on **Today**, then follow **Study → understand the answer → grow your Island**. **Library** holds decks, batch imports, short lessons and progress. Specialist tools and account settings live under **More tools**.
+
+This release adds clear next-step guidance, a persistent choice between your own colony and your active Guild’s colony, visible crop/building/resource changes, crew supply crates, skyship deliveries and continuing neighborhood expansion. It refreshes light/dark styling and phone navigation while preserving your existing questions and recall history.
+
+- [Release notes and verification](docs/V3_1_RELEASE.md)
+- [Personal Todoist / Everstead study missions](docs/STUDY_MISSIONS.md)
+- [Study engine, imports and lesson sources](docs/V3_RELEASE.md)
+
 
 A mobile-friendly CISA study adventure with QAE Word imports, honest spaced-repetition progress, short concept lessons and a persistent solo/cooperative island.
 

@@ -61,11 +61,11 @@ try{
   // A new member must not inherit a private selection, revealed answer or study duration.
   change('#cqLessonSearch','Postimplementation','input');await click(`[data-cq-lesson-choice="${target.checkpoint.correctAnswer}"]`);
   const other=context('second-user',{empty:true,minutes:5});other.navigate('learn');assert.equal($('#cqLessonSearch').value,'');assert.equal($$('[data-cq-lesson]').length,60);assert.equal($('.cq-recall-result'),null);assert.equal($('[data-cq-lesson-choice].chosen'),null);
-  other.navigate('command');assert.equal($('#cqMinutes').value,'5');assert.ok($('.cq-start').textContent.includes('0 questions'));
-  other.navigate('feed');await click('[data-cq-start="recommended"]');assert.equal($('.cq-study-card'),null);assert.ok($('#test-root').textContent.includes('import your QAE files'));
+  other.navigate('command');assert.equal($('#cqMinutes').value,'5');assert.equal($('.cq-start').dataset.cqNav,'import','An empty library must lead to import instead of a zero-question study round');
+  other.navigate('feed');assert.equal($('[data-cq-start="recommended"]'),null);assert.ok($('[data-cq-nav="import"]'));assert.equal($('.cq-study-card'),null);assert.ok($('#test-root').textContent.includes('import your QAE files'));
   other.navigate('adventure');await click('[data-qw-mode="coop"]');assert.ok($('#test-root').textContent.includes('Join or create a Guild'));assert.equal($('.quest-world'),null);
   // A delayed save from a signed-out member must not advance the next member's UI.
   const pending=context('pending-member');let resolveReview;pending.review=()=>new Promise(resolve=>{resolveReview=resolve;});pending.navigate('command');await click('[data-cq-domain="d5"]');await click('[data-cq-choice="B"]');await click('#cqReveal');
-  const oldSave=$('[data-cq-rate="Good"]').onclick();const nextMember=context('new-member',{empty:true});nextMember.navigate('feed');resolveReview();await oldSave;assert.equal($('.cq-study-card'),null);assert.equal($('.cq-feed-interlude'),null);assert.ok($('#test-root').textContent.includes('Choose your next little quest.'));
+  const oldSave=$('[data-cq-rate="Good"]').onclick();const nextMember=context('new-member',{empty:true});nextMember.navigate('feed');resolveReview();await oldSave;assert.equal($('.cq-study-card'),null);assert.equal($('.cq-feed-interlude'),null);assert.ok($('#test-root').textContent.includes('Add your questions to begin.'));
   console.log('V3 experience: all views, feed save/error/interlude flow, safe swipe controls, corrected-domain queue, lesson filtering/audio/checkpoint consistency, empty recovery, and member/async state isolation passed.');
 }finally{window.speechSynthesis?.cancel();dom.window.close();}

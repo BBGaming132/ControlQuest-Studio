@@ -64,7 +64,7 @@ The model may explain an original lesson or compare reasoning against an already
 
 The primary [Ollama API introduction](https://docs.ollama.com/api/introduction) documents local chat at `http://localhost:11434/api/chat`. A locally running model does not require a cloud API key. The [Ollama FAQ](https://docs.ollama.com/faq) documents bind settings, `OLLAMA_ORIGINS`, local/cloud behavior and optional cloud disabling. The [Qwen3 model page](https://ollama.com/library/qwen3) lists several sizes available through Ollama.
 
-Use an origin allowlist for the exact app origin rather than a wildcard. A phone’s `localhost` refers to the phone, not Bennett’s Windows computer. A public HTTPS app may also encounter browser local-network, mixed-content or cross-origin restrictions. Do not present a desktop’s local Ollama address as a working phone endpoint. Remote use needs an appropriately protected service and explicit deployment configuration; do not expose the unauthenticated local inference port to the public Internet.
+Use an origin allowlist for the exact app origin rather than a wildcard. A phone’s `localhost` refers to the phone, not the existing Windows computer. A public HTTPS app may also encounter browser local-network, mixed-content or cross-origin restrictions. Do not present a desktop’s local Ollama address as a working phone endpoint. Remote use needs an appropriately protected service and explicit deployment configuration; do not expose the unauthenticated local inference port to the public Internet.
 
 Local inference removes per-request cloud API charges but still uses device hardware, storage and power. It is an optional study aid rather than a prerequisite for importing, scheduling, gameplay or mastery calculations.
 
