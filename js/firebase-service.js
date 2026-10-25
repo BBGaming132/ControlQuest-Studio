@@ -345,3 +345,31 @@ export function enableDemoStorage(){ready=false;localKey='controlquest_demo_v3_p
 
 const localGuildQueues=new Map();
 async function serializeLocalGuild(id,action){const next=(localGuildQueues.get(id)||Promise.resolve()).catch(()=>{}).then(action);localGuildQueues.set(id,next);try{return await next;}finally{if(localGuildQueues.get(id)===next)localGuildQueues.delete(id);}}
+
+/** Patch only canonical category fields; do not rewrite question text or recall records. */
+export async function saveCategoryPatch({uid,groupId,kind,id,scope,patch,expectedUpdatedAt}){
+  if(!uid||!id||!['deck','card'].includes(kind)||!['Personal','Guild'].includes(scope))throw new Error('Choose a writable personal or Guild record.');
+  if(scope==='Guild'&&!groupId)throw new Error('Your Guild changed. Audit the library again.');
+  const {LESSONS}=await import('./lesson-catalog.js');
+  const allowed=new Set(['lessonId','lessonTitle','domainId','domainNumber','domain','categoryOverride']);
+  if(!patch||patch.categoryOverride===true||Object.keys(patch).some(key=>!allowed.has(key)))throw new Error('Only lesson and domain categories can be patched.');
+  const lesson=LESSONS.find(l=>l.id===patch.lessonId);
+  if(!lesson||patch.domainId!==lesson.domainId)throw new Error('Choose a verified canonical lesson and its domain.');
+  const category={lessonId:lesson.id,lessonTitle:lesson.title,domainId:lesson.domainId,...(kind==='card'?{domainNumber:Number(lesson.domainId.slice(1)),domain:lesson.domain}:{})};
+  const check=record=>{
+    if(!record)throw new Error('The record was removed. Audit the library again.');
+    if(record.categoryOverride)throw new Error('This category was edited manually. Keep it or review it in the deck editor.');
+    if((record.updatedAt||null)!==(expectedUpdatedAt||null))throw new Error('This record changed. Refresh and audit it again.');
+    if(scope==='Personal'&&record.ownerUid&&record.ownerUid!==uid)throw new Error('This record belongs to another account.');
+  };
+  if(!ready){
+    const local=loadLocalStudy(),key=kind==='deck'?'decks':'cards',scopeKey=scope==='Guild'?`guild_${groupId}`:`personal_${uid}`;
+    const index=(local[key]||[]).findIndex(record=>record.id===id&&record.scopeKey===scopeKey);
+    const record=local[key]?.[index];check(record);local[key][index]=withStamp({...record,...category});saveLocalStudy(local);return local[key][index];
+  }
+  if(auth.currentUser?.uid!==uid)throw new Error('Your account changed. Audit the library again.');
+  return fs().runTransaction(db,async transaction=>{
+    const ref=docRefFor(scope,uid,groupId,kind,id),snapshot=await transaction.get(ref),record=snapshot.exists()?snapshot.data():null;check(record);
+    const result=withStamp({...record,...category});transaction.update(ref,{...category,updatedAt:result.updatedAt});return result;
+  });
+}

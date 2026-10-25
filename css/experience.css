@@ -374,3 +374,117 @@ body{background:radial-gradient(ellipse at 90% -10%,#2767c42b,transparent 48%),v
 .cq-between-turns strong{display:block;font-size:16px}.cq-between-turns p{font-size:12px;color:var(--muted);margin:5px 0 0;line-height:1.65}
 .cq-between-turns>button{flex-shrink:0;min-height:46px}
 @media(max-width:760px){.cq-between-turns{align-items:flex-start;padding:15px;gap:12px;flex-wrap:wrap}.cq-between-turns>button{width:100%}.cq-between-turns strong{font-size:15px}.cq-reward-burst>div>span{font-size:11px;padding:4px 8px}.cq-reward-burst>p{font-size:12px}}
+
+/* Three explicit study experiences share one learning record. */
+.cq-study-modes{display:flex;align-items:stretch;gap:8px;padding:5px;background:var(--bg2);border:1px solid var(--line);border-radius:19px;margin:0 0 22px;max-width:850px}
+.cq-study-modes>button{flex:1;display:flex;flex-direction:column;align-items:flex-start;text-align:left;gap:4px;min-width:0;border:1px solid transparent;border-radius:14px;padding:12px 17px;min-height:66px;background:transparent;color:var(--muted);box-shadow:none}
+.cq-study-modes strong{font-size:14px;line-height:1.4;font-weight:800;color:inherit}
+.cq-study-modes small{font-size:11px;line-height:1.5;color:var(--muted);font-weight:500}
+.cq-study-modes>button[aria-pressed="true"]{background:var(--panel);color:var(--primary);border-color:color-mix(in srgb,var(--primary) 50%,var(--line));box-shadow:0 3px 9px #030b1810,inset 0 -3px 0 var(--primary)}
+.cq-study-modes>button:not([aria-pressed="true"]):hover{background:color-mix(in srgb,var(--primary) 7%,var(--panel));color:var(--text)}
+.cq-focus-study{max-width:840px;margin-inline:auto}
+.cq-focus-study .cq-feed-layout,.expedition-shell .cq-feed-layout{display:block;grid-template-columns:minmax(0,1fr);width:100%;min-width:0}
+.cq-focus-study .cq-feed-world,.expedition-shell .cq-feed-world{display:none}
+.cq-focus-study .cq-study-card{margin-top:0}
+.cq-focus-study .cq-page-head h1{font-size:clamp(27px,3vw,38px)}
+.cq-feedback-ack{border-top:1px solid var(--line);margin-top:23px;padding-top:4px;scroll-margin-top:20px}
+.cq-feedback-ack>.primary-button{width:100%;min-height:50px;margin-top:5px}
+.cq-feedback-ack>.cq-fine{margin-bottom:0;text-align:center;font-size:11px}
+
+/* Expedition keeps the world and the next question visible together on a computer. */
+.expedition-shell{display:grid;grid-template-columns:minmax(0,1.35fr) minmax(365px,1fr);grid-template-areas:'world question';align-items:start;gap:20px;min-width:0;position:relative}
+.cq-expedition-question{grid-area:question;min-width:0;max-width:760px;width:100%}
+.cq-expedition-world{grid-area:world;position:sticky;top:15px;min-width:0;max-width:100%;border-radius:25px;overflow:hidden}
+.cq-expedition-question .cq-page-head{margin-bottom:18px}
+.cq-expedition-question .cq-page-head h1{font-size:29px}
+.cq-expedition-question .cq-page-head p{font-size:13px}
+.cq-expedition-question .cq-study-card{padding:24px 21px}
+.cq-expedition-question .cq-study-card h2{font-size:22px;line-height:1.5}
+.cq-expedition-question .cq-answer-list>button{font-size:13px;padding:14px 12px;gap:11px}
+.cq-expedition-question .cq-card-meta{font-size:10px}
+.cq-expedition-question .cq-study-settings{margin-top:0;padding:0 14px}
+.cq-expedition-question .cq-study-settings>summary{padding-block:12px;font-size:12px;min-height:44px}
+.cq-expedition-question .cq-feed-hint{font-size:10px;margin:10px 0}
+.cq-expedition-question .cq-rating-row button{min-height:79px}
+.cq-expedition-guild{border:1px solid var(--line);border-radius:23px;padding:20px;background:var(--panel);min-width:0;overflow-wrap:anywhere}
+.cq-expedition-guild>.grid{grid-template-columns:1fr}
+.cq-expedition-guild .panel{grid-column:auto;min-width:0;max-width:100%}
+.cq-expedition-guild h2{font-size:24px}.cq-expedition-guild .section-head{flex-wrap:wrap}
+.cq-phone-world-toggle{display:none}
+
+/* Full-screen expedition has a reversible drawer, not a permanent sidebar. */
+.app-shell.cq-expedition-shell{display:block;min-height:100dvh}
+.cq-expedition-shell>.sidebar{position:fixed;inset:0 auto 0 0;width:min(305px,90vw);height:100dvh;z-index:170;padding:22px 17px;box-shadow:16px 0 60px #02081766}
+.cq-expedition-shell>.sidebar:not(.open){display:none}
+.cq-expedition-shell>.sidebar.open{display:flex;visibility:visible;transform:none}
+.cq-expedition-shell .sidebar .brand h1,.cq-expedition-shell .sidebar .nav-btn>span,.cq-expedition-shell .sidebar .side-player>div{display:block}
+.cq-expedition-shell .sidebar .nav-btn{justify-content:flex-start}
+.cq-expedition-shell .sidebar .nav-btn .app-icon{display:grid}
+.cq-expedition-shell .hamburger,.cq-expedition-shell .mobile-close{display:inline-flex;align-items:center;justify-content:center;min-height:40px}
+.cq-expedition-shell .mobile-close{align-self:flex-end;margin-bottom:0}
+.cq-expedition-shell>.main{padding:15px 23px 30px;max-width:1900px;width:100%;margin-inline:auto}
+.cq-expedition-shell .topbar{margin-bottom:16px;min-height:40px}
+.cq-expedition-shell .topbar h2{font-size:13px}
+.cq-expedition-shell .cq-learning-strip{display:none}
+.cq-expedition-shell .cq-experience{max-width:none}
+.cq-expedition-shell .cq-study-modes{margin-bottom:16px}
+.cq-expedition-shell .cq-demo-notice{padding:7px 12px;margin-bottom:14px;font-size:10px}
+
+/* Library counts describe the user's actual files, with clear recovery actions. */
+.cq-audit-summary{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin:18px 0 23px}
+.cq-audit-summary>div,.cq-audit-summary>article{min-width:0;padding:18px;border:1px solid var(--line);border-radius:17px;background:var(--panel2)}
+.cq-audit-summary strong{display:block;font-size:28px;line-height:1.2;color:var(--text);font-weight:800;letter-spacing:-.03em}
+.cq-audit-summary span,.cq-audit-summary p,.cq-audit-summary small{display:block;font-size:12px;line-height:1.7;color:var(--muted);margin:6px 0 0}
+.cq-audit-list{display:grid;gap:10px;padding:0;list-style:none;margin:17px 0}
+.cq-audit-list>li,.cq-audit-list>article,.cq-audit-list>.soft{padding:17px 19px;border:1px solid var(--line);border-radius:16px;background:var(--panel2);min-width:0;overflow-wrap:anywhere}
+.cq-audit-list h3,.cq-audit-list strong{font-size:15px;font-weight:750;color:var(--text);margin:0}
+.cq-audit-list p,.cq-audit-list small{font-size:12px;line-height:1.75;color:var(--muted);margin:6px 0 0}
+.cq-audit-list .button-row{margin-top:12px}
+.cq-audit-list .warning,.cq-audit-list .warn{color:var(--warn)}
+@media(min-width:1550px){.expedition-shell{grid-template-columns:minmax(0,1.55fr) minmax(430px,1fr);gap:25px}.cq-expedition-question .cq-study-card{padding:29px}.cq-expedition-question .cq-study-card h2{font-size:24px}}
+@media(max-width:1100px) and (min-width:901px){.expedition-shell{grid-template-columns:minmax(0,1fr) minmax(355px,1fr);gap:13px}.cq-expedition-shell>.main{padding-inline:16px}.cq-expedition-question .cq-study-card{padding:20px 16px}.cq-expedition-question .cq-study-card h2{font-size:20px}}
+@media(max-width:900px){
+ .expedition-shell{display:block;min-height:0}
+ .cq-expedition-question{display:block;max-width:760px;margin-inline:auto}
+ .cq-expedition-world{display:none;position:relative;top:auto;width:100%;max-width:100%;border-radius:20px}
+ .expedition-shell.cq-world-open>.cq-expedition-question{display:none}
+ .expedition-shell.cq-world-open>.cq-expedition-world{display:block}
+ .cq-phone-world-toggle{display:flex;width:100%;min-height:48px;margin:16px 0 4px;align-items:center;justify-content:center}
+ .cq-expedition-world>.cq-phone-world-toggle{margin:14px 0 5px}
+ .cq-study-modes{max-width:none}
+ .cq-study-modes>button{padding:10px 12px;min-height:62px}
+ .cq-study-modes strong{font-size:13px}.cq-study-modes small{font-size:10px}
+ .cq-expedition-shell>.main{padding:14px 16px 30px}
+ .cq-expedition-question .cq-feed-layout .cq-page-head{display:none}
+}
+@media(max-width:760px){
+ .cq-expedition-shell>.main{padding:13px 13px calc(96px + env(safe-area-inset-bottom))}
+ .cq-expedition-shell .topbar{gap:7px;margin-bottom:13px;flex-wrap:wrap}
+ .cq-expedition-shell .topbar .button-row{gap:7px}
+ .cq-expedition-shell .top-actions{gap:5px}
+ .cq-expedition-shell .topbar .secondary-button,.cq-expedition-shell .topbar .ghost-button{font-size:11px;padding:7px 9px;min-height:38px}
+ .cq-expedition-shell .cq-demo-notice{margin-bottom:13px;font-size:9px;line-height:1.65;padding:7px 10px}
+ .cq-study-modes{gap:4px;padding:4px;border-radius:15px;margin-bottom:17px}
+ .cq-study-modes>button{border-radius:11px;padding:9px 8px;min-height:62px;gap:4px}
+ .cq-study-modes strong{font-size:12px;line-height:1.45}
+ .cq-study-modes small{font-size:9px;line-height:1.5}
+ .cq-expedition-question .cq-study-card{padding:21px 17px}
+ .cq-expedition-question .cq-study-card h2{font-size:21px;line-height:1.55;margin:20px 0 23px}
+ .cq-expedition-question .cq-answer-list>button{font-size:13px;min-height:64px;padding:14px 11px}
+ .cq-expedition-question .cq-study-settings{margin-bottom:12px;padding-inline:12px}
+ .cq-expedition-question .cq-study-settings>summary{font-size:11px;line-height:1.7;padding-block:10px}
+ .cq-expedition-question .cq-card-meta{font-size:10px;gap:11px;flex-wrap:wrap}
+ .cq-feedback-ack{scroll-margin-top:12px}.cq-feedback-ack>.primary-button{font-size:13px;padding:13px 12px;line-height:1.5}
+ .cq-audit-summary{grid-template-columns:repeat(2,minmax(0,1fr));gap:9px}
+ .cq-audit-summary>div,.cq-audit-summary>article{padding:15px}.cq-audit-summary strong{font-size:25px}
+ .cq-audit-list>li,.cq-audit-list>article,.cq-audit-list>.soft{padding:15px}.cq-audit-list .button-row>button{width:100%}
+}
+@media(max-width:370px){.cq-study-modes strong{font-size:11px}.cq-study-modes small{font-size:8px}.cq-study-modes>button{padding-inline:6px}.cq-expedition-shell .topbar h2{display:none}}
+@media(prefers-reduced-motion:reduce){.cq-feedback-ack{scroll-behavior:auto}.cq-study-modes>button{transition:none}}
+.cq-audit-summary{grid-template-columns:repeat(auto-fit,minmax(150px,1fr))}
+.cq-audit-list>div{padding:17px 19px;border:1px solid var(--line);border-radius:16px;background:var(--panel2);min-width:0;overflow-wrap:anywhere}
+@media(max-width:760px){.cq-audit-summary{grid-template-columns:repeat(2,minmax(0,1fr))}.cq-audit-list>div{padding:15px}}
+@media(min-width:901px){
+ .cq-expedition-world{max-height:calc(100dvh - 150px);overflow-y:auto;overscroll-behavior-y:contain;scrollbar-width:thin;scrollbar-color:var(--line) transparent;scroll-padding-block:12px}
+ .cq-expedition-world>.expedition-view{min-height:0;overflow:visible}
+}

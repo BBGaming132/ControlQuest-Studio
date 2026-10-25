@@ -13,9 +13,9 @@ try{
  assert.equal(calls[0].worldMode,'coop','The active Guild is the only study island destination');
  assert.equal(c.group.questWorld.stats.study,1);assert.equal(c.profile.v3.world.resources.wood,42,'Personal save stays preserved');
  assert.match($('.cq-reward-burst').textContent,/\+2 quest coins/,'Reward receipt shows actual engine result');
- assert.ok($('.island-play').textContent.includes('Lighthouse Crew'));assert.equal($('[data-qw-mode]'),null);
- $('.ip-study-dock [data-ip-study]').click();assert.ok($('#cqStudyCard'));assert.equal(c.profile.v3.pocketSession.run,run,'Returning to a question does not rebuild the queue');assert.equal(c.profile.v3.pocketSession.index,1);
- c.navigate('adventure');$('[data-ip-site="greenhouse"]').click();assert.match($('[data-ip-context]').textContent,/Glowfruit garden/,'Touching a site inspects that actual building');
+ assert.equal($('.island-play'),null,'Focus mode does not force gameplay');$('[data-cq-experience="expedition"]').click();assert.ok($('.expedition-view'));assert.equal($('[data-qw-mode]'),null);
+ $('#cqNextQuestion').click();assert.ok($('#cqStudyCard'));assert.equal(c.profile.v3.pocketSession.run,run,'Returning to a question does not rebuild the queue');assert.equal(c.profile.v3.pocketSession.index,1);
+ c.navigate('adventure');assert.ok($('.expedition-view'),'The shared expedition remains available beside the same question queue');
  c.navigate('feed');$('[data-cq-choice="A"]').click();$('#cqReveal').click();let finish;c.review=()=>new Promise(r=>{finish=r;});const saving=$('[data-cq-rate="Good"]').onclick();
  c.profile.activeGroupId='crew-b';c.group={id:'crew-b',name:'New Crew',questWorld:createWorld(),members:{}};c.navigate('feed');finish();await saving;assert.equal($('.cq-feed-interlude'),null,'A previous Guild save cannot open a turn in the new Guild');
  console.log('Study island flow: one Guild destination, real reward receipts, preserved personal world, scene inspection, queue resume and Guild-switch isolation passed.');
