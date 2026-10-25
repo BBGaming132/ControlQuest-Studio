@@ -1,6 +1,6 @@
 # Domain, lesson and public community libraries
 
-The catalog reuses Bennett's ISACA study plan: 60 lessons across five domains and three practice exams. Stable lesson IDs connect imports, filters and checklists.
+The catalog reuses the existing ISACA study plan: 60 lessons across five domains and three practice exams. Stable lesson IDs connect imports, filters and checklists.
 
 ## Find where the existing uploads left off
 
