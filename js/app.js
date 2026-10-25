@@ -1,3 +1,4 @@
+import {auditLibrary} from './library-audit.js';
 import {renderMissionPanel,bindMissionPanel,renderMissionShortcut} from './mission-panel.js';
 import { randomId, sha256Hex } from './runtime-crypto.js';
 import { EXPERIENCE_VIEWS, renderExperience, bindExperience, renderExperienceSettings, bindExperienceSettings } from './experience.js';
@@ -7,7 +8,7 @@ import { appendActivityEvent } from './activity-bridge.js';
 import { uniqueStudyCards, studyIdentity } from './study-intelligence.js';
 import { buildPublicContributions, aggregateCommunityLibrary } from './community-library.js';
 import { LESSONS, matchLesson, deckLesson, cardLesson, inferDeckLesson, filterDecks, filterDeckCards } from './lesson-catalog.js';
-import { initFirebase, onAuth, signIn, createAccount, sendReset, signOutUser, loadProfile, saveProfile, backupProfile, deleteProfileData, createGroup, loadGroup, saveGroup, updateMemberSummary, subscribeGroup, publicSummary, isFirebaseReady, loadStudyLibrary, saveStudyImport, saveStudyDeck, saveStudyCard, saveStudyProgress, saveStudyReview, deleteStudyDeck, saveGuildLessonStatus, loadCommunityLibrary, savePublicContributions, savePublicLessonStatus, subscribeCommunityLibrary, mutateGuildSession, mutateGuildWorld, enableDemoStorage } from './firebase-service.js';
+import { initFirebase, onAuth, signIn, createAccount, sendReset, signOutUser, loadProfile, saveProfile, backupProfile, deleteProfileData, createGroup, loadGroup, saveGroup, updateMemberSummary, subscribeGroup, publicSummary, isFirebaseReady, loadStudyLibrary, saveStudyImport, saveStudyDeck, saveStudyCard, saveStudyProgress, saveStudyReview, deleteStudyDeck, saveGuildLessonStatus, loadCommunityLibrary, savePublicContributions, savePublicLessonStatus, subscribeCommunityLibrary, mutateGuildSession, mutateGuildWorld, enableDemoStorage, saveCategoryPatch } from './firebase-service.js';
 import { RESOURCE_LINKS, TIMEZONES, DOMAIN_TOPICS, ISACA_STUDY_PLAN, CISA_RULES, DECISION_PROMPTS, HOMEWORK_SUGGESTIONS, DAILY_QUEST_TEMPLATES, SHOP_ITEMS, AVATAR_ITEMS, GAME_CATALOG } from './content.js';
 import { parseQaePaste, missedConceptFromParsedQuestion } from './qae-parser.js';
 import { DEFAULT_REVIEW_SETTINGS, buildImportBundle, buildStudyQueue, hasUnresolvedMiss, calculateLibraryStats, cardFingerprint, createReviewEvent, defaultProgress, formatCardBack, mergeUniqueLibrary, progressKey, rateCard, scopeKey, makeDeckId } from './flashcard-engine.js';
@@ -59,18 +60,18 @@ const state = {
 
 const PRIMARY_NAV = [
   ['command','Today','home'],['feed','Study','cards'],
-  ['adventure','Island','arcade'],['arcade','Games','timer'],['library','Library','notebook']
+  ['adventure','Expedition','arcade'],['arcade','Games','timer'],['library','Library','notebook']
 ];
 const TOOL_NAV = [
   ['mastery','Your progress','target'],['learn','Short lessons','notebook'],
-  ['tools','Manage decks','cards'],['import','Import files','qae'],
+  ['tools','Manage decks','cards'],['audit','Library health','target'],['import','Import files','qae'],
   ['room','Study together','guild'],['guild','Your Guild','guild'],
   ['rewards','Avatar & rewards','avatar'],['practice','Practice log','qae'],
   ['plan','Exam study plan','roadmap'],['calendar','Calendar','calendar'],
   ['notebook','Notes','notebook'],['profile','Settings & connections','target']
 ];
 const NAV = [...PRIMARY_NAV,...TOOL_NAV];
-function navigationSection(view){return ['mastery','learn','tools','import'].includes(view)?'library':view;}
+function navigationSection(view){return ['mastery','learn','tools','import','audit'].includes(view)?'library':view;}
 function renderNavigation(){
   const item=([id,label,iconName],primary=false)=>`<button class="nav-btn ${navigationSection(state.activeView)===id||state.activeView===id?'active':''}" data-view="${id}" ${state.activeView===id?'aria-current="page"':''}><span class="app-icon ${iconName}">${svgIcon(iconName)}</span><span>${label}</span></button>`;
   return `<nav class="nav-list" aria-label="Main navigation"><div class="cq-primary-nav">${PRIMARY_NAV.map(n=>item(n,true)).join('')}</div><details class="cq-nav-more" ${state.moreToolsOpen?'open':''}><summary>More tools <span aria-hidden="true">⌄</span></summary><div>${TOOL_NAV.map(n=>item(n)).join('')}</div></details></nav>`;
@@ -258,7 +259,7 @@ function renderApp(){
   if(!state.profile) return renderAuth();
   applyTheme();
   const top = getTopbar();
-  app.className='app-shell';
+  app.className='app-shell'+(state.activeView==='adventure'?' cq-expedition-shell':'');
   app.innerHTML = `
     <aside class="sidebar" id="sidebar">
       <button class="icon-button mobile-close" id="closeMenu">Close</button>
@@ -269,7 +270,7 @@ function renderApp(){
     <main class="main">
       <div class="topbar">
         <div class="button-row"><button class="icon-button hamburger" id="openMenu">Menu</button><h2>${pageTitle()}</h2></div>
-        <div class="top-actions">${top}</div>
+        <div class="top-actions">${state.activeView==='adventure'?'<button class="secondary-button small" data-go="command">Today</button><button class="secondary-button small" data-go="library">Library</button>':''}${top}</div>
       </div>
       ${state.demo?'<div class="cq-demo-notice">DEMO WORLD · Original sample questions · Saves on this device only <button id="endDemo">Exit demo</button></div>':''}
       ${state.activeView==='command'?'':renderStatusStrip()}
@@ -306,11 +307,34 @@ function bindArcadeHub(){
  $$('[data-arcade-game]').forEach(button=>button.onclick=()=>startLibraryGame(button.dataset.arcadeGame));
  $('#arcadeGuild')?.addEventListener('click',()=>{if(!state.group)return navigateTo('guild');state.toolsTab='guild-study';navigateTo('tools');});
 }
+function renderLibraryAudit(){
+ const report=auditLibrary({decks:state.library.decks,cards:state.library.cards,uid:state.user.uid,groupId:state.profile.activeGroupId});
+ const s=report.summary,cat=report.categorization;
+ return `<section class="cq-library-hub"><header class="cq-page-head"><div><p class="eyebrow">LIBRARY HEALTH</p><h1>Know what is in your question bank.</h1><p>Compare exact question-and-choice matches and review supported lesson categories. Recall progress stays attached to its original records.</p></div></header><div class="cq-audit-summary">${[['Stored cards',s.cards],['Unique questions',s.uniqueQuestions],['Duplicate groups',s.duplicateGroups],['Answer conflicts',s.answerConflicts],['Category matches to apply',s.proposedCategories]].map(([label,n])=>`<div class="panel"><strong>${n}</strong><span>${label}</span></div>`).join('')}</div><section class="panel"><h2>Lesson categorization</h2><p>${cat.matched} matched · ${cat.mixed} mixed · ${cat.ambiguous} ambiguous · ${cat.unmatched} unmatched records.</p><p class="helper">Only unambiguous canonical matches in your Personal or active Guild library can be applied. Manually edited categories and public contributions stay unchanged.</p><div class="button-row"><button class="primary-button" id="applyCategoryAudit" ${!cat.operations.length||state.auditBusy?'disabled':''}>${state.auditBusy?'Saving categories…':`Apply ${cat.operations.length} supported category matches`}</button><button class="secondary-button" id="refreshCategoryAudit">Refresh audit</button><button class="secondary-button" id="exportCategoryAudit">Export report</button></div><p role="status">${esc(state.auditStatus||'')}</p>${state.auditErrors?.length?`<details class="cq-explain"><summary>Records needing another review</summary>${state.auditErrors.map(error=>`<p>${esc(error)}</p>`).join('')}</details>`:''}<details class="cq-explain"><summary>Review proposed category changes</summary><div class="cq-audit-list">${cat.operations.map(op=>`<div><strong>${esc(op.kind)} · ${esc(op.scope)}</strong><p>${esc(op.id)} → ${esc(op.patch.lessonTitle)} · ${esc(op.patch.domainId)}</p><small>${esc(op.reason)}</small></div>`).join('')||'<p>No supported changes are pending.</p>'}</div></details><details class="cq-explain"><summary>Unmatched, ambiguous and mixed records</summary>${cat.rows.filter(row=>row.status!=='matched').slice(0,150).map(row=>`<p>${esc(row.title||row.id)} · ${esc(row.status)} · ${esc(row.reason||'Review metadata in the deck editor.')}</p>`).join('')}<button class="secondary-button" data-go="tools">Open deck editor</button></details></section><section class="panel"><h2>Exact duplicate groups</h2><p class="helper">The same question may be intentionally present in Personal, Guild and Public libraries. Those copies share one logical recall state in study analytics. This report never deletes cards or resolves conflicting answer keys automatically.</p>${report.duplicateGroups.slice(0,100).map(g=>`<details class="cq-explain"><summary>${g.count} copies ${g.answerConflict?'· ANSWER CONFLICT':''} · ${esc(g.question.slice(0,120))}</summary>${g.cards.map(card=>`<p>${esc(card.scope)} · ${esc(card.id)} · ${esc(card.lessonId||'No lesson')} · Answer: ${esc(card.answer||'Unavailable')}</p>`).join('')}</details>`).join('')||'<p>No exact duplicates found in the loaded library.</p>'}</section><p class="cq-fine">${esc(report.limitations)} Full details are included in the exported report.</p></section>`;
+}
+function bindLibraryAudit(){
+ $('#exportCategoryAudit')?.addEventListener('click',()=>downloadText('controlquest-library-audit.json',JSON.stringify(auditLibrary({decks:state.library.decks,cards:state.library.cards,uid:state.user.uid,groupId:state.profile.activeGroupId}),null,2),'application/json'));
+ $('#refreshCategoryAudit')?.addEventListener('click',async()=>{await refreshStudyLibrary();renderApp();});
+ $('#applyCategoryAudit')?.addEventListener('click',async()=>{
+  if(state.auditBusy)return;const profile=state.profile,uid=state.user.uid,groupId=profile.activeGroupId,library=state.library;
+  const current=()=>state.profile===profile&&state.user?.uid===uid&&profile.activeGroupId===groupId;
+  const operations=auditLibrary({decks:library.decks,cards:library.cards,uid,groupId}).categorization.operations;
+  state.auditBusy=true;state.auditStatus='Saving supported category matches…';renderApp();let saved=0,failed=[];
+  try{
+   downloadText('controlquest-categories-before.json',JSON.stringify({createdAt:new Date().toISOString(),records:operations.map(op=>({kind:op.kind,record:(op.kind==='deck'?library.decks:library.cards).find(r=>r.id===op.id&&r.scopeKey===op.scopeKey)}))},null,2),'application/json');
+   for(const op of operations){if(!current())throw new Error('Account or Guild changed. Refresh the audit before continuing.');const entries=op.kind==='deck'?library.decks:library.cards,record=entries.find(r=>r.id===op.id&&r.scopeKey===op.scopeKey);if(!record)continue;
+    try{const result=await saveCategoryPatch({uid,groupId,kind:op.kind,id:op.id,scope:op.scope,patch:op.patch,expectedUpdatedAt:record.updatedAt});if(!current())throw new Error('Account or Guild changed.');Object.assign(record,result);saved++;if(saved%10===0&&current()){state.auditStatus=`${saved} of ${operations.length} category matches saved…`;if(state.activeView==='audit')renderApp();}}catch(error){failed.push(`${op.id}: ${error.message}`);}
+   }
+   if(current()){state.auditStatus=`${saved} category matches saved. ${failed.length} records need another review.`;state.auditErrors=failed;await refreshStudyLibrary();}
+  }catch(error){if(current())state.auditStatus=error.message;}finally{state.auditBusy=false;if(current())renderApp();}
+ });
+}
 function renderLibraryHub(){
   const cards=[
     ['tools','cards','Your decks','Search questions, filter by domain or lesson, edit categories, and play a deck.'],
     ['import','qae','Import files','Upload a batch of Word exports and review the lesson matches together.'],
     ['mastery','target','Your progress','See due, missed and mastered questions for each domain, plus lesson coverage.'],
+    ['audit','target','Library health','Review exact duplicates, answer-key conflicts and canonical lesson matches.'],
     ['learn','notebook','Short lessons','Read or listen to a concept, then test your understanding.']
   ];
   return `<div class="cq-library-hub"><header class="cq-section-title"><div><p class="eyebrow">YOUR STUDY SHELF</p><h1>Everything has a home.</h1><p>Start with Study for a guided session. Come here when you want to choose a lesson, organize files or check your progress.</p></div><button class="primary-button" data-go="feed">Start studying →</button></header><div class="cq-library-grid">${cards.map(([view,icon,title,body])=>`<button data-go="${view}"><span class="app-icon">${svgIcon(icon)}</span><strong>${title}</strong><p>${body}</p><span>Open →</span></button>`).join('')}</div><section class="panel cq-library-together"><p class="eyebrow">BETTER TOGETHER</p><h2>A shared library. Your own learning.</h2><p class="helper">Your recall history and study settings are personal. Guild members can share lesson decks, meet for live questions, and build one Guild island together.</p><div class="button-row"><button class="secondary-button" data-go="guild">${state.group?'Open your Guild':'Find your Guild'}</button><button class="secondary-button" data-go="room">Study together</button></div></section><details class="cq-explain"><summary>Looking for another tool?</summary><p>Open <strong>More tools</strong> in the menu for your calendar, exam study plan, practice log, notes, avatar and settings.</p></details></div>`;
@@ -321,8 +345,8 @@ function showQuickGuide(){
 function bindCommon(){
   $('#endDemo')?.addEventListener('click',()=>{location.search='';});
   $('.cq-nav-more')?.addEventListener('toggle',e=>{state.moreToolsOpen=e.currentTarget.open;});
-  $$('[data-mobile-view]').forEach(b=>b.onclick=()=>navigateTo(b.dataset.mobileView));
-  $$('.nav-btn').forEach(b=>b.onclick=()=>{state.lastScrollTop=$('#sidebar .nav-list')?.scrollTop||0;navigateTo(b.dataset.view);requestAnimationFrame(()=>{const nav=$('#sidebar .nav-list'); if(nav)nav.scrollTop=state.lastScrollTop;});});
+  $$('[data-mobile-view]').forEach(b=>b.onclick=()=>{if(b.dataset.mobileView==='feed'){state.profile.v3 ||= {};state.profile.v3.studyExperience='focus';}navigateTo(b.dataset.mobileView);});
+  $$('.nav-btn').forEach(b=>b.onclick=()=>{if(b.dataset.view==='feed'){state.profile.v3 ||= {};state.profile.v3.studyExperience='focus';}state.lastScrollTop=$('#sidebar .nav-list')?.scrollTop||0;navigateTo(b.dataset.view);requestAnimationFrame(()=>{const nav=$('#sidebar .nav-list'); if(nav)nav.scrollTop=state.lastScrollTop;});});
   $('#themeSelect')?.addEventListener('change',e=>{state.profile.preferences.theme=e.target.value;applyTheme();saveProfileDebounced();});
   $('#helpBtn')?.addEventListener('click',()=>showQuickGuide());
   $('#logoutBtn')?.addEventListener('click',()=>signOutUser());
@@ -346,6 +370,7 @@ function renderGlobalOverlay(){
 
 function renderView(){
   if(EXPERIENCE_VIEWS.includes(state.activeView))return renderExperience(state.activeView,experienceContext())+(['command','feed'].includes(state.activeView)?renderMissionShortcut(state.profile):'');
+  if(state.activeView==='audit')return renderLibraryAudit();
   if(state.activeView==='arcade')return renderArcadeHub();
   if(state.activeView==='library')return renderLibraryHub();
   if(state.activeView==='profile')return renderExperienceSettings(experienceContext())+renderMissionPanel(experienceContext())+renderProfile();
@@ -947,7 +972,7 @@ async function recordLocalGuildReviewIfNeeded(gs,card){
   const answer=gs.responses?.[state.user.uid]?.answer;if(!answer)return;
   const marker=`${gs.id}:${gs.index}`;state.profile.guildReviewRecorded ||= {};
   if(state.profile.guildReviewRecorded[marker])return;
-  try{await saveExperienceReview(card,{rating:answer===card.correctAnswer?'Good':'Again',selectedAnswer:answer,eventId:`guild:${marker}:${state.user.uid}`,mode:'guild-study'});if(state.profile!==profile||state.user?.uid!==uid)return;profile.guildReviewRecorded[marker]=new Date().toISOString();await saveProfile(profile);}catch(error){toast(friendly(error),'error');}
+  try{await saveExperienceReview(card,{rating:answer===card.correctAnswer?'Good':'Again',selectedAnswer:answer,eventId:`guild:${marker}:${state.user.uid}`,mode:'guild-study'});if(state.profile!==profile||state.user?.uid!==uid)return;profile.guildReviewRecorded[marker]=new Date().toISOString();await saveProfile(profile);if(state.profile===profile&&state.user?.uid===uid)renderApp();}catch(error){toast(friendly(error),'error');}
 }
 
 function renderStudyGamesTab(){
@@ -1198,6 +1223,7 @@ function bindProfile(){
 }
 
 function bindView(){
+  if(state.activeView==='audit'){bindLibraryAudit();return;}
   if(state.activeView==='arcade'){bindArcadeHub();return;}
   if(EXPERIENCE_VIEWS.includes(state.activeView)){bindExperience(state.activeView,experienceContext());return;}
   if(state.activeView==='profile'){bindExperienceSettings(experienceContext());bindMissionPanel(experienceContext());}
@@ -1438,6 +1464,7 @@ function experienceContext(){
     avatar:()=>avatarSvg(state.profile.inventory.equipped),navigate:navigateTo,render:renderApp,toast,
     save,saveQuiet:()=>{if(isCurrent())saveProfileDebounced();},refresh:refreshStudyLibrary,download:downloadText,
     review:saveExperienceReview,worldAction:saveExperienceWorldAction,importBatch:saveExperienceBatch,
+    renderGuildStudy:renderGuildStudyTab,bindGuildStudy:bindTools,
     getWorld:()=>createWorld(state.group?state.group.questWorld:state.profile.v3.world),
     completeLesson:async lesson=>{
       if(experienceWorldLock||experienceReviewLock)throw new Error('Your previous move is still saving. Try this lesson check again in a moment.');

@@ -1,4 +1,9 @@
-# ControlQuest Studio 3.2
+# ControlQuest Studio 4.0
+
+Study first, with a shared sailing expedition alongside it. Choose Focus study for questions and explanations, Expedition for a world-and-question workspace, or Guild live for synchronized questions beside the shared mission. Every mode uses the same personal recall records and active island save.
+
+- [Study expeditions and Library Health](docs/V4_RELEASE.md)
+
 
 Blue skies, a playable island and question-powered adventures. Start a study round from Today, explore Island on foot, or choose a challenge in Games. Your saved answers grow crops, deliver materials and send the crew to work on construction. Guild members build one shared island; independent explorers use their own saved world.
 

@@ -1,3 +1,4 @@
+import {createExpedition,advanceExpedition} from './expedition-engine.js';
 /** A persistent, study-powered, turn-based island. No timers or purchases. */
 export const QUEST_WORLD_VERSION=1;
 export const WORLD_ZONES=Object.freeze([
@@ -54,9 +55,11 @@ export function createWorld(saved={}) {
   world.workshop={progress:integer(valid.workshop?.progress,0,2),ready:integer(valid.workshop?.ready,0,50),collected:integer(valid.workshop?.collected)};
   world.automation={enabled:valid.automation?.enabled!==false};
   const project=valid.project,building=Object.hasOwn(WORLD_BUILDINGS,project?.building)?project.building:'beacon';
-  world.project={building,progress:integer(project?.progress,0,2),target:3,funded:project?.funded===true};
+  world.project={building,progress:integer(project?.progress,0,2),target:3,funded:project?.funded===true,manuallySelected:project?.manuallySelected===true};
   if(world.project.funded&&world.buildings[building]>=WORLD_BUILDINGS[building].maxLevel)world.project.funded=false;
   world.expedition={steps:integer(valid.expedition?.steps),summits:integer(valid.expedition?.summits)};
+  world.campaign=createExpedition(valid.campaign);
+  world.campaign.stores={timber:world.resources.wood,crystal:world.resources.crystal,coins:world.resources.coins};
   world.settlement={expansions:integer(valid.settlement?.expansions),deliveries:integer(valid.settlement?.deliveries)};
   world.journal=Array.isArray(valid.journal)?valid.journal.filter(entry=>entry&&typeof entry.message==='string').slice(-8).map(entry=>({message:entry.message.slice(0,300),turn:integer(entry.turn),tone:String(entry.tone||'success').slice(0,20)})):[];
   if(world.activeQuest&&!questPatterns.some(p=>p.objective===world.activeQuest.objective))world.activeQuest=null;
@@ -87,6 +90,12 @@ export function advanceWorld(saved,event={}) {
   const costs=(resources={})=>Object.entries(resources).every(([key,n])=>world.resources[key]>=n);
   let feedback='',tone='success',reward=null;
   switch(event.type){
+    case 'campaign-assign':
+    case 'campaign-job':{
+      const result=advanceExpedition(world.campaign,{type:'assign',id:event.id,job:event.job});
+      if(!result.changed)return reject(result.feedback.message);
+      world.campaign=result.expedition;feedback=result.feedback.message;tone=result.feedback.tone;break;
+    }
     case 'travel':{
       if(!WORLD_ZONES.some(z=>z.id===event.zone))return reject('Choose a place on the island.');
       if(world.zone===event.zone)return reject('You are already here.');
@@ -104,13 +113,15 @@ export function advanceWorld(saved,event={}) {
         const results=advanceCrew(world,event.correct);
         feedback+=' '+results.join(' ');
       }else if(world.workshop.ready>before.workshop.ready)feedback+=' A supply crate is ready to collect!';
+      const result=advanceExpedition({...world.campaign,stores:{timber:world.resources.wood,crystal:world.resources.crystal,coins:world.resources.coins}},event);
+      if(result.changed){world.campaign=result.expedition;world.resources.wood=result.expedition.stores.timber;world.resources.crystal=result.expedition.stores.crystal;world.resources.coins=result.expedition.stores.coins;feedback+=' '+result.feedback.message;if(!event.correct)tone='setback';}
       break;
     }
     case 'plan-build':{
       if(!Object.hasOwn(WORLD_BUILDINGS,event.building))return reject('Choose a landmark on the island.');
       if(world.project.funded)return reject('Your crew is already building. Answer questions to finish this project before choosing another.');
       if(world.buildings[event.building]>=WORLD_BUILDINGS[event.building].maxLevel)return reject('That landmark is fully restored. Choose another project.');
-      world.project={building:event.building,progress:0,target:3,funded:false};
+      world.project={building:event.building,progress:0,target:3,funded:false,manuallySelected:true};
       world.automation.enabled=true;feedback=`Crew assigned to ${WORLD_BUILDINGS[event.building].name}. Your saved answers bring supplies and build it.`;tone='build';break;
     }
     case 'set-automation':{
@@ -233,7 +244,7 @@ function advanceCrew(w,correct){
   const project=w.project,spec=WORLD_BUILDINGS[project.building],level=w.buildings[project.building];
   if(level<spec.maxLevel){
     const timber=spec.wood+level,starlight=spec.crystal+Math.floor(level/2);
-    if(!project.funded&&w.resources.wood>=timber&&w.resources.crystal>=starlight&&w.energy>=spec.energy){
+    if(project.manuallySelected&&!project.funded&&w.resources.wood>=timber&&w.resources.crystal>=starlight&&w.energy>=spec.energy){
       w.resources.wood-=timber;w.resources.crystal-=starlight;w.energy-=spec.energy;project.funded=true;notes.push(`Construction started: ${spec.name}.`);
     }
     if(project.funded){

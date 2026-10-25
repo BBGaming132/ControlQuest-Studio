@@ -1,3 +1,4 @@
+import {auditIncomingQuestions} from './library-audit.js';
 import { sha256Hex } from './runtime-crypto.js';
 import { parseQaePaste } from './qae-parser.js';
 import { LESSONS, cardLesson, matchLesson } from './lesson-catalog.js';
@@ -102,6 +103,10 @@ function summarize(items){
     questions:included.reduce((sum,item)=>sum+(item.questions?.length||0),0),
     uniqueQuestions:new Set(included.flatMap(item=>(item.questions||[]).map(batchQuestionIdentity))).size,
     duplicateFiles:items.filter(item=>item.duplicateOf).length,
+    existingDuplicates:included.reduce((n,item)=>n+(item.importAudit?.existingDuplicates||0),0),
+    batchDuplicates:included.reduce((n,item)=>n+(item.importAudit?.batchDuplicates||0)+(item.duplicateQuestions||0),0),
+    newQuestions:included.reduce((n,item)=>n+(item.importAudit?.newQuestions||0),0),
+    answerConflicts:included.reduce((n,item)=>n+(item.importAudit?.answerConflicts||0),0),
     reviewRequired:included.filter(item=>item.requiresReview&&!item.confirmed).length,
     failed:items.filter(item=>item.status==='failed').length,completed:items.filter(item=>item.status==='complete').length,
     skipped:items.filter(item=>item.status==='skipped').length,cancelled:items.filter(item=>item.status==='cancelled').length};
@@ -123,7 +128,7 @@ export async function createBatchPlan(files, options={}){
     size:Math.max(0,Number(file.size)||0),sourceIndex:index}));
   const plan={version:BATCH_IMPORT_VERSION,id:'',uid:options.uid||'',groupId:options.groupId||null,items,limits,
     createdAt:new Date().toISOString(),cancelled:false,running:false,summary:summarize(items)};
-  const seenFiles=new Map(),representatives=new Map(),answerSources=new Map();
+  const seenFiles=new Map(),representatives=new Map(),answerSources=new Map(),priorQuestions=[];
   for(const card of options.existingCards||[]){
     if(!card.question||!card.correctAnswer)continue;
     const key=`${batchQuestionIdentity(card)}|${answerIdentity(card)}`;
@@ -146,7 +151,7 @@ export async function createBatchPlan(files, options={}){
       if(seenFiles.has(item.fileDigest)){
         item.duplicateOf=seenFiles.get(item.fileDigest);const original=items.find(row=>row.id===item.duplicateOf);
         item.questions=original?.questions||[];item.lessonId=original?.lessonId||'';item.unmatchedQuestions=original?.unmatchedQuestions||0;
-        item.include=false;item.status='duplicate';item.requiresReview=true;
+        item.importAudit=auditIncomingQuestions(item.questions,options.existingCards||[],priorQuestions);item.include=false;item.status='duplicate';item.requiresReview=true;
         item.warnings.push('Identical file content is already in this batch. It is excluded by default. Confirm it only if you deliberately want a second deck or destination.');continue;
       }
       seenFiles.set(item.fileDigest,item.id);
@@ -177,6 +182,11 @@ export async function createBatchPlan(files, options={}){
         source.set(answer,[...(source.get(answer)||[]),item]);answerSources.set(identity,source);
       }
       item.questions=[...unique.values()];
+      item.importAudit=auditIncomingQuestions(item.questions,options.existingCards||[],priorQuestions);
+      if(item.importAudit.existingDuplicates)item.warnings.push(`${item.importAudit.existingDuplicates} exact questions already exist in your loaded library (including other scopes). Their existing question IDs are reused when saving to the same destination; no extra learning credit comes from uploading again.`);
+      if(item.importAudit.batchDuplicates)item.warnings.push(`${item.importAudit.batchDuplicates} exact questions also appear in earlier files in this batch. Shared-bank duplicates are linked rather than additional unique questions.`);
+      if(item.importAudit.answerConflicts)item.warnings.push(`${item.importAudit.answerConflicts} questions match existing question text and choices but have conflicting correct-answer keys. Variants are retained for review; they are not silently merged.`);
+      priorQuestions.push(...item.questions);
       const named=matchLesson(item.title),detected=item.questions.map(cardLesson),detectedIds=new Set(detected.filter(Boolean).map(l=>l.id));
       const unanimous=detected.length&&detected.every(Boolean)&&detectedIds.size===1?detected[0]:null;
       item.lessonId=(unanimous||named)?.id||'';

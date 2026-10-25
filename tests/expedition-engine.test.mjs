@@ -1,0 +1,46 @@
+import assert from 'node:assert/strict';
+import {createExpedition,advanceExpedition,expeditionSummary,EXPEDITION_JOBS} from '../js/expedition-engine.js';
+const answer=(state,id,correct=true)=>advanceExpedition(state,{type:'study-answer',id,correct});
+let state=createExpedition(),snapshot=JSON.stringify(state);
+assert.equal(state.activeJob,'gather');assert.equal(expeditionSummary(state).objective.target,3);
+let result=advanceExpedition(state,{type:'assign',id:'choose-build',job:'build'});
+assert.equal(result.changed,true);assert.deepEqual(result.expedition.stores,state.stores,'Choosing a job cannot mint supplies');assert.equal(result.expedition.stats.answers,0);assert.equal(JSON.stringify(state),snapshot,'Prior transaction snapshots remain immutable');
+assert.equal(advanceExpedition(result.expedition,{type:'assign',id:'choose-build',job:'gather'}).duplicate,true);
+assert.equal(advanceExpedition(state,{type:'assign',id:'bad-job',job:'__proto__'}).changed,false);
+assert.equal(advanceExpedition(state,{type:'assign',id:'no-pirates',job:'defend'}).changed,false);
+assert.equal(advanceExpedition(state,{type:'assign',id:'unprepared',job:'sail'}).changed,false);
+assert.equal(answer(state,'',true).changed,false);assert.equal(answer(state,'bad-answer','true').changed,false);
+state=answer(state,'gather-1').expedition;assert.equal(state.work.gather,2);assert.equal(state.stores.timber,0);
+state=answer(state,'gather-2').expedition;assert.equal(state.activeJob,'build');assert.deepEqual(state.stores,{timber:3,crystal:1,coins:0});assert.equal(state.legIndex,1);
+assert.equal(answer(state,'gather-2').duplicate,true);
+state=answer(state,'build-1').expedition;assert.equal(state.fleet.buildings,0);
+result=answer(state,'build-2');state=result.expedition;assert.equal(state.fleet.buildings,1);assert.equal(state.stores.timber,1);assert.equal(state.stores.crystal,0);assert.equal(state.activeJob,'sail');assert.equal(state.fleet.guard,1);assert.ok(result.deltas.some(delta=>delta.key==='outposts'&&delta.amount===1));
+const built=state.fleet.buildings;
+const missed=answer(state,'missed',false).expedition;assert.equal(missed.fleet.buildings,built);assert.equal(missed.repairs,1);assert.equal(missed.fleet.hull,93);assert.equal(missed.work.sail,0);
+result=answer(missed,'repair');state=result.expedition;assert.equal(state.repairs,0);assert.equal(state.fleet.hull,100);assert.equal(state.work.sail,1);assert.equal(state.stats.repairs,1);assert.match(result.feedback.message,/repaired/);
+for(let i=0;i<3;i++)state=answer(state,`sail-${i}`).expedition;
+assert.equal(state.activeJob,'defend');assert.equal(state.legIndex,3);assert.equal(expeditionSummary(state).enemy.active,true);assert.equal(expeditionSummary(state).enemy.hp,40);
+state=answer(state,'fight-1').expedition;assert.equal(expeditionSummary(state).enemy.hp,20);
+result=answer(state,'fight-2');state=result.expedition;assert.equal(state.stats.victories,1);assert.equal(state.stats.arrivals,1);assert.equal(state.routeIndex,1);assert.equal(state.legIndex,0);assert.equal(state.activeJob,'gather');assert.equal(state.stores.coins,13);assert.equal(expeditionSummary(state).enemy.active,false);assert.equal(result.feedback.tone,'arrival');
+assert.equal(answer(state,'fight-2').expedition.stats.victories,1);
+// An early construction assignment cannot conjure materials or discard its prepared work.
+let early=advanceExpedition(createExpedition(),{type:'assign',job:'build',id:'early'}).expedition;
+early=answer(early,'early-1').expedition;early=answer(early,'early-2').expedition;
+assert.equal(early.fleet.buildings,0);assert.equal(early.activeJob,'gather');assert.equal(early.work.build,4);
+early=answer(early,'supplies-1').expedition;early=answer(early,'supplies-2').expedition;
+assert.equal(early.fleet.buildings,1);assert.equal(early.work.build,0);assert.equal(early.legIndex,2);assert.equal(early.activeJob,'sail');assert.ok(early.stores.timber>=0&&early.stores.crystal>=0);
+// Any amount of difficult practice remains recoverable and preserves completed structures.
+let recovery=createExpedition({...state,fleet:{...state.fleet,buildings:9}});
+for(let i=0;i<100;i++)recovery=answer(recovery,`rough-${i}`,false).expedition;
+assert.equal(recovery.repairs,6);assert.equal(recovery.fleet.hull,40);assert.equal(recovery.fleet.buildings,9);
+for(let i=0;i<6;i++)recovery=answer(recovery,`recover-${i}`).expedition;
+assert.equal(recovery.repairs,0);assert.equal(recovery.fleet.hull,100);assert.ok(recovery.fleet.buildings>=9);
+// Procedural charts continue across chapters, with bounded storage and serializable migration.
+let long=createExpedition();for(let i=0;i<2000;i++)long=answer(long,`long-${i}`).expedition;
+assert.ok(long.chapter>1);assert.ok(long.routeIndex>8);assert.equal(long.receipts.length,512);assert.equal(long.log.length,12);assert.deepEqual(createExpedition(JSON.parse(JSON.stringify(long))),long);
+const source={steps:120,summits:10};assert.equal(createExpedition(source).legacyMilestones,10);assert.deepEqual(source,{steps:120,summits:10});
+const dirty=createExpedition({schemaVersion:1,routeIndex:-1,work:{sail:Infinity,build:99999},stores:{timber:-8,coins:Infinity},fleet:{hull:-50,buildings:-1},repairs:99,receipts:['ok',null,'ok','__proto__'],log:[{},null,{message:'a'.repeat(1000)}]});
+assert.equal(dirty.work.build,4);assert.equal(dirty.work.sail,0);assert.equal(dirty.stores.timber,0);assert.equal(dirty.fleet.hull,40);assert.equal(dirty.repairs,6);assert.deepEqual(dirty.receipts,['ok']);assert.equal(dirty.log.length,1);assert.equal(dirty.log[0].message.length,350);
+assert.throws(()=>createExpedition({schemaVersion:2}),/newer version/);
+assert.equal(Object.keys(EXPEDITION_JOBS).length,4);
+console.log('Expedition campaign: verified-work economy, immutable assignments, replay protection, construction requirements, sailing/pirates, recoverable setbacks, continuing charts and bounded migration passed.');

@@ -1,0 +1,21 @@
+import assert from 'node:assert/strict';
+import {JSDOM} from 'jsdom';
+const dom=new JSDOM('<main id="root"></main>',{url:'https://controlquest.test',pretendToBeVisual:true});
+for(const key of ['window','document','localStorage','navigator'])Object.defineProperty(globalThis,key,{value:dom.window[key],configurable:true});
+let module=await import('../js/experience.js?experience-modes');
+const $=selector=>document.querySelector(selector);let view='feed',calls=0,guildBindings=0;
+const c={user:{uid:'mode-user'},profile:{activeGroupId:null,stats:{xp:0,coins:0,streak:0},v3:{dailyGoal:5,studyMinutes:5}},group:null,library:{cards:[1,2].map(i=>({id:`q${i}`,scopeKey:'personal_mode-user',question:`Evidence question ${i}`,choices:{A:'Independent confirmation',B:'Assumption'},correctAnswer:'A',justifications:{A:'Evidence supports the conclusion.'},domainNumber:1,deckIds:[]})),decks:[],reviews:[],progress:{}},level:1,avatar:()=>'<svg/>',save:async()=>{},saveQuiet:()=>{},toast:()=>{},review:async()=>{calls++;if(c.fail)throw Error('Network unavailable');},worldAction:async()=>{},navigate(next){view=next;c.render();},render(){$('#root').innerHTML=module.renderExperience(view,c);module.bindExperience(view,c);},renderGuildStudy:()=>'<article id="guild-question">Shared live question</article>',bindGuildStudy:()=>{guildBindings++;}};
+try{
+ c.render();assert.equal($('[data-cq-experience="focus"]').getAttribute('aria-pressed'),'true');assert.equal($('.expedition-view'),null);assert.equal($('[data-cq-experience="guild"]'),null,'Solo learners are not offered an unavailable live Guild mode');
+ $('[data-cq-start="recommended"]').click();const run=c.profile.v3.pocketSession.run,question=$('#cqStudyCard h2').textContent;
+ $('[data-cq-choice="A"]').click();$('#cqReveal').click();
+ $('[data-cq-experience="expedition"]').click();assert.equal(c.profile.v3.studyExperience,'expedition');assert.ok($('.expedition-view'));assert.equal($('#cqStudyCard h2').textContent,question);assert.equal(c.profile.v3.pocketSession.run,run,'Presentation changes preserve the review queue');assert.ok($('.cq-recall-result'));
+ $('[data-cq-toggle-world]').click();assert.ok($('.expedition-shell').classList.contains('cq-world-open'));$('[data-cq-toggle-world]').click();assert.equal($('.expedition-shell').classList.contains('cq-world-open'),false);
+ c.fail=true;await $('[data-cq-rate="Good"]').onclick();assert.equal($('#cqNextQuestion'),null,'Failed writes do not advance or show a saved receipt');assert.equal(c.profile.v3.pocketSession.index,0);
+ c.fail=false;await $('[data-cq-rate="Good"]').onclick();assert.equal(calls,2);assert.ok($('.cq-recall-result'));assert.equal($('#cqStudyCard h2').textContent,question,'Rationale stays visible until acknowledgement');assert.equal(c.profile.v3.pocketSession.pendingNext,true);assert.equal(c.profile.v3.pocketSession.index,0);assert.equal($('[data-cq-rate="Good"]').disabled,true);
+ await $('[data-cq-rate="Good"]').onclick();assert.equal(calls,2,'A saved pending acknowledgement cannot record another review');
+ $('[data-cq-experience="focus"]').click();assert.equal($('.expedition-view'),null);assert.ok($('.cq-recall-result'));assert.ok($('#cqNextQuestion'));
+ module=await import('../js/experience.js?experience-modes-reload');c.render();assert.ok($('#cqNextQuestion'));assert.equal($('[data-cq-rate="Good"]').disabled,true,'Reload restores the saved acknowledgement without making a second review');$('#cqNextQuestion').click();assert.equal(c.profile.v3.pocketSession.index,1);assert.equal(c.profile.v3.pocketSession.run,run);assert.equal(c.profile.v3.pocketSession.pendingNext,false);
+ c.profile.activeGroupId='crew';c.group={id:'crew',name:'Study Crew',members:{}};c.render();assert.ok($('[data-cq-experience="guild"]'));$('[data-cq-experience="guild"]').click();assert.ok($('#guild-question'));assert.ok($('.expedition-view'));assert.ok(guildBindings>0,'The host binds its real live-question controls');assert.equal($('#cqStudyCard'),null,'Guild mode does not duplicate an unrelated personal question');
+ console.log('Study experiences: Focus, Expedition and Guild share learning controls, preserve queues, retain rationale until acknowledgement and restore safe saved state.');
+}finally{dom.window.close();}
