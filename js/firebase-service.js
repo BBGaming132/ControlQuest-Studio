@@ -60,9 +60,18 @@ export async function loadProfile(uid) {
   const snap = await fs().getDoc(userRef(uid));
   return snap.exists() ? snap.data() : null;
 }
+export function profileStorageSnapshot(profile) {
+  const homework=profile.v3?.homework;
+  if(!homework)return profile;
+  // Full question snapshots and evidence live in individual private documents.
+  // A full twelve-week program must not grow the profile past Firestore's limit.
+  const compact={...homework,quizzes:Object.fromEntries(Object.entries(homework.quizzes||{}).map(([id,q])=>[id,{id:q.id||id,weekId:q.weekId||id,uid:q.uid||profile.uid,status:q.status||null,resetAt:q.resetAt||null,startedAt:q.startedAt||null,deadlineAt:q.deadlineAt||null,dueAt:q.dueAt||null,submittedAt:q.submittedAt||null,result:q.result?Object.fromEntries(['correct','total','incorrect','unanswered','accuracy','timedOut','durationSeconds'].filter(key=>q.result[key]!==undefined).map(key=>[key,q.result[key]])):null,_revision:q._revision||0,storedSeparately:true}])),completions:Object.fromEntries(Object.entries(homework.completions||{}).map(([id,c])=>[id,{lessonId:id,completedAt:c.completedAt||null,resetAt:c.resetAt||null,storedSeparately:true}]))};
+  return {...profile,v3:{...profile.v3,homework:compact}};
+}
 export async function saveProfile(profile) {
-  if (!ready) return saveLocal({ profile });
-  await fs().setDoc(userRef(profile.uid), withStamp(profile), { merge: true });
+  const snapshot=profileStorageSnapshot(profile);
+  if (!ready) return saveLocal({ profile:snapshot });
+  await fs().setDoc(userRef(profile.uid), withStamp(snapshot), { merge: true });
 }
 export async function backupProfile(profile, reason='Manual Backup') {
   const backup = { profile, reason, createdAt: new Date().toISOString() };
@@ -116,6 +125,7 @@ export function publicSummary(profile) {
     roadmapPct: profile.stats?.roadmapPct || 0,
     minutes: profile.stats?.studyMinutes || 0,
     timezone: profile.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone,
+    homework: profile.v3?.homeworkSummary || null,
     updatedAt: new Date().toISOString()
   };
 }
@@ -156,7 +166,7 @@ async function docsFromCollection(ref) {
 export async function loadStudyLibrary(uid, groupId = null) {
   if (!ready) {
     const local = loadLocalStudy();
-    return { decks: local.decks || [], cards: local.cards || [], progress: local.progress || {}, reviews: local.reviews || [] };
+    return { decks: local.decks || [], cards: local.cards || [], progress: local.progress || {}, ...splitStudyRecords((local.reviews || []).filter(r=>!r.uid||r.uid===uid)) };
   }
   const deckPromises = [docsFromCollection(collectionRefFor('Personal', uid, null, 'deck'))];
   const cardPromises = [docsFromCollection(collectionRefFor('Personal', uid, null, 'card'))];
@@ -176,7 +186,7 @@ export async function loadStudyLibrary(uid, groupId = null) {
     decks: deckGroups.flat(),
     cards: cardGroups.flat(),
     progress: Object.fromEntries(progressDocs.map(p => [p.id, p])),
-    reviews: reviewDocs.sort((a,b)=>String(b.reviewedAt||'').localeCompare(String(a.reviewedAt||''))).slice(0, 1000)
+    ...splitStudyRecords(reviewDocs)
   };
 }
 
@@ -200,7 +210,8 @@ export async function saveStudyImport({ uid, groupId, decks = [], cards = [] }) 
     cards.forEach(c => {
       const key = `${c.scopeKey}:${c.id}`;
       const old = cardMap.get(key) || {};
-      cardMap.set(key, { ...old, ...c, deckIds: [...new Set([...(old.deckIds || []), ...(c.deckIds || [])])] });
+      const sources=[...new Set([...(old.sources||[]),old.source,...(c.sources||[]),c.source].filter(source=>typeof source==='string'&&source.trim()))];
+      cardMap.set(key, { ...old, ...c, sources,source:sources.includes('ISACA QAE Paste')?'ISACA QAE Paste':c.source||old.source||'',deckIds: [...new Set([...(old.deckIds || []), ...(c.deckIds || [])])] });
     });
     const progress={...(local.progress||{})};for(const c of cards.filter(c=>c.wasCorrectAtImport===false)){const id=`${c.scopeKey}__${c.id}`;progress[id]={...(progress[id]||{}),id,uid,cardId:c.id,scope:c.scope,scopeKey:c.scopeKey,importedMiss:true};}
     saveLocalStudy({ ...local, decks: [...deckMap.values()], cards: [...cardMap.values()],progress });
@@ -211,10 +222,17 @@ export async function saveStudyImport({ uid, groupId, decks = [], cards = [] }) 
     const ref = docRefFor(deck.scope, uid, groupId, 'deck', deck.id);
     operations.push(batch => batch.set(ref, { ...withStamp(deck), contributors:fs().arrayUnion(...(deck.contributors||[])) }, { merge: true }));
   }
-  for (const card of cards) {
-    const ref = docRefFor(card.scope, uid, groupId, 'card', card.id);
-    const { arrayUnion } = fs();
-    operations.push(batch => batch.set(ref, { ...withStamp(card), deckIds: arrayUnion(...(card.deckIds || [])) }, { merge: true }));
+  // Older imports kept only a single source string. Read that legacy value
+  // before promotion into an append-only source list; arrayUnion preserves
+  // concurrent contributors even if this device read an earlier version.
+  for(let offset=0;offset<cards.length;offset+=100){
+    const chunk=cards.slice(offset,offset+100);
+    const previous=await Promise.all(chunk.map(card=>fs().getDoc(docRefFor(card.scope,uid,groupId,'card',card.id))));
+    chunk.forEach((card,index)=>{
+      const old=previous[index].exists()?previous[index].data():{},sources=[...new Set([...(old.sources||[]),old.source,...(card.sources||[]),card.source].filter(source=>typeof source==='string'&&source.trim()))];
+      const ref=docRefFor(card.scope,uid,groupId,'card',card.id),{arrayUnion}=fs();
+      operations.push(batch=>batch.set(ref,{...withStamp(card),source:sources.includes('ISACA QAE Paste')?'ISACA QAE Paste':card.source||old.source||'',sources:arrayUnion(...sources),deckIds:arrayUnion(...(card.deckIds||[]))},{merge:true}));
+    });
   }
   for(const card of cards.filter(c=>c.wasCorrectAtImport===false)){const id=`${card.scopeKey}__${card.id}`;operations.push(batch=>batch.set(docRefFor('Personal',uid,null,'progress',id),{id,uid,cardId:card.id,scope:card.scope,scopeKey:card.scopeKey,importedMiss:true},{merge:true}));}
   await commitBatchOperations(operations);
@@ -260,9 +278,11 @@ export async function saveStudyProgress(uid, progress) {
 
 export async function saveStudyReview(uid, review) {
   if (!review?.id) return;
+  if(!uid||(review.uid&&review.uid!==uid)||(ready&&auth?.currentUser?.uid!==uid))throw new Error('Save reviews only to your own account.');
+  review={...review,uid};
   if (!ready) {
     const local = loadLocalStudy();
-    const reviews = [review, ...(local.reviews || [])].slice(0, 2000);
+    const reviews = [review, ...(local.reviews || []).filter(r=>!(r.id===review.id&&r.uid===uid))];
     saveLocalStudy({ ...local, reviews });
     return;
   }
@@ -371,5 +391,82 @@ export async function saveCategoryPatch({uid,groupId,kind,id,scope,patch,expecte
   return fs().runTransaction(db,async transaction=>{
     const ref=docRefFor(scope,uid,groupId,kind,id),snapshot=await transaction.get(ref),record=snapshot.exists()?snapshot.data():null;check(record);
     const result=withStamp({...record,...category});transaction.update(ref,{...category,updatedAt:result.updatedAt});return result;
+  });
+}
+
+
+function splitStudyRecords(records) {
+  const reviews=[],activityRecords=[],homeworkQuizzes={},homeworkCompletions={},homeworkQuizHistory=[];
+  for(const r of records){
+    if(r.recordType==='account-activity')activityRecords.push(r);
+    else if(r.recordType==='homework-quiz')homeworkQuizzes[r.key]=r.value;
+    else if(r.recordType==='homework-completion')homeworkCompletions[r.key]=r.value;
+    else if(r.recordType==='homework-quiz-archive')homeworkQuizHistory.push(r.value);
+    else reviews.push(r);
+  }
+  reviews.sort((a,b)=>String(b.reviewedAt||'').localeCompare(String(a.reviewedAt||'')));
+  activityRecords.sort((a,b)=>String(b.occurredAt||'').localeCompare(String(a.occurredAt||'')));
+  return {reviews,activityRecords,homeworkQuizzes,homeworkCompletions,homeworkQuizHistory,quizArchive:homeworkQuizHistory};
+}
+export async function saveStudyAuditEvent(uid,event) {
+  if(!uid||!event?.id||!event?.type)throw new Error('An account and activity ID are required.');
+  if(ready&&auth?.currentUser?.uid!==uid)throw new Error('Sign in to your own account.');
+  const record={...event,uid,recordType:'account-activity',occurredAt:event.occurredAt||new Date().toISOString()};
+  await saveStudyReview(uid,record);return record;
+}
+const homeworkWrites=new Map();
+export async function saveHomeworkRecord(uid,kind,key,value) {
+  if(!uid||!['quiz','completion'].includes(kind)||!/^[-a-zA-Z0-9_]+$/.test(key)||!value||typeof value!=='object')throw new Error('Invalid homework record.');
+  if(ready&&auth?.currentUser?.uid!==uid)throw new Error('Sign in to your own account.');
+  // Keep the caller's revision immutable: Firestore may rerun this callback.
+  const incoming=structuredClone(value),id=`homework_${kind}_${key}`,lock=`${uid}:${id}`;
+  if(kind==='quiz'&&(incoming.uid!==uid||incoming.weekId!==key||!incoming.id||!['active','submitted'].includes(incoming.status)))throw new Error('This quiz belongs to another account or week.');
+  const comparable=quiz=>{const copy={...quiz};delete copy._revision;return JSON.stringify(copy);};
+  const isReset=previous=>kind==='quiz'&&previous?.value&&incoming.id!==previous.value.id;
+  const update=(previous,resetVerified=false)=>{
+    let next=incoming;
+    if(kind==='quiz'){
+      const prior=previous?.value,revision=Number(prior?._revision)||0;
+      if(prior&&comparable(prior)===comparable(incoming))return previous;
+      const replacing=isReset(previous);
+      if(replacing){
+        if(!resetVerified||!(Date.parse(incoming.resetAt)>Date.parse(prior.startedAt))||!(Date.parse(incoming.startedAt)>=Date.parse(incoming.resetAt)))throw new Error('Reset the relevant flashcard memory before starting a new quiz attempt.');
+        if(incoming.status!=='active')throw new Error('A reset quiz must start as a new active attempt.');
+      }else{
+        if(revision!==(Number(incoming._revision)||0))throw new Error('This quiz changed on another device. Reload to resume the latest answers.');
+        if(prior?.status==='submitted'||prior?.result)throw new Error('A submitted quiz cannot be overwritten.');
+        if(prior&&['id','weekId','uid','startedAt','deadlineAt','dueAt','durationSeconds','resetAt','questions'].some(field=>JSON.stringify(prior[field])!==JSON.stringify(incoming[field])))throw new Error('An active quiz cannot be restarted, replaced, or given extra time.');
+      }
+      next={...incoming,_revision:revision+1};
+    }
+    return {id,uid,recordType:`homework-${kind}`,key,value:next,updatedAt:new Date().toISOString()};
+  };
+  const archive=previous=>({...previous,id:`${id}_archive_${previous.value.id}_${previous.value._revision||0}`,recordType:'homework-quiz-archive'});
+  if(!ready){
+    const previous=homeworkWrites.get(lock)||Promise.resolve();
+    const work=previous.catch(()=>{}).then(()=>{
+      const local=loadLocalStudy(),saved=(local.reviews||[]).find(r=>r.id===id&&r.uid===uid);
+      const profile=loadLocal()?.profile;
+      const resetVerified=!!incoming.resetAt&&((profile?.uid===uid&&profile.v3?.homework?.resetAt===incoming.resetAt)||Object.values(local.progress||{}).some(p=>p.uid===uid&&p.resetAt===incoming.resetAt));
+      const record=update(saved,resetVerified),history=isReset(saved)?[archive(saved)]:[];
+      saveLocalStudy({...local,reviews:[record,...history,...(local.reviews||[]).filter(r=>!(r.id===id&&r.uid===uid))]});return record.value;
+    });
+    homeworkWrites.set(lock,work);try{return await work;}finally{if(homeworkWrites.get(lock)===work)homeworkWrites.delete(lock);}
+  }
+  const ref=docRefFor('Personal',uid,null,'review',id);
+  // Resolve possible reset evidence, then reread the evidence document inside
+  // the transaction so a concurrent device cannot invalidate that reset proof.
+  let resetCandidates=null;
+  return fs().runTransaction(db,async transaction=>{
+    const snap=await transaction.get(ref),previous=snap.exists()?snap.data():null;
+    let resetVerified=false;
+    if(isReset(previous)&&incoming.resetAt){
+      const profile=await transaction.get(userRef(uid));resetVerified=profile.exists()&&profile.data().v3?.homework?.resetAt===incoming.resetAt;
+      if(!resetVerified&&!resetCandidates)resetCandidates=(await docsFromCollection(collectionRefFor('Personal',uid,null,'progress'))).filter(p=>p.resetAt===incoming.resetAt&&(!p.uid||p.uid===uid));
+      if(!resetVerified)for(const candidate of resetCandidates){const proof=await transaction.get(docRefFor('Personal',uid,null,'progress',candidate.id));if(proof.exists()&&proof.data().resetAt===incoming.resetAt){resetVerified=true;break;}}
+    }
+    const record=update(previous,resetVerified);
+    if(isReset(previous)){const old=archive(previous);transaction.set(docRefFor('Personal',uid,null,'review',old.id),old);}
+    transaction.set(ref,record);return record.value;
   });
 }

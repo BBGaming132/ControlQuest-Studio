@@ -1,17 +1,21 @@
+import {buildHomeworkPlan,buildHomeworkPublicSummary,refreshHomeworkPublicSummary,enrollHomework} from './homework-plan.js';
+import {renderHomework,bindHomework,renderHomeworkQuiz,bindHomeworkQuiz} from './homework-view.js';
+import {renderReviewTools,bindReviewTools} from './review-tools.js';
+import {renderFocusAudio,bindFocusAudio,stopFocusAudio} from './focus-audio.js';
 import {auditLibrary} from './library-audit.js';
 import {renderMissionPanel,bindMissionPanel,renderMissionShortcut} from './mission-panel.js';
 import { randomId, sha256Hex } from './runtime-crypto.js';
-import { EXPERIENCE_VIEWS, renderExperience, bindExperience, renderExperienceSettings, bindExperienceSettings } from './experience.js';
+import { EXPERIENCE_VIEWS, renderExperience, bindExperience, renderExperienceSettings, bindExperienceSettings, startLessonReview, invalidateReviewSession } from './experience.js';
 import { CISA_MICROLESSONS } from './cisa-learning.js';
 import { createWorld, advanceWorld } from './quest-world.js';
 import { appendActivityEvent } from './activity-bridge.js';
 import { uniqueStudyCards, studyIdentity } from './study-intelligence.js';
 import { buildPublicContributions, aggregateCommunityLibrary } from './community-library.js';
 import { LESSONS, matchLesson, deckLesson, cardLesson, inferDeckLesson, filterDecks, filterDeckCards } from './lesson-catalog.js';
-import { initFirebase, onAuth, signIn, createAccount, sendReset, signOutUser, loadProfile, saveProfile, backupProfile, deleteProfileData, createGroup, loadGroup, saveGroup, updateMemberSummary, subscribeGroup, publicSummary, isFirebaseReady, loadStudyLibrary, saveStudyImport, saveStudyDeck, saveStudyCard, saveStudyProgress, saveStudyReview, deleteStudyDeck, saveGuildLessonStatus, loadCommunityLibrary, savePublicContributions, savePublicLessonStatus, subscribeCommunityLibrary, mutateGuildSession, mutateGuildWorld, enableDemoStorage, saveCategoryPatch } from './firebase-service.js';
+import { initFirebase, onAuth, signIn, createAccount, sendReset, signOutUser, loadProfile, saveProfile, backupProfile, deleteProfileData, createGroup, loadGroup, saveGroup, updateMemberSummary, subscribeGroup, publicSummary, isFirebaseReady, loadStudyLibrary, saveStudyImport, saveStudyDeck, saveStudyCard, saveStudyProgress, saveStudyReview, deleteStudyDeck, saveGuildLessonStatus, loadCommunityLibrary, savePublicContributions, savePublicLessonStatus, subscribeCommunityLibrary, mutateGuildSession, mutateGuildWorld, enableDemoStorage, saveCategoryPatch, saveStudyAuditEvent, saveHomeworkRecord } from './firebase-service.js';
 import { RESOURCE_LINKS, TIMEZONES, DOMAIN_TOPICS, ISACA_STUDY_PLAN, CISA_RULES, DECISION_PROMPTS, HOMEWORK_SUGGESTIONS, DAILY_QUEST_TEMPLATES, SHOP_ITEMS, AVATAR_ITEMS, GAME_CATALOG } from './content.js';
 import { parseQaePaste, missedConceptFromParsedQuestion } from './qae-parser.js';
-import { DEFAULT_REVIEW_SETTINGS, buildImportBundle, buildStudyQueue, hasUnresolvedMiss, calculateLibraryStats, cardFingerprint, createReviewEvent, defaultProgress, formatCardBack, mergeUniqueLibrary, progressKey, rateCard, scopeKey, makeDeckId } from './flashcard-engine.js';
+import { DEFAULT_REVIEW_SETTINGS, buildImportBundle, buildStudyQueue, hasUnresolvedMiss, calculateLibraryStats, cardFingerprint, createReviewEvent, defaultProgress, formatCardBack, mergeUniqueLibrary, progressKey, rateCard, scopeKey, makeDeckId, resetCardProgress, setCardAvailability } from './flashcard-engine.js';
 import { downloadIcs, canUseGoogleCalendar, connectGoogleCalendar, createGoogleEvent } from './calendar.js';
 
 let avatarSequence=0;
@@ -60,10 +64,10 @@ const state = {
 
 const PRIMARY_NAV = [
   ['command','Today','home'],['feed','Study','cards'],
-  ['adventure','Expedition','arcade'],['arcade','Games','timer'],['library','Library','notebook']
+  ['mastery','Progress','target'],['library','Library','notebook']
 ];
 const TOOL_NAV = [
-  ['mastery','Your progress','target'],['learn','Short lessons','notebook'],
+  ['learn','Short lessons','notebook'],['adventure','Expedition','arcade'],['arcade','Games','timer'],['homeworkQuiz','Weekly quiz','qae'],
   ['tools','Manage decks','cards'],['audit','Library health','target'],['import','Import files','qae'],
   ['room','Study together','guild'],['guild','Your Guild','guild'],
   ['rewards','Avatar & rewards','avatar'],['practice','Practice log','qae'],
@@ -71,7 +75,9 @@ const TOOL_NAV = [
   ['notebook','Notes','notebook'],['profile','Settings & connections','target']
 ];
 const NAV = [...PRIMARY_NAV,...TOOL_NAV];
-function navigationSection(view){return ['mastery','learn','tools','import','audit'].includes(view)?'library':view;}
+let homeworkCleanup=null,audioCleanup=null,reviewToolsCleanup=null;
+let homeworkSaving=false;
+function navigationSection(view){return ['learn','tools','import','audit'].includes(view)?'library':view;}
 function renderNavigation(){
   const item=([id,label,iconName],primary=false)=>`<button class="nav-btn ${navigationSection(state.activeView)===id||state.activeView===id?'active':''}" data-view="${id}" ${state.activeView===id?'aria-current="page"':''}><span class="app-icon ${iconName}">${svgIcon(iconName)}</span><span>${label}</span></button>`;
   return `<nav class="nav-list" aria-label="Main navigation"><div class="cq-primary-nav">${PRIMARY_NAV.map(n=>item(n,true)).join('')}</div><details class="cq-nav-more" ${state.moreToolsOpen?'open':''}><summary>More tools <span aria-hidden="true">⌄</span></summary><div>${TOOL_NAV.map(n=>item(n)).join('')}</div></details></nav>`;
@@ -95,6 +101,7 @@ async function init(){
         await saveProfileDebounced(true);
         if (profile.activeGroupId) await loadActiveGroup(profile.activeGroupId);
         await refreshStudyLibrary();
+        await recordAccountActivity('session-start','Authenticated app session started');
         state.communityUnsub?.();
         let publicRefreshTimer;
         state.communityUnsub=subscribeCommunityLibrary(()=>{clearTimeout(publicRefreshTimer);publicRefreshTimer=setTimeout(()=>refreshStudyLibrary().then(renderIfApp),250);},error=>{state.library.communityError=friendly(error);});
@@ -195,7 +202,7 @@ async function loadActiveGroup(groupId){
 
 async function refreshStudyLibrary(){
   if(!state.user) return;
-  try{ const loaded=await loadStudyLibrary(state.user.uid,state.profile?.activeGroupId||null); state.library={...loaded,loaded:true};await refreshCommunityLibrary(); }
+  try{ const uid=state.user.uid,profile=state.profile;const loaded=await loadStudyLibrary(uid,profile?.activeGroupId||null);if(state.user?.uid!==uid||state.profile!==profile)return;state.library={...loaded,loaded:true};hydrateHomeworkRecords();await refreshCommunityLibrary();if(state.user?.uid!==uid||state.profile!==profile)return;updateHomeworkSummary();await saveProfileDebounced(true); }
   catch(error){ console.error('Study Library Load Failed',error); state.library={decks:[],cards:[],progress:{},reviews:[],loaded:true,error:friendly(error)}; }
 }
 
@@ -257,6 +264,7 @@ function renderAuth(){
 
 function renderApp(){
   if(!state.profile) return renderAuth();
+  homeworkCleanup?.();homeworkCleanup=null;audioCleanup?.();audioCleanup=null;reviewToolsCleanup?.();reviewToolsCleanup=null;
   applyTheme();
   const top = getTopbar();
   app.className='app-shell'+(state.activeView==='adventure'?' cq-expedition-shell':'');
@@ -273,13 +281,15 @@ function renderApp(){
         <div class="top-actions">${state.activeView==='adventure'?'<button class="secondary-button small" data-go="command">Today</button><button class="secondary-button small" data-go="library">Library</button>':''}${top}</div>
       </div>
       ${state.demo?'<div class="cq-demo-notice">DEMO WORLD · Original sample questions · Saves on this device only <button id="endDemo">Exit demo</button></div>':''}
-      ${state.activeView==='command'?'':renderStatusStrip()}
+      ${['command','feed','mastery','homeworkQuiz'].includes(state.activeView)?'':renderStatusStrip()}
       <section id="viewRoot">${renderView()}</section>
+      ${renderFocusAudio()}
     </main>
     <nav class="cq-bottom-nav" aria-label="Main navigation">${PRIMARY_NAV.map(([id,label,icon])=>`<button data-mobile-view="${id}" class="${navigationSection(state.activeView)===id?'active':''}" ${state.activeView===id?'aria-current="page"':''}><span>${svgIcon(icon)}</span>${label}</button>`).join('')}</nav>
     ${renderGlobalOverlay()}`;
   bindCommon();
   bindView();
+  audioCleanup=bindFocusAudio(app);
   startTimerTicker();
 }
 function renderIfApp(){ if(state.user && state.profile) renderApp(); }
@@ -325,7 +335,7 @@ function bindLibraryAudit(){
    for(const op of operations){if(!current())throw new Error('Account or Guild changed. Refresh the audit before continuing.');const entries=op.kind==='deck'?library.decks:library.cards,record=entries.find(r=>r.id===op.id&&r.scopeKey===op.scopeKey);if(!record)continue;
     try{const result=await saveCategoryPatch({uid,groupId,kind:op.kind,id:op.id,scope:op.scope,patch:op.patch,expectedUpdatedAt:record.updatedAt});if(!current())throw new Error('Account or Guild changed.');Object.assign(record,result);saved++;if(saved%10===0&&current()){state.auditStatus=`${saved} of ${operations.length} category matches saved…`;if(state.activeView==='audit')renderApp();}}catch(error){failed.push(`${op.id}: ${error.message}`);}
    }
-   if(current()){state.auditStatus=`${saved} category matches saved. ${failed.length} records need another review.`;state.auditErrors=failed;await refreshStudyLibrary();}
+   if(current()){state.auditStatus=`${saved} category matches saved. ${failed.length} records need another review.`;state.auditErrors=failed;await recordAccountActivity('library-categorized',`${saved} category matches saved`,{saved,failed:failed.length});await refreshStudyLibrary();}
   }catch(error){if(current())state.auditStatus=error.message;}finally{state.auditBusy=false;if(current())renderApp();}
  });
 }
@@ -340,7 +350,7 @@ function renderLibraryHub(){
   return `<div class="cq-library-hub"><header class="cq-section-title"><div><p class="eyebrow">YOUR STUDY SHELF</p><h1>Everything has a home.</h1><p>Start with Study for a guided session. Come here when you want to choose a lesson, organize files or check your progress.</p></div><button class="primary-button" data-go="feed">Start studying →</button></header><div class="cq-library-grid">${cards.map(([view,icon,title,body])=>`<button data-go="${view}"><span class="app-icon">${svgIcon(icon)}</span><strong>${title}</strong><p>${body}</p><span>Open →</span></button>`).join('')}</div><section class="panel cq-library-together"><p class="eyebrow">BETTER TOGETHER</p><h2>A shared library. Your own learning.</h2><p class="helper">Your recall history and study settings are personal. Guild members can share lesson decks, meet for live questions, and build one Guild island together.</p><div class="button-row"><button class="secondary-button" data-go="guild">${state.group?'Open your Guild':'Find your Guild'}</button><button class="secondary-button" data-go="room">Study together</button></div></section><details class="cq-explain"><summary>Looking for another tool?</summary><p>Open <strong>More tools</strong> in the menu for your calendar, exam study plan, practice log, notes, avatar and settings.</p></details></div>`;
 }
 function showQuickGuide(){
-  modal('Your study expedition',`<div class="cq-guide-path"><div><h3>1. Start with Today</h3><p>Your next session is chosen from missed questions, due reviews and new concepts. Five minutes counts.</p></div><div><h3>2. Study, then understand</h3><p>Choose an answer, reveal the explanation, and rate your recall. Again means soon; Good means you remembered it. A wrong answer always comes back for repair.</p></div><div><h3>3. Build something</h3><p>Each saved answer advances your island. Spend focus to grow crops, gather materials and restore your colony.</p></div></div><p class="helper">Library holds imports, decks, lessons and progress. More tools holds settings and your Guild. Your active Guild shares one island. Without a Guild, your island belongs to you. Saved answers power the crew and construction automatically.</p>`,()=>navigateTo('command'),'Go to Today');
+  modal('Your study plan',`<div class="cq-guide-path"><div><h3>1. Complete your next lesson</h3><p>Today shows your earliest unfinished assignment. Study each question without a timer, then return for a second confident recall at least ten minutes later. Complete the assignment once every imported question meets the check.</p></div><div><h3>2. Keep reviewing</h3><p>Again means forgotten or guessed; Hard means correct with difficulty. Good and Easy schedule future reviews using FSRS. Daily completion is separate from long-term mastery.</p></div><div><h3>3. Submit the weekly quiz</h3><p>Finish all five assigned lessons to unlock the quiz. It has 96 seconds per question in one timer and is due Sunday at 11:59 PM Eastern. Work ahead whenever you can; unfinished homework stays on the plan.</p></div></div><p class="helper">Progress holds your memory, mistakes, history and personal reset controls. Library holds question imports and category/duplicate checks. Optional games remain in More tools.</p>`,()=>navigateTo('command'),'Go to Today');
 }
 function bindCommon(){
   $('#endDemo')?.addEventListener('click',()=>{location.search='';});
@@ -349,7 +359,7 @@ function bindCommon(){
   $$('.nav-btn').forEach(b=>b.onclick=()=>{if(b.dataset.view==='feed'){state.profile.v3 ||= {};state.profile.v3.studyExperience='focus';}state.lastScrollTop=$('#sidebar .nav-list')?.scrollTop||0;navigateTo(b.dataset.view);requestAnimationFrame(()=>{const nav=$('#sidebar .nav-list'); if(nav)nav.scrollTop=state.lastScrollTop;});});
   $('#themeSelect')?.addEventListener('change',e=>{state.profile.preferences.theme=e.target.value;applyTheme();saveProfileDebounced();});
   $('#helpBtn')?.addEventListener('click',()=>showQuickGuide());
-  $('#logoutBtn')?.addEventListener('click',()=>signOutUser());
+  $('#logoutBtn')?.addEventListener('click',async()=>{try{await recordAccountActivity('sign-out','Signed out');}catch{}stopFocusAudio();await signOutUser();});
   $('#openMenu')?.addEventListener('click',()=>$('#sidebar')?.classList.add('open'));
   $('#closeMenu')?.addEventListener('click',()=>$('#sidebar')?.classList.remove('open'));
   $$('[data-go]').forEach(b=>b.onclick=()=>navigateTo(b.dataset.go));
@@ -369,11 +379,15 @@ function renderGlobalOverlay(){
 }
 
 function renderView(){
+  if(state.activeView==='command')return renderHomework(homeworkContext());
+  if(state.activeView==='homeworkQuiz')return renderHomeworkQuiz(homeworkContext(),state.homeworkQuizWeek||'week-01');
+  if(state.activeView==='mastery')return renderReviewTools(experienceContext());
+
   if(EXPERIENCE_VIEWS.includes(state.activeView))return renderExperience(state.activeView,experienceContext())+(['command','feed'].includes(state.activeView)?renderMissionShortcut(state.profile):'');
   if(state.activeView==='audit')return renderLibraryAudit();
   if(state.activeView==='arcade')return renderArcadeHub();
   if(state.activeView==='library')return renderLibraryHub();
-  if(state.activeView==='profile')return renderExperienceSettings(experienceContext())+renderMissionPanel(experienceContext())+renderProfile();
+  if(state.activeView==='profile')return renderExperienceSettings(experienceContext())+renderProfile();
   const views = {command:renderCommand,room:renderRoom,plan:renderPlan,practice:renderPractice,tools:renderTools,guild:renderGuild,calendar:renderCalendar,notebook:renderNotebook,rewards:renderRewards,profile:renderProfile};
   return (views[state.activeView]||renderCommand)();
 }
@@ -1205,34 +1219,38 @@ function renderProfile(){
   const settings=deepMerge(DEFAULT_REVIEW_SETTINGS,state.profile.preferences.studySettings||{});
   return `<div class="grid">
     <div class="panel" data-tour="profile-basics"><div class="section-head"><div><p class="eyebrow">Profile And Preferences</p><h3>Customize Your Setup</h3><p class="helper">These settings belong only to your account. Your Guild members can use different dates, timezones, themes, and review limits.</p></div></div><div class="form-grid"><label><span class="label-title">Display Name</span><input id="displayName" value="${escAttr(state.profile.displayName)}"></label><label><span class="label-title">Timezone</span><select id="timezoneSelect">${TIMEZONES.map(t=>`<option value="${t}" ${t===state.profile.timezone?'selected':''}>${t}</option>`).join('')}</select></label><label><span class="label-title">Theme</span><select id="prefTheme"><option value="dark" ${state.profile.preferences.theme==='dark'?'selected':''}>Dark</option><option value="light" ${state.profile.preferences.theme==='light'?'selected':''}>Light</option></select></label><label><span class="label-title">Default Study Duration</span><input id="prefDuration" type="number" min="5" max="240" value="${state.profile.preferences.defaultStudyDuration||60}"></label></div><button class="primary-button" id="saveProfile">Save Profile</button></div>
-    <div class="panel" data-tour="review-settings"><div class="section-head"><div><p class="eyebrow">Adaptive Review Settings</p><h3>Control Your Daily Review Load</h3><p class="helper">ControlQuest uses a transparent Again / Hard / Good / Easy schedule. These limits decide how many new and due cards appear each day; they do not erase any cards.</p></div></div><div class="form-grid"><label><span class="label-title">New Cards Per Day</span><input id="studyNewCards" type="number" min="1" max="100" value="${settings.newCardsPerDay}"></label><label><span class="label-title">Maximum Reviews Per Day</span><input id="studyMaxReviews" type="number" min="5" max="500" value="${settings.maxReviewsPerDay}"></label><label><span class="label-title">Desired Retention</span><input id="studyRetention" type="number" min="75" max="99" value="${Math.round((settings.desiredRetention||.9)*100)}"><small class="helper">75%–99%; used as a planning target in analytics.</small></label><label><span class="label-title">Leech Warning Threshold</span><input id="studyLeech" type="number" min="3" max="30" value="${settings.leechThreshold||8}"><small class="helper">Cards missed this many times are flagged for special review.</small></label><label><span class="label-title">Learning Steps In Minutes</span><input id="studyLearningSteps" value="${escAttr((settings.learningStepsMinutes||[]).join(', '))}"><small class="helper">Example: 1, 10, 1440</small></label><label><span class="label-title">Relearning Steps In Minutes</span><input id="studyRelearningSteps" value="${escAttr((settings.relearningStepsMinutes||[]).join(', '))}"><small class="helper">Example: 10, 1440</small></label></div><button class="primary-button" id="saveReviewSettings">Save Review Settings</button></div>
+    <div class="panel" data-tour="review-settings"><div class="section-head"><div><p class="eyebrow">Adaptive Review Settings</p><h3>Control Your Daily Review Load</h3><p class="helper">ControlQuest uses FSRS memory scheduling with Again / Hard / Good / Easy ratings. These limits decide how many new and due cards appear each day; they do not erase any cards.</p></div></div><div class="form-grid"><label><span class="label-title">New Cards Per Day</span><input id="studyNewCards" type="number" min="1" max="100" value="${settings.newCardsPerDay}"></label><label><span class="label-title">Maximum Reviews Per Day</span><input id="studyMaxReviews" type="number" min="5" max="500" value="${settings.maxReviewsPerDay}"></label><label><span class="label-title">Desired Retention</span><input id="studyRetention" type="number" min="75" max="97" value="${Math.round((settings.desiredRetention||.9)*100)}"><small class="helper">75%–97%; FSRS uses this target to schedule future reviews. Higher targets increase workload.</small></label><label><span class="label-title">Leech Warning Threshold</span><input id="studyLeech" type="number" min="3" max="30" value="${settings.leechThreshold||8}"><small class="helper">Cards missed this many times are flagged for special review.</small></label><label><span class="label-title">Learning Steps In Minutes</span><input id="studyLearningSteps" value="${escAttr((settings.learningStepsMinutes||[]).join(', '))}"><small class="helper">Example: 1, 10</small></label><label><span class="label-title">Relearning Steps In Minutes</span><input id="studyRelearningSteps" value="${escAttr((settings.relearningStepsMinutes||[]).join(', '))}"><small class="helper">Example: 10</small></label></div><button class="primary-button" id="saveReviewSettings">Save Review Settings</button></div>
     <div class="panel" data-tour="resource-links"><p class="eyebrow">External Tool Links</p><div class="form-grid"><label><span class="label-title">ISACA QAE / Learning Link</span><input id="linkQae" value="${escAttr(state.profile.preferences.links.qae||RESOURCE_LINKS.qae)}"></label><label><span class="label-title">Udemy Course Link</span><input id="linkUdemy" value="${escAttr(state.profile.preferences.links.udemy||RESOURCE_LINKS.udemy)}"></label><label><span class="label-title">Extra YouTube Resource Link</span><input id="linkYoutube" value="${escAttr(state.profile.preferences.links.youtubePlaylist||RESOURCE_LINKS.youtubePlaylist)}"></label></div><button class="primary-button" id="saveLinks">Save Links</button></div>
     <div class="panel" data-tour="profile-help"><p class="eyebrow">Help And Onboarding</p><div class="button-row wrap"><button class="secondary-button" id="redoOnboarding">Redo Onboarding Setup</button><button class="secondary-button" id="fullTour">Run Full Site Tour</button><button class="secondary-button" id="resetPageTours">Reset Page Help Tours</button></div></div>
-    <div class="panel" data-tour="account-safety"><p class="eyebrow danger-text">Testing And Account Safety</p><div class="grid two"><div class="confirm-box"><h3>Reset Testing Stats</h3><p class="helper">Creates a backup, then resets XP, coins, activity, QAE logs, homework, roadmap progress, and rewards inventory. Your account, Study Library, and settings remain.</p><button class="danger-button" id="resetStats">Reset Stats</button></div><div class="confirm-box"><h3>Delete Profile Data</h3><p class="helper">Creates a backup under deletedProfiles, then deletes your ControlQuest profile document. Your Firebase Auth account may still exist.</p><button class="danger-button" id="deleteProfile">Delete Profile Data</button></div></div></div></div>`;
+    <div class="panel"><h3>Reset flashcard memory</h3><p>Reset your selected cards or a lesson in Progress. Your questions and historical review log stay intact; other members’ progress stays theirs.</p><button class="secondary-button" data-go="mastery">Open mastery &amp; reset controls</button></div><div class="panel" data-tour="account-safety"><p class="eyebrow danger-text">Testing And Account Safety</p><div class="grid two"><div class="confirm-box"><h3>Reset Testing Stats</h3><p class="helper">Creates a backup, then resets XP, coins, activity, QAE logs, homework, roadmap progress, and rewards inventory. Your account, Study Library, and settings remain.</p><button class="danger-button" id="resetStats">Reset Stats</button></div><div class="confirm-box"><h3>Delete Profile Data</h3><p class="helper">Creates a backup under deletedProfiles, then deletes your ControlQuest profile document. Your Firebase Auth account may still exist.</p><button class="danger-button" id="deleteProfile">Delete Profile Data</button></div></div></div></div>`;
 }
 function parseMinuteSteps(value,label){
   const values=String(value||'').split(',').map(v=>Number(v.trim())).filter(Number.isFinite);
-  if(!values.length||values.some(v=>v<1||v>43200)) throw new Error(`${label} must be comma-separated minutes between 1 and 43,200.`);
+  if(!values.length||values.some(v=>v<1||v>=1440)) throw new Error(`${label} must be comma-separated minutes between 1 and 1,439. FSRS schedules longer intervals.`);
   return [...new Set(values.map(Math.round))];
 }
 function bindProfile(){
   $('#saveProfile')?.addEventListener('click',()=>{const dur=Number($('#prefDuration').value); if(!dur||dur<5||dur>240)return toast('Duration must be 5 to 240 minutes.','error'); state.profile.displayName=$('#displayName').value.trim()||state.profile.displayName; state.profile.timezone=$('#timezoneSelect').value; state.profile.preferences.theme=$('#prefTheme').value; state.profile.preferences.defaultStudyDuration=dur; applyTheme(); saveProfileDebounced(); renderApp();});
-  $('#saveReviewSettings')?.addEventListener('click',()=>{try{const newCards=Number($('#studyNewCards').value),maxReviews=Number($('#studyMaxReviews').value),retention=Number($('#studyRetention').value),leech=Number($('#studyLeech').value);if(!Number.isInteger(newCards)||newCards<1||newCards>100)return toast('New Cards Per Day must be 1 to 100.','error');if(!Number.isInteger(maxReviews)||maxReviews<5||maxReviews>500)return toast('Maximum Reviews Per Day must be 5 to 500.','error');if(!Number.isFinite(retention)||retention<75||retention>99)return toast('Desired Retention must be 75% to 99%.','error');if(!Number.isInteger(leech)||leech<3||leech>30)return toast('Leech Warning Threshold must be 3 to 30.','error');state.profile.preferences.studySettings={...state.profile.preferences.studySettings,newCardsPerDay:newCards,maxReviewsPerDay:maxReviews,desiredRetention:retention/100,leechThreshold:leech,learningStepsMinutes:parseMinuteSteps($('#studyLearningSteps').value,'Learning Steps'),relearningStepsMinutes:parseMinuteSteps($('#studyRelearningSteps').value,'Relearning Steps')};saveProfileDebounced();toast('Adaptive Review settings saved.');renderApp();}catch(error){toast(error.message,'error');}});
+  $('#saveReviewSettings')?.addEventListener('click',()=>{try{const newCards=Number($('#studyNewCards').value),maxReviews=Number($('#studyMaxReviews').value),retention=Number($('#studyRetention').value),leech=Number($('#studyLeech').value);if(!Number.isInteger(newCards)||newCards<1||newCards>100)return toast('New Cards Per Day must be 1 to 100.','error');if(!Number.isInteger(maxReviews)||maxReviews<5||maxReviews>500)return toast('Maximum Reviews Per Day must be 5 to 500.','error');if(!Number.isFinite(retention)||retention<75||retention>97)return toast('Desired Retention must be 75% to 97%.','error');if(!Number.isInteger(leech)||leech<3||leech>30)return toast('Leech Warning Threshold must be 3 to 30.','error');state.profile.preferences.studySettings={...state.profile.preferences.studySettings,newCardsPerDay:newCards,maxReviewsPerDay:maxReviews,desiredRetention:retention/100,leechThreshold:leech,learningStepsMinutes:parseMinuteSteps($('#studyLearningSteps').value,'Learning Steps'),relearningStepsMinutes:parseMinuteSteps($('#studyRelearningSteps').value,'Relearning Steps')};saveProfileDebounced();toast('Adaptive Review settings saved.');renderApp();}catch(error){toast(error.message,'error');}});
   $('#saveLinks')?.addEventListener('click',()=>{state.profile.preferences.links.qae=$('#linkQae').value.trim()||RESOURCE_LINKS.qae; state.profile.preferences.links.udemy=$('#linkUdemy').value.trim(); state.profile.preferences.links.youtubePlaylist=$('#linkYoutube').value.trim()||RESOURCE_LINKS.youtubePlaylist; saveProfileDebounced(); toast('Links saved.');});
   $('#redoOnboarding')?.addEventListener('click',()=>showOnboarding()); $('#fullTour')?.addEventListener('click',()=>startFullTour()); $('#resetPageTours')?.addEventListener('click',()=>{state.profile.preferences.pageTours={};saveProfileDebounced();toast('Page tours reset.');}); $('#resetStats')?.addEventListener('click',()=>resetStatsFlow()); $('#deleteProfile')?.addEventListener('click',()=>deleteProfileFlow());
 }
 
 function bindView(){
+  if(state.activeView==='command'){homeworkCleanup=bindHomework($('#viewRoot'),homeworkContext());return;}
+  if(state.activeView==='homeworkQuiz'){homeworkCleanup=bindHomeworkQuiz($('#viewRoot'),homeworkContext(),state.homeworkQuizWeek||'week-01');return;}
+  if(state.activeView==='mastery'){reviewToolsCleanup=bindReviewTools($('#viewRoot'),experienceContext());return;}
+
   if(state.activeView==='audit'){bindLibraryAudit();return;}
   if(state.activeView==='arcade'){bindArcadeHub();return;}
   if(EXPERIENCE_VIEWS.includes(state.activeView)){bindExperience(state.activeView,experienceContext());return;}
-  if(state.activeView==='profile'){bindExperienceSettings(experienceContext());bindMissionPanel(experienceContext());}
+  if(state.activeView==='profile'){bindExperienceSettings(experienceContext());}
   ({command:bindCommand,room:bindRoom,plan:bindPlan,practice:bindPractice,tools:bindTools,guild:bindGuild,calendar:bindCalendar,notebook:bindNotebook,rewards:bindRewards,profile:bindProfile}[state.activeView]||(()=>{}))();
 }
 
 function showOnboarding(){
   const p=state.profile;
-  modal('Welcome to your island.',`<div class="onboarding-intro"><div class="avatar small">${avatarSvg(p.inventory.equipped)}</div><p>Study a little, understand a little more, and watch your island grow. You can change these choices any time in Settings.</p></div><div class="form-grid"><label><span class="label-title">What should we call you?</span><input id="obName" value="${escAttr(p.displayName)}" maxlength="80"></label><label><span class="label-title">Appearance</span><select id="obTheme"><option value="dark" ${p.preferences.theme==='dark'?'selected':''}>Dark</option><option value="light" ${p.preferences.theme==='light'?'selected':''}>Light</option></select></label><label><span class="label-title">A comfortable daily goal</span><select id="obGoal">${[5,10,20,30].map(n=>`<option value="${n}" ${n===20?'selected':''}>${n} questions</option>`).join('')}</select></label></div><p class="helper">Start on Today. If you have QAE exports ready, Library → Import files accepts them together. Your personal review history stays yours.</p>`,async()=>{p.displayName=$('#obName').value.trim()||p.displayName;p.preferences.theme=$('#obTheme').value;p.v3 ||= {};p.v3.dailyGoal=Number($('#obGoal').value);p.preferences.onboardingComplete=true;p.preferences.guidedWelcomeSeen=true;await saveProfileDebounced(true);applyTheme();navigateTo('command');},'Start on Today');
+  modal('Welcome to ControlQuest.',`<div class="onboarding-intro"><div class="avatar small">${avatarSvg(p.inventory.equipped)}</div><p>Start with your next lesson, practice recall, and return for scheduled reviews. You can change these choices any time in Settings.</p></div><div class="form-grid"><label><span class="label-title">What should we call you?</span><input id="obName" value="${escAttr(p.displayName)}" maxlength="80"></label><label><span class="label-title">Appearance</span><select id="obTheme"><option value="dark" ${p.preferences.theme==='dark'?'selected':''}>Dark</option><option value="light" ${p.preferences.theme==='light'?'selected':''}>Light</option></select></label><label><span class="label-title">A comfortable daily goal</span><select id="obGoal">${[5,10,20,30].map(n=>`<option value="${n}" ${n===20?'selected':''}>${n} questions</option>`).join('')}</select></label></div><p class="helper">Start on Today. If you have QAE exports ready, Library → Import files accepts them together. Your personal review history stays yours.</p>`,async()=>{p.displayName=$('#obName').value.trim()||p.displayName;p.preferences.theme=$('#obTheme').value;p.v3 ||= {};p.v3.dailyGoal=Number($('#obGoal').value);p.preferences.onboardingComplete=true;p.preferences.guidedWelcomeSeen=true;await saveProfileDebounced(true);applyTheme();navigateTo('command');},'Start on Today');
 }
 function startFullTour(){showQuickGuide();}
 function startTour(page,markComplete=false,after=null){ cleanupTour(); const steps=tourSteps(page); let idx=0; const show=()=>{ cleanupTour(); if(idx>=steps.length){ if(markComplete){ state.profile.preferences.pageTours ||= {}; state.profile.preferences.pageTours[page]=true; saveProfileDebounced(); } if(after) after(); return; } const step=steps[idx++]; const el=document.querySelector(`[data-tour="${step.target}"]`) || document.querySelector(step.selector||'body'); if(!el){show();return;} el.scrollIntoView({block:'center',inline:'center',behavior:'smooth'}); setTimeout(()=>positionTour(el,step,idx,steps.length,show,after),260);}; show(); state.tour={page,show}; window.addEventListener('resize',tourResize,{once:true}); }
@@ -1258,7 +1276,7 @@ function award({xp=0,coins=0,reason='Reward',type='Activity'}={},options={}){
   awardRawActivity({xp,coins,reason,type});
   if((xp>0||coins>0)&&!options.skipStreak) updateStreakForToday(reason);
   if(!options.skipQuest) autoCompleteQuestForActivity(type);
-  const after=levelInfo().level; showXpPop(xp,coins,reason); if(after>before){unlockForLevel(after);showCelebration(`Level ${after} Reached`,`You unlocked new rewards. Check Rewards for avatar items and inventory.`);}
+  const after=levelInfo().level; const quiet=['command','feed','mastery','homeworkQuiz'].includes(state.activeView)&&state.profile.v3?.studyExperience!=='expedition'; if(!quiet)showXpPop(xp,coins,reason); if(after>before){unlockForLevel(after);if(!quiet)showCelebration(`Level ${after} Reached`,`You unlocked new rewards. Check Rewards for avatar items and inventory.`);}
 }
 function awardRawActivity({xp=0,coins=0,reason='Activity',type='Activity'}={}){ state.profile.activity ||= []; state.profile.activity.unshift({id:randomId(),date:new Date().toISOString(),type,reason,xp,coins,level:levelInfo().level}); state.profile.activity=state.profile.activity.slice(0,200); }
 function unlockForLevel(level){ if(level%3===0) state.profile.inventory.chests.unshift({id:randomId(),type:level>=6?'silver':'bronze',opened:false,reason:`Level ${level} Reward`}); if(level%4===0) state.profile.inventory.boosts.unshift({id:randomId(),multiplier:1.5,durationMinutes:30,used:false,reason:`Level ${level} Reward`}); }
@@ -1463,7 +1481,7 @@ function experienceContext(){
   return {profile,user,group:state.group,library:state.library,level:levelInfo().level,isCurrent,
     avatar:()=>avatarSvg(state.profile.inventory.equipped),navigate:navigateTo,render:renderApp,toast,
     save,saveQuiet:()=>{if(isCurrent())saveProfileDebounced();},refresh:refreshStudyLibrary,download:downloadText,
-    review:saveExperienceReview,worldAction:saveExperienceWorldAction,importBatch:saveExperienceBatch,
+    startLessonReview:lessonId=>startLessonReview(experienceContext(),lessonId),resetStudyProgress,updateStudyAvailability,review:saveExperienceReview,worldAction:saveExperienceWorldAction,importBatch:saveExperienceBatch,
     renderGuildStudy:renderGuildStudyTab,bindGuildStudy:bindTools,
     getWorld:()=>createWorld(state.group?state.group.questWorld:state.profile.v3.world),
     completeLesson:async lesson=>{
@@ -1543,7 +1561,7 @@ async function saveExperienceReview(card,{rating,selectedAnswer,eventId,mode='po
       assertContext();
       for(const p of receipt.updates)library.progress[p.id]=p;
       if(!library.reviews.some(e=>e.id===receipt.event.id))library.reviews.unshift(receipt.event);
-      library.reviews=library.reviews.slice(0,1000);receipt.reviewSaved=true;
+      receipt.reviewSaved=true;
     }
     const event=receipt.event;
     await rewardExperience({id:event.id,type:'study.reviewed',cardId:event.cardId,domainId:receipt.domainId,rating:event.rating,correct:event.correct},receipt.worldMode||worldMode,{uid,profile,group});
@@ -1562,7 +1580,7 @@ async function saveExperienceReview(card,{rating,selectedAnswer,eventId,mode='po
     const completedAt=value=>{const time=Date.parse(typeof value==='string'?value:value?.savedAt);return Number.isFinite(time)?time:0;};
     completed.sort((a,b)=>Number(b[0]===eventId)-Number(a[0]===eventId)||completedAt(b[1])-completedAt(a[1])||a[0].localeCompare(b[0]));
     for(const [id] of completed.slice(500))delete receipts[id];
-    await persist();
+    updateHomeworkSummary();await persist();
   }finally{experienceReviewLock=false;}
 }
 let experienceWorldLock=false;
@@ -1613,7 +1631,7 @@ async function saveExperienceBatch(item,{bundle,operationId}){
   }
   profile.v3.importReceipts[operationId]={...receipt,complete:true,completedAt:new Date().toISOString()};
   if(item.scope==='Guild'&&group){group.studyLibraryUpdatedAt=new Date().toISOString();await saveGroup(group);assertContext();}
-  await persist();return {success:true,deckId:bundle.lessonDeckId,questionCount:bundle.cards.length};
+  await persist();await recordAccountActivity('questions-imported',`Imported ${bundle.cards.length} questions: ${item.title}`,{questionCount:bundle.cards.length,lessonId:item.lessonId||'',source:item.source||'ISACA QAE Paste'});return {success:true,deckId:bundle.lessonDeckId,questionCount:bundle.cards.length};
 }
 
 async function startDemoSession(){
@@ -1628,10 +1646,92 @@ async function startDemoSession(){
   if(!loaded.cards?.length){
     for(const lesson of CISA_MICROLESSONS){const q=lesson.checkpoint;const bundle=buildImportBundle({questions:[{question:q.question,choices:q.choices,correctAnswer:q.correctAnswer,justifications:{[q.correctAnswer]:q.rationale},domain:lesson.domain,domainNumber:Number(lesson.domainId.slice(1)),knowledgeStatement:lesson.title}],title:lesson.title,lessonId:lesson.id,scope:'Guild',uid:state.user.uid,groupId:state.group.id,importedBy:'Ollie',source:'Original concept checkpoint'});await saveStudyImport({uid:state.user.uid,groupId:state.group.id,decks:bundle.decks,cards:bundle.cards});}
   }
-  await refreshStudyLibrary();applyTheme();startClock();renderApp();
+  await refreshStudyLibrary();await recordAccountActivity('session-start','Demo app session started');applyTheme();startClock();renderApp();
 }
 
 async function persistNewGuildStudySession(){
   const session=state.group.studySession;try{state.group.studySession=await mutateGuildSession(state.group.id,{type:'start',uid:state.user.uid,session});}
   catch(error){state.group=await loadGroup(state.profile.activeGroupId);toast(friendly(error),'error');}
 }
+
+
+function hydrateHomeworkRecords(){
+  if(!state.profile)return;
+  state.profile.v3 ||= {};state.profile.v3.homework ||= {};
+  const h=state.profile.v3.homework;
+  h.quizzes={...h.quizzes,...state.library.homeworkQuizzes};
+  h.completions={...h.completions,...state.library.homeworkCompletions};
+}
+function currentHomeworkPlan(){return buildHomeworkPlan({cards:state.library.cards,progressMap:state.library.progress,reviews:state.library.reviews,decks:state.library.decks,uid:state.user.uid,state:state.profile.v3?.homework||{}});}
+function updateHomeworkSummary(){if(!state.profile||!state.library.loaded)return;state.profile.v3 ||= {};const plan=currentHomeworkPlan();state.profile.v3.homeworkSummary=buildHomeworkPublicSummary(plan,state.profile.v3.homework||{});}
+function homeworkContext(){
+  const c=experienceContext();
+  const plan=currentHomeworkPlan();
+  const own=buildHomeworkPublicSummary(plan,c.profile.v3.homework||{});
+  const members=c.group?Object.values(c.group.members||{}).map(m=>({...m,...(m.uid===c.user.uid?own:m.homework?refreshHomeworkPublicSummary(m.homework):{}),displayName:m.name||'Guild member'})):[];
+  if(c.group&&!members.some(m=>m.uid===c.user.uid))members.push({uid:c.user.uid,displayName:c.profile.displayName,...own});
+  return {...c,plan,homework:c.profile.v3.homework||{},guildSummaries:members,quizIndex:state.homeworkQuizIndex,
+    onNavigate:navigateTo,onRender:renderApp,onError:message=>toast(message,'error'),
+    onFreeStudy:()=>navigateTo('feed'),onOpenQuiz:weekId=>{state.homeworkQuizWeek=weekId;state.homeworkQuizIndex=undefined;navigateTo('homeworkQuiz');},
+    onQuizIndex:index=>{state.homeworkQuizIndex=index;},
+    onStudyLesson:async lessonId=>{try{if(!c.profile.v3.homework?.enrolledAt)await persistHomework(enrollHomework(c.profile.v3.homework));if(!c.isCurrent())return;startLessonReview(experienceContext(),lessonId);}catch(error){toast(friendly(error),'error');}},
+    onSaveHomework:persistHomework};
+}
+async function persistHomework(next){
+  if(homeworkSaving)throw new Error('Your previous homework change is still saving.');
+  const profile=state.profile,uid=state.user?.uid,library=state.library;
+  const current=()=>{if(state.profile!==profile||state.user?.uid!==uid)throw new Error('Account changed. Reopen your study plan.');};
+  homeworkSaving=true;
+  try{
+    current();
+    for(const [key,value] of Object.entries(next.completions||{})){
+      if(value.storedSeparately)continue;
+      if(JSON.stringify(library.homeworkCompletions?.[key])!==JSON.stringify(value)){
+        const saved=await saveHomeworkRecord(uid,'completion',key,value);current();library.homeworkCompletions ||= {};library.homeworkCompletions[key]=saved;next.completions[key]=saved;
+      }
+    }
+    for(const [key,value] of Object.entries(next.quizzes||{})){
+      if(value.storedSeparately)continue;
+      if(JSON.stringify(library.homeworkQuizzes?.[key])!==JSON.stringify(value)){
+        const saved=await saveHomeworkRecord(uid,'quiz',key,value);current();library.homeworkQuizzes ||= {};library.homeworkQuizzes[key]=saved;next.quizzes[key]=saved;
+      }
+    }
+    profile.v3.homework=next;updateHomeworkSummary();await saveProfileDebounced(true);current();return next;
+  }finally{homeworkSaving=false;}
+}
+async function recordAccountActivity(type,description,details={}){
+  if(!state.user?.uid)return;
+  const uid=state.user.uid,profile=state.profile;
+  const event=await saveStudyAuditEvent(uid,{id:`activity_${randomId()}`,type,description,...details});
+  if(state.user?.uid===uid&&state.profile===profile){state.library.activityRecords ||= [];state.library.activityRecords.unshift(event);}
+  return event;
+}
+async function modifyStudyMemory(cards,options,reset=false){
+  if(experienceReviewLock||homeworkSaving)throw new Error('Wait for your current review or quiz to save.');
+  const uid=state.user?.uid,profile=state.profile,library=state.library;
+  if(!uid||!profile)throw new Error('Sign in to edit your own memory.');
+  const selected=new Set(cards.map(studyIdentity));
+  const logical=uniqueStudyCards(library.cards,library.progress,library.reviews,{uid,decks:library.decks}).filter(c=>selected.has(studyIdentity(c)));
+  if(!logical.length)throw new Error('Choose at least one question.');
+  const now=new Date(),updates=[];
+  for(const card of logical){
+    const previous=card.effectiveProgress||defaultProgress(card,uid);
+    const next=reset?resetCardProgress(card,previous,{...options,uid,now}):setCardAvailability(previous,{...options,now});
+    for(const alias of card.aliases||[card])updates.push({...next,uid,id:progressKey(alias),cardId:alias.id,scope:alias.scope,scopeKey:alias.scopeKey});
+  }
+  experienceReviewLock=true;
+  try{
+    if(reset)downloadText(`controlquest-memory-backup-${now.toISOString().slice(0,10)}.json`,JSON.stringify({uid,createdAt:now.toISOString(),progress:Object.fromEntries(updates.map(p=>[p.id,library.progress[p.id]||null])),homework:profile.v3?.homework||{}},null,2),'application/json');
+    // Sequential batches report failures without pretending an unsaved reset succeeded.
+    for(let i=0;i<updates.length;i+=100){
+      if(state.profile!==profile||state.user?.uid!==uid)throw new Error('Account changed.');
+      const chunk=updates.slice(i,i+100);await Promise.all(chunk.map(p=>saveStudyProgress(uid,p)));for(const p of chunk)library.progress[p.id]=p;
+    }
+    if(state.profile!==profile||state.user?.uid!==uid)throw new Error('Account changed.');
+    if(reset)invalidateReviewSession(experienceContext());
+    await recordAccountActivity(reset?'mastery-reset':'card-availability',reset?`Reset memory for ${logical.length} questions`:`Changed availability for ${logical.length} questions`,{cardCount:logical.length,resetAccuracy:reset?options.resetAccuracy!==false:false});
+    updateHomeworkSummary();await saveProfileDebounced(true);return {count:logical.length};
+  }finally{experienceReviewLock=false;}
+}
+async function resetStudyProgress(cards,options={}){return modifyStudyMemory(cards,options,true);}
+async function updateStudyAvailability(cards,options={}){return modifyStudyMemory(cards,options,false);}

@@ -2,7 +2,7 @@
 // This intentionally uses regex + validation, not AI. It supports the common paste styles from ISACA Perform/QAE review screens.
 
 const LETTERS = ['A','B','C','D'];
-const clean = value => String(value || '')
+const clean = value => String(value || '').normalize('NFKC')
   .replace(/\r/g, '')
   .replace(/[ \t]+\n/g, '\n')
   .replace(/\n{3,}/g, '\n\n')
@@ -25,7 +25,7 @@ export function parseQaePaste(rawText, opts = {}){
   const warnings = [];
   if (!text) return { questions: [], warnings: ['No text was provided.'] };
 
-  const marker = /(?:^|\n)(?=(?:(.{1,90}?:)\s*)?Question\s+\d+(?:\s+of\s+\d+)?\b|\d+\s+of\s+\d+\s*\n\s*Question\b)/g;
+  const marker = /(?:^|\n)(?=(?:(.{1,90}?:)\s*)?Question\s+\d+(?:\s+of\s+\d+)?\b|\d+\s+of\s+\d+\s*\n\s*Question\b)/gi;
   const starts = [];
   let m;
   while ((m = marker.exec(text)) !== null) {
@@ -38,7 +38,7 @@ export function parseQaePaste(rawText, opts = {}){
   const blocks = uniqueStarts.map((start, i) => text.slice(start, uniqueStarts[i + 1] || text.length).trim()).filter(Boolean);
   const questions = blocks.map((block, index) => ({ parsed: parseBlock(block, index + 1), index })).filter(item => {
     const q = item.parsed;
-    const valid = q.question && q.correctAnswer && Object.keys(q.choices).length >= 2;
+    const valid = q.question && q.correctAnswer && q.choices[q.correctAnswer] && Object.keys(q.choices).length >= 2;
     if (!valid) warnings.push(`Skipped a block near item ${item.index + 1} because the parser could not identify the question, answer choices, and correct answer.`);
     return valid;
   }).map(item => item.parsed);
@@ -64,15 +64,16 @@ function parseBlock(block, fallbackNumber){
   const questionHeading = body.search(/(?:^|\n)Question\s*\n/i);
   if (questionHeading >= 0) body = body.slice(questionHeading).replace(/^(?:\n)?Question\s*\n/i, '').trim();
 
-  const correctByPhrase = body.match(/\n\s*([A-D])\s+is the correct answer\./i);
-  const correctByResult = body.match(/Correct answer is\s*([A-D])/i);
+  const correctByPhrase = body.match(/\n\s*([A-D])\s+is the correct answer[.!]?/i);
+  const correctByResult = body.match(/(?:^|\n)\s*(?:Correct answer(?:\s+is)?|Answer)\s*[:：-]?\s*([A-D])\b/i);
   const correctAnswer = (correctByPhrase?.[1] || correctByResult?.[1] || '').toUpperCase();
-  const beforeCorrect = correctByPhrase ? body.slice(0, correctByPhrase.index).trim() : body;
+  const answerEnd=body.search(/(?:^|\n)\s*(?:[A-D]\s+is the correct answer|Correct answer\b|Answer\s*[:：]|Justification\b|Explanation\b|Domain\s*[1-5])/i);
+  const beforeCorrect = answerEnd>=0?body.slice(0,answerEnd).trim():body;
 
-  const firstChoice = beforeCorrect.search(/(?:^|\n)\s*A\.\s*(?:A\.)?/);
+  const firstChoice = beforeCorrect.search(/(?:^|\n)\s*A[.)]\s*(?:A[.)])?/i);
   const question = firstChoice >= 0 ? clean(beforeCorrect.slice(0, firstChoice)) : clean(beforeCorrect);
   const choices = {};
-  const choiceRegex = /(?:^|\n)\s*([A-D])\.\s*(?:[A-D]\.)?\s*([\s\S]*?)(?=(?:\n\s*[A-D]\.\s*(?:[A-D]\.)?)|$)/g;
+  const choiceRegex = /(?:^|\n)\s*([A-D])[.)]\s*(?:[A-D][.)])?\s*([\s\S]*?)(?=(?:\n\s*[A-D][.)]\s*(?:[A-D][.)])?)|$)/gi;
   let cm;
   while ((cm = choiceRegex.exec(beforeCorrect)) !== null) {
     const letter = cm[1].toUpperCase();
@@ -81,11 +82,11 @@ function parseBlock(block, fallbackNumber){
   }
 
   const justifications = {};
-  const justMatch = body.match(/Justification\s*([\s\S]*?)(?:\n\s*Domain(?=\s|\d)|\n\s*Knowledge Statement|\n\s*Task Statement|\n\s*Your (?:answer|result)|\n\s*Time Spent|\n\s*Difficulty Level|\n\s*Incorrect|\n\s*Correct|$)/i);
+  const justMatch = body.match(/(?:Justification|Explanation)\s*[:：]?\s*([\s\S]*?)(?:\n\s*Domain(?=\s|\d)|\n\s*Knowledge Statement|\n\s*Task Statement|\n\s*Your (?:answer|result)|\n\s*Time Spent|\n\s*Difficulty Level|\n\s*Incorrect|\n\s*Correct|$)/i);
   const justText = clean(justMatch?.[1] || '');
   if (justText) {
     const positions = [];
-    const rx = /(?:^|\n)\s*([A-D])\.\s*/g;
+    const rx = /(?:^|\n)\s*([A-D])[.)]\s*/gi;
     let jm;
     while ((jm = rx.exec(justText)) !== null) positions.push({letter: jm[1].toUpperCase(), start: jm.index, textStart: rx.lastIndex});
     positions.forEach((pos, i) => {

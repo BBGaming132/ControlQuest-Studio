@@ -1,8 +1,8 @@
+import { fsrs, createEmptyCard, Rating, State, BasicLearningStepsStrategy, StrategyMode, ConvertStepUnitToMinutes } from './vendor/ts-fsrs/index.mjs';
 import { randomId } from './runtime-crypto.js';
 import { cardLesson, LESSONS } from './lesson-catalog.js';
-// ControlQuest Adaptive Review Engine
-// Inspired by proven spaced-repetition patterns (Again / Hard / Good / Easy),
-// but intentionally implemented as a transparent ControlQuest scheduler rather than a clone of Anki/FSRS.
+// FSRS-6 scheduler supplied by MIT-licensed ts-fsrs 5.4.2.
+// ControlQuest owns the review UI, history, study plan and conservative legacy migration.
 
 const DAY = 86400000;
 const MINUTE = 60000;
@@ -11,8 +11,10 @@ export const DEFAULT_REVIEW_SETTINGS = Object.freeze({
   newCardsPerDay: 20,
   maxReviewsPerDay: 100,
   desiredRetention: 0.90,
-  learningStepsMinutes: [1, 10, 1440],
-  relearningStepsMinutes: [10, 1440],
+  learningStepsMinutes: [1, 10],
+  relearningStepsMinutes: [10],
+  maximumIntervalDays: 36500,
+  leechAction: 'tag',
   leechThreshold: 8
 });
 
@@ -90,7 +92,8 @@ export function buildImportBundle({ questions, title, scope = 'Guild', uid, grou
       scope,
       scopeKey: key,
       deckIds,
-      source,
+      source: [...(q.sources||[]),source].includes('ISACA QAE Paste')?'ISACA QAE Paste':source,
+      sources: [...new Set([...(q.sources||[]),source])],
       sourceQuestionId: q.id || null,
       sessionTitle: cleanTitle,
       questionNumber: q.number || null,
@@ -143,7 +146,7 @@ export function buildImportBundle({ questions, title, scope = 'Guild', uid, grou
       ...deckBase,
       id: lessonDeckId,
       title: cleanTitle,
-      description: `Imported QAE session with ${cards.length} unique questions and ${incorrect} missed questions.`,
+      description: `Imported question set with ${cards.length} unique questions and ${incorrect} missed questions.`,
       kind: 'lesson',
       ...(lessonId?{lessonId}:{}),
       lessonTitle: LESSONS.find(l=>l.id===lessonId)?.title || '',
@@ -207,107 +210,100 @@ export function progressKey(card) {
   return `${card.scopeKey}__${card.id}`;
 }
 
-function addMinutes(date, minutes) {
-  return new Date(date.getTime() + minutes * MINUTE);
+function clamp(value, min, max) { return Math.min(max, Math.max(min, value)); }
+const states = { new:State.New, learning:State.Learning, review:State.Review, relearning:State.Relearning };
+const stateNames = ['new','learning','review','relearning'];
+export const REVIEW_RATINGS = Object.freeze([
+  {rating:'Again', description:'Forgot or answered incorrectly', key:'1'},
+  {rating:'Hard', description:'Correct, with serious difficulty', key:'2'},
+  {rating:'Good', description:'Correct, with some effort', key:'3'},
+  {rating:'Easy', description:'Correct, immediately and confidently', key:'4'}
+]);
+function scheduler(settings={}) {
+  const steps=(value,fallback)=> (Array.isArray(value)&&value.length&&value.every(n=>Number.isFinite(n)&&n>0&&n<1440)?value:fallback).map(n=>`${n}m`);
+  return fsrs({request_retention:clamp(Number(settings.desiredRetention)||0.9,0.7,0.97),
+    maximum_interval:clamp(Math.round(Number(settings.maximumIntervalDays)||36500),1,36500),
+    enable_fuzz:false,enable_short_term:true,
+    learning_steps:steps(settings.learningStepsMinutes,DEFAULT_REVIEW_SETTINGS.learningStepsMinutes),
+    relearning_steps:steps(settings.relearningStepsMinutes,DEFAULT_REVIEW_SETTINGS.relearningStepsMinutes)})
+    .useStrategy(StrategyMode.LEARNING_STEPS,(params,state,index)=>{
+      const info=BasicLearningStepsStrategy(params,state,index),list=state===State.Relearning||state===State.Review?params.relearning_steps:params.learning_steps;
+      // Match Anki's Hard semantics after the first learning step: repeat that
+      // step, rather than averaging the first two steps every time.
+      if(index>0&&list[index]&&state!==State.Review)info[Rating.Hard]={scheduled_minutes:ConvertStepUnitToMinutes(list[index]),next_step:index};
+      return info;
+    });
 }
-function addDays(date, days) {
-  return new Date(date.getTime() + days * DAY);
-}
-function clamp(value, min, max) {
-  return Math.min(max, Math.max(min, value));
-}
-
-export function rateCard(card, existingProgress, rating, settings = DEFAULT_REVIEW_SETTINGS, reviewedAt = new Date()) {
-  const p = { ...defaultProgress(card, existingProgress?.uid), ...(existingProgress || {}) };
-  const normalizedRating = String(rating || 'Good');
-  if (!['Again','Hard','Good','Easy'].includes(normalizedRating)) throw new TypeError('Choose Again, Hard, Good, or Easy.');
-  reviewedAt = new Date(reviewedAt);
-  if (!Number.isFinite(reviewedAt.getTime())) throw new TypeError('Review date must be valid.');
-  const usableSteps = (steps, fallback) => Array.isArray(steps) && steps.length && steps.every(n=>Number.isFinite(n)&&n>0) ? steps : fallback;
-  const learningSteps = usableSteps(settings.learningStepsMinutes, DEFAULT_REVIEW_SETTINGS.learningStepsMinutes);
-  const relearningSteps = usableSteps(settings.relearningStepsMinutes, DEFAULT_REVIEW_SETTINGS.relearningStepsMinutes);
-  const wasReview = p.state === 'review';
-  const wasRelearning = p.state === 'relearning';
-  const activeSteps = wasRelearning ? relearningSteps : learningSteps;
-  const previousDue = existingProgress?.dueAt;
-  const aheadOfSchedule = (existingProgress?.repetitions||0)>0 && Number.isFinite(Date.parse(previousDue)) && reviewedAt < new Date(previousDue);
-  p.successfulRecallStreak = normalizedRating==='Good'||normalizedRating==='Easy' ? (p.successfulRecallStreak ?? p.answerStreak ?? 0)+1 : 0;
-  p.validatedRecalls = Number(p.validatedRecalls ?? Math.min(p.correctCount||0, p.repetitions||0));
-  if ((normalizedRating==='Good'||normalizedRating==='Easy') && !aheadOfSchedule) p.validatedRecalls += 1;
-  p.repetitions += 1;
-  p.lastRating = normalizedRating;
-  p.lastReviewedAt = reviewedAt.toISOString();
-  p.firstReviewedAt ||= p.lastReviewedAt;
-
-  if (normalizedRating === 'Again') {
-    p.incorrectCount += 1;
-    p.lastMissedAt = reviewedAt.toISOString();
-    p.answerStreak = 0;
-    p.lapses += wasReview ? 1 : 0;
-    p.ease = clamp((p.ease || 2.5) - 0.2, 1.3, 3.2);
-    p.state = wasReview || wasRelearning ? 'relearning' : 'learning';
-    p.stepIndex = 0;
-    p.intervalDays = 0;
-    p.dueAt = addMinutes(reviewedAt, (wasReview || wasRelearning ? relearningSteps : learningSteps)[0] || 10).toISOString();
-  } else if (normalizedRating === 'Hard') {
-    p.correctCount += 1;
-    p.hardCount += 1;
-    p.answerStreak += 1;
-    p.bestAnswerStreak = Math.max(p.bestAnswerStreak || 0, p.answerStreak);
-    p.ease = clamp((p.ease || 2.5) - 0.05, 1.3, 3.2);
-    if (p.state === 'new' || p.state === 'learning' || p.state === 'relearning') {
-      p.state = wasRelearning ? 'relearning' : 'learning';
-      const step = activeSteps[Math.min(p.stepIndex || 0, activeSteps.length - 1)] || 10;
-      p.dueAt = addMinutes(reviewedAt, Math.max(6, Math.round(step * 1.5))).toISOString();
-    } else {
-      p.state = 'review';
-      p.intervalDays = Math.max(1, Math.round((p.intervalDays || 1) * 1.2));
-      p.dueAt = addDays(reviewedAt, p.intervalDays).toISOString();
-    }
-  } else if (normalizedRating === 'Easy') {
-    p.correctCount += 1;
-    p.easyCount += 1;
-    p.answerStreak += 1;
-    p.bestAnswerStreak = Math.max(p.bestAnswerStreak || 0, p.answerStreak);
-    p.ease = clamp((p.ease || 2.5) + 0.15, 1.3, 3.2);
-    p.state = 'review';
-    p.stepIndex = learningSteps.length;
-    p.intervalDays = p.intervalDays > 0 ? Math.max(4, Math.round(p.intervalDays * p.ease * 1.3)) : 4;
-    p.dueAt = addDays(reviewedAt, p.intervalDays).toISOString();
-  } else {
-    p.correctCount += 1;
-    p.answerStreak += 1;
-    p.bestAnswerStreak = Math.max(p.bestAnswerStreak || 0, p.answerStreak);
-    if (p.state === 'new' || p.state === 'learning' || p.state === 'relearning') {
-      p.stepIndex = (p.stepIndex || 0) + 1;
-      if (p.stepIndex < activeSteps.length) {
-        p.state = wasRelearning ? 'relearning' : 'learning';
-        p.dueAt = addMinutes(reviewedAt, activeSteps[p.stepIndex]).toISOString();
-      } else {
-        p.state = 'review';
-        p.intervalDays = Math.max(1, p.intervalDays || 1);
-        p.dueAt = addDays(reviewedAt, p.intervalDays).toISOString();
-      }
-    } else {
-      p.state = 'review';
-      p.intervalDays = Math.max(1, Math.round((p.intervalDays || 1) * (p.ease || 2.5)));
-      p.dueAt = addDays(reviewedAt, p.intervalDays).toISOString();
-    }
+function memoryCard(progress, now) {
+  const p=progress||{}, saved=p.fsrs;
+  if(saved&&Number.isFinite(saved.stability)&&saved.stability>=0&&Number.isFinite(saved.difficulty)&&Number.isFinite(Date.parse(saved.due))&&Number.isFinite(Date.parse(saved.last_review))) {
+    return {...saved,due:new Date(saved.due),last_review:new Date(saved.last_review)};
   }
-  // Extra practice before a scheduled review can earn activity credit, but cannot
-  // inflate the spaced interval by repeatedly pressing Easy in the same session.
-  if (aheadOfSchedule && normalizedRating !== 'Again') {
-    p.state = existingProgress.state;
-    p.stepIndex = existingProgress.stepIndex;
-    p.intervalDays = existingProgress.intervalDays;
-    p.dueAt = previousDue;
+  const fresh=createEmptyCard(now);
+  if(!(p.repetitions>0)) return fresh;
+  // Preserve due dates until an actual review. Legacy ease is not a fitted FSRS
+  // parameter; seed memory conservatively, and adapt from real future recalls.
+  return {...fresh,due:Number.isFinite(Date.parse(p.dueAt))?new Date(p.dueAt):now,
+    state:states[p.state]??State.New, stability:Math.max(0.1,Number(p.intervalDays)||1),difficulty:5,
+    scheduled_days:Math.max(0,Number(p.intervalDays)||0),learning_steps:Math.max(0,Number(p.stepIndex)||0),
+    reps:Math.max(0,Number(p.repetitions)||0),lapses:Math.max(0,Number(p.lapses)||0),
+    last_review:Number.isFinite(Date.parse(p.lastReviewedAt))?new Date(p.lastReviewedAt):now};
+}
+function serializeMemory(card) {
+  return {...card,due:card.due.toISOString(),...(card.last_review?{last_review:card.last_review.toISOString()}:{})};
+}
+export function isCardAvailable(progress, now=new Date()) {
+  return !progress?.suspended && !(Number.isFinite(Date.parse(progress?.buriedUntil))&&Date.parse(progress.buriedUntil)>new Date(now).getTime());
+}
+export function setCardAvailability(progress, {suspended=progress?.suspended||false,buriedUntil=progress?.buriedUntil||null,now=new Date()}={}) {
+  if(buriedUntil!==null&&!Number.isFinite(Date.parse(buriedUntil)))throw new TypeError('Bury-until date must be valid.');
+  return {...progress,suspended:Boolean(suspended),buriedUntil,updatedAt:new Date(now).toISOString()};
+}
+export function resetCardProgress(card, progress, {uid=progress?.uid,now=new Date(),resetAccuracy=true}={}) {
+  const at=new Date(now).toISOString(),fresh=defaultProgress(card,uid);
+  // History remains in the review ledger. The cutoff marks the fresh learning epoch.
+  return {...fresh,dueAt:at,updatedAt:at,resetAt:at,accuracyResetAt:resetAccuracy?at:progress?.accuracyResetAt||null,
+    resetCount:(progress?.resetCount||0)+1,importedMiss:false,ignoreImportedMiss:true,
+    ...(!resetAccuracy?{correctCount:progress?.correctCount||0,incorrectCount:progress?.incorrectCount||0,hardCount:progress?.hardCount||0,easyCount:progress?.easyCount||0}:{}),
+    archivedProgress:progress?{repetitions:progress.repetitions||0,correctCount:progress.correctCount||0,incorrectCount:progress.incorrectCount||0,intervalDays:progress.intervalDays||0,lastReviewedAt:progress.lastReviewedAt||null}:null};
+}
+export function rateCard(card, existingProgress, rating, settings=DEFAULT_REVIEW_SETTINGS, reviewedAt=new Date()) {
+  const normalizedRating=String(rating||'Good');
+  if(!['Again','Hard','Good','Easy'].includes(normalizedRating))throw new TypeError('Choose Again, Hard, Good, or Easy.');
+  const now=new Date(reviewedAt);if(!Number.isFinite(now.getTime()))throw new TypeError('Review date must be valid.');
+  const p={...defaultProgress(card,existingProgress?.uid),...(existingProgress||{})};
+  const wasReview=p.state==='review',success=normalizedRating!=='Again',strong=['Good','Easy'].includes(normalizedRating);
+  const ahead=(p.repetitions||0)>0&&Number.isFinite(Date.parse(p.dueAt))&&now<new Date(p.dueAt);
+  const result=scheduler(settings).next(memoryCard(existingProgress,now),now,Rating[normalizedRating]);
+  p.repetitions=(Number(p.repetitions)||0)+1;
+  p.correctCount=(Number(p.correctCount)||0)+(success?1:0);p.incorrectCount=(Number(p.incorrectCount)||0)+(success?0:1);
+  p.hardCount=(Number(p.hardCount)||0)+(normalizedRating==='Hard'?1:0);p.easyCount=(Number(p.easyCount)||0)+(normalizedRating==='Easy'?1:0);
+  p.answerStreak=success?(Number(p.answerStreak)||0)+1:0;
+  p.successfulRecallStreak=strong?(Number(p.successfulRecallStreak)||0)+1:0;
+  p.bestAnswerStreak=Math.max(Number(p.bestAnswerStreak)||0,p.answerStreak);
+  p.validatedRecalls=(Number(p.validatedRecalls)||0)+(strong&&!ahead?1:0);
+  if(!success)p.lastMissedAt=now.toISOString();
+  p.lastRating=normalizedRating;p.lastReviewedAt=now.toISOString();p.firstReviewedAt||=p.lastReviewedAt;
+  p.scheduler='FSRS-6 / ts-fsrs 5.4.2';
+  if(!ahead||!success){
+    p.fsrs=serializeMemory(result.card);p.state=stateNames[result.card.state];p.dueAt=result.card.due.toISOString();
+    p.intervalDays=result.card.scheduled_days;p.stepIndex=result.card.learning_steps;
+    p.lapses=(Number(existingProgress?.lapses)||0)+(!success&&wasReview?1:0);
   }
-  p.updatedAt = reviewedAt.toISOString();
-  return p;
+  // Extra correct practice records an attempt, but never pushes a future review
+  // out or invents a scheduled recall. A forgotten answer still starts relearning.
+  p.leech=(p.lapses||0)>=(Number(settings.leechThreshold)||DEFAULT_REVIEW_SETTINGS.leechThreshold);
+  if(p.leech&&settings.leechAction==='suspend')p.suspended=true;
+  p.updatedAt=now.toISOString();return p;
+}
+export function previewReviewIntervals(card,progress,settings=DEFAULT_REVIEW_SETTINGS,now=new Date()) {
+  return REVIEW_RATINGS.map(item=>{const next=rateCard(card,progress,item.rating,settings,now),minutes=Math.max(1,Math.round((Date.parse(next.dueAt)-new Date(now).getTime())/MINUTE));
+    return {...item,dueAt:next.dueAt,intervalDays:next.intervalDays,label:minutes<60?`${minutes}m`:minutes<1440?`${Math.round(minutes/60)}h`:`${Math.round(minutes/1440)}d`};});
 }
 
 export function isDue(progress, now = new Date()) {
   if (!progress) return true;
+  if (!isCardAvailable(progress,now)) return false;
   const due=Date.parse(progress.dueAt);
   return !Number.isFinite(due) || due <= new Date(now).getTime();
 }
@@ -317,15 +313,15 @@ export function cardMastery(progress) {
   if (progress.state === 'learning' || progress.state === 'relearning') return 'Learning';
   const total = (progress.correctCount || 0) + (progress.incorrectCount || 0);
   const accuracy = total ? (progress.correctCount || 0) / total : 0;
-  const recalls=progress.validatedRecalls ?? progress.correctCount ?? 0;
+  const recalls=progress.validatedRecalls ?? 0;
   const successStreak=progress.successfulRecallStreak ?? progress.answerStreak ?? 0;
   if (progress.state==='review' && (progress.intervalDays||0)>=21 && accuracy>=0.8 && recalls>=3 && successStreak>=2 && ['Good','Easy'].includes(progress.lastRating)) return 'Mastered';
   return 'Reviewing';
 }
 
 export function hasUnresolvedMiss(card, progress, uid=progress?.uid) {
-  const sourceMiss=progress?.importedMiss===true||(card?.wasCorrectAtImport===false&&(!uid||!card.ownerUid||card.ownerUid===uid));
-  const reviewedMiss = (progress?.incorrectCount || 0)>0 || progress?.lastRating==='Again';
+  const sourceMiss=!progress?.ignoreImportedMiss&&(progress?.importedMiss===true||(card?.wasCorrectAtImport===false&&(!uid||!card.ownerUid||card.ownerUid===uid)));
+  const reviewedMiss = (progress?.resetAt ? Date.parse(progress.lastMissedAt)>Date.parse(progress.resetAt) : (progress?.incorrectCount || 0)>0) || progress?.lastRating==='Again';
   if (!sourceMiss && !reviewedMiss) return false;
   const recovered = (progress?.successfulRecallStreak ?? progress?.answerStreak ?? 0)>=2 && ['Good','Easy'].includes(progress?.lastRating);
   return !recovered;
@@ -337,6 +333,8 @@ export function buildStudyQueue(cards, progressMap, options = {}) {
   const limit = Math.max(1, options.limit || 20);
   const filtered = (cards || []).filter(card => {
     const p = progressMap?.[progressKey(card)];
+    if (!options.includeUnavailable && !isCardAvailable(p,now)) return false;
+    if (mode === 'leech') return p?.leech || (p?.lapses||0) >= (options.leechThreshold||8);
     if (mode === 'missed') return hasUnresolvedMiss(card,p,options.uid);
     if (mode === 'new') return !p || p.repetitions === 0;
     if (mode === 'mastered') return cardMastery(p) === 'Mastered';
@@ -353,7 +351,7 @@ export function buildStudyQueue(cards, progressMap, options = {}) {
     if (p?.dueAt) priority += Math.max(0, Math.floor((now - new Date(p.dueAt)) / DAY));
     return { card, priority, dueAt: p?.dueAt || '1970-01-01' };
   });
-  weighted.sort((a, b) => b.priority - a.priority || String(a.dueAt).localeCompare(String(b.dueAt)) || progressKey(a.card).localeCompare(progressKey(b.card)));
+  weighted.sort((a, b) => (mode==='due'?Number(['learning','relearning'].includes(progressMap?.[progressKey(b.card)]?.state))-Number(['learning','relearning'].includes(progressMap?.[progressKey(a.card)]?.state)):0) || b.priority - a.priority || String(a.dueAt).localeCompare(String(b.dueAt)) || progressKey(a.card).localeCompare(progressKey(b.card)));
   if (mode === 'due') {
     const reviewItems = weighted.filter(item => {
       const p = progressMap?.[progressKey(item.card)];

@@ -21,7 +21,7 @@ function fixture({profile,library,store}={}){
     defaultProgress,rateCard,progressKey,createReviewEvent,DEFAULT_REVIEW_SETTINGS,uniqueStudyCards,studyIdentity,createWorld,advanceWorld,appendActivityEvent,randomId,sha256Hex,
     currentStudyCard:()=>state.library.cards[0],reviewGapForRating:()=>0,friendly:e=>e.message,renderApp(){},persistActiveStudySession(){state.profile.activeStudySession={...state.studySession};},saveProfileDebounced:async()=>{data.profile=structuredClone(state.profile);},window:{dispatchEvent(){}},CustomEvent:class{constructor(type,options){this.type=type;this.detail=options.detail;}},toast(){},
     saveProfile:async p=>{data.profileCalls++;await hooks.onProfile?.(p,data.profileCalls);if(data.profileCalls===hooks.failProfileAt)throw new Error('profile unavailable');data.profile=structuredClone(p);},
-    updateMemberSummary:async()=>{},
+    updateMemberSummary:async()=>{},updateHomeworkSummary(){},
     saveStudyProgress:async(uid,p)=>{data.progressCalls++;await hooks.onProgress?.(uid,p,data.progressCalls);if(data.progressCalls===hooks.failProgressAt)throw new Error('progress unavailable');assert.equal(uid,'u');data.progress[p.id]=structuredClone(p);},
     saveStudyReview:async(uid,e)=>{assert.equal(uid,'u');data.reviews[e.id]=structuredClone(e);},
     mutateGuildWorld:async(id,event)=>{guildCalls.push({id,event});await hooks.onGuild?.(id,event);return advanceWorld(createWorld(state.group?.questWorld),event);},

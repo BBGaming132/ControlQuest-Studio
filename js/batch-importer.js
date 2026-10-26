@@ -1,10 +1,11 @@
 import {auditIncomingQuestions} from './library-audit.js';
 import { sha256Hex } from './runtime-crypto.js';
 import { parseQaePaste } from './qae-parser.js';
-import { LESSONS, cardLesson, matchLesson } from './lesson-catalog.js';
+import { LESSONS, cardLesson, matchLesson, lessonMatchDetails } from './lesson-catalog.js';
 import { buildImportBundle, normalizeQuestion, scopeKey as importScopeKey } from './flashcard-engine.js';
 
 export const BATCH_IMPORT_VERSION = 1;
+export const BATCH_SOURCES = Object.freeze(['ISACA QAE Paste','Udemy supplemental','Other supplemental','Practice exam']);
 export const BATCH_LIMITS = Object.freeze({
   maxFiles:100, maxFileBytes:12*1024*1024, maxTotalBytes:90*1024*1024,
   maxTextChars:2*1024*1024, maxTotalTextChars:12*1024*1024,
@@ -32,7 +33,7 @@ function remapQuestion(question, representative){
   for(const [letter,text] of Object.entries(question.justifications||{})){
     const mapped=letter==='_'?'_':targetLetter(letter);if(mapped)justifications[mapped]=text;
   }
-  return {...question,choices:{...choices},correctAnswer:targetLetter(question.correctAnswer)||question.correctAnswer,
+  return {...question,sources:[...new Set([...(question.sources||[]),...(representative.scopeKey?[...(representative.sources||[]),representative.source].filter(Boolean):[])])],choices:{...choices},correctAnswer:targetLetter(question.correctAnswer)||question.correctAnswer,
     userAnswer:question.userAnswer?targetLetter(question.userAnswer)||question.userAnswer:null,
     justifications, fingerprint:representative.fingerprint||String(representative.id||'').replace(/^card_/, '')};
 }
@@ -122,8 +123,9 @@ export async function createBatchPlan(files, options={}){
   const totalBytes=input.reduce((sum,file)=>sum+Math.max(0,Number(file.size)||0),0);
   if(totalBytes>limits.maxTotalBytes)throw new Error('This batch exceeds the total file-size limit. Use smaller batches.');
   const scope=options.scope||'Guild';if(!allowedScopes.has(scope))throw new Error('Invalid import scope.');
+  const source=options.source||BATCH_SOURCES[0];if(!BATCH_SOURCES.includes(source))throw new Error('Choose a recognized question source.');
   const items=input.map((file,index)=>({id:`file_${index}`,fileName:String(file.name||`Export ${index+1}.txt`),
-    title:filenameTitle(file.name),lessonId:'',scope,sharePublic:options.sharePublic!==false,
+    title:filenameTitle(file.name),lessonId:'',scope,source,sharePublic:options.sharePublic!==false,
     include:true,confirmed:false,status:'pending',questions:[],warnings:[],errors:[],requiresReview:false,
     size:Math.max(0,Number(file.size)||0),sourceIndex:index}));
   const plan={version:BATCH_IMPORT_VERSION,id:'',uid:options.uid||'',groupId:options.groupId||null,items,limits,
@@ -187,9 +189,13 @@ export async function createBatchPlan(files, options={}){
       if(item.importAudit.batchDuplicates)item.warnings.push(`${item.importAudit.batchDuplicates} exact questions also appear in earlier files in this batch. Shared-bank duplicates are linked rather than additional unique questions.`);
       if(item.importAudit.answerConflicts)item.warnings.push(`${item.importAudit.answerConflicts} questions match existing question text and choices but have conflicting correct-answer keys. Variants are retained for review; they are not silently merged.`);
       priorQuestions.push(...item.questions);
-      const named=matchLesson(item.title),detected=item.questions.map(cardLesson),detectedIds=new Set(detected.filter(Boolean).map(l=>l.id));
+      const nameMatch=lessonMatchDetails(item.title),named=nameMatch.lesson,detected=item.questions.map(cardLesson),detectedIds=new Set(detected.filter(Boolean).map(l=>l.id));
       const unanimous=detected.length&&detected.every(Boolean)&&detectedIds.size===1?detected[0]:null;
-      item.lessonId=(unanimous||named)?.id||'';
+      item.lessonId=(named?.domainId==='practice'?named:detectedIds.size>1?null:unanimous||named)?.id||'';
+      if(detectedIds.size>1&&named?.domainId!=='practice')item.warnings.push('Question metadata spans several lessons. Keep Mixed / Unassigned to preserve each question’s category, or verify a deliberate reassignment.');
+      item.lessonMatch={method:nameMatch.method,confidence:nameMatch.confidence,candidates:nameMatch.candidates.map(l=>({id:l.id,title:l.title}))};
+      if(nameMatch.method==='spelling')item.warnings.push(`The filename has a close spelling match to “${named.title}”. Verify the proposed lesson before importing.`);
+      if(nameMatch.method==='ambiguous')item.warnings.push('The filename could refer to several lessons. Choose the intended lesson or review this as a mixed export.');
       if(item.duplicateQuestions)item.warnings.push(`${item.duplicateQuestions} duplicate questions within this file were combined.`);
       item.unmatchedQuestions=item.questions.filter(q=>!cardLesson(q)).length;
       if(!item.lessonId&&item.unmatchedQuestions)item.warnings.push(`${item.unmatchedQuestions} questions have no recognized lesson. Choose a lesson or explicitly review this mixed export.`);
@@ -217,17 +223,18 @@ function itemIssues(item,groupId){
   const errors=[];const lesson=LESSONS.find(l=>l.id===item.lessonId);
   if(!item.title?.trim())errors.push('Give this file a deck name.');
   if(!allowedScopes.has(item.scope))errors.push('Choose a valid import scope.');
+  if(!BATCH_SOURCES.includes(item.source||BATCH_SOURCES[0]))errors.push('Choose a recognized question source.');
   if(item.scope==='Guild'&&!groupId)errors.push('Join a Guild or choose Personal scope.');
   if(item.lessonId&&!lesson)errors.push('Choose a recognized lesson.');
   if(!item.questions?.length)errors.push(item.error||'No parsed questions are available.');
-  if(lesson&&item.questions.some(q=>q.domainNumber&&`d${q.domainNumber}`!==lesson.domainId))errors.push('The selected lesson conflicts with the question domains. Choose Mixed / Unassigned or the correct lesson.');
+  if(lesson&&lesson.domainId!=='practice'&&item.questions.some(q=>q.domainNumber&&`d${q.domainNumber}`!==lesson.domainId))errors.push('The selected lesson conflicts with the question domains. Choose Mixed / Unassigned or the correct lesson.');
   if(item.requiresReview&&!item.confirmed)errors.push('Review this file’s warnings and confirm it before importing.');
   if((item.scope==='Public'||item.sharePublic)&&!lesson&&item.questions?.some(q=>!cardLesson(q)))errors.push('Public sharing needs a recognized lesson for every question. Categorize the file or disable Public sharing.');
   return errors;
 }
 export async function batchOperationId(item,{uid,groupId}={}){
   return digest(JSON.stringify({version:BATCH_IMPORT_VERSION,uid,groupId:groupId||null,
-    file:item.fileDigest,title:String(item.title||'').trim(),lessonId:item.lessonId||'',scope:item.scope,sharePublic:!!item.sharePublic}));
+    ...((item.source&&item.source!==BATCH_SOURCES[0])?{source:item.source}:{}),file:item.fileDigest,title:String(item.title||'').trim(),lessonId:item.lessonId||'',scope:item.scope,sharePublic:!!item.sharePublic}));
 }
 
 /** Checkpoints contain only successful operation IDs, not QAE question text. */
@@ -283,7 +290,7 @@ export async function runBatchImport(plan,options={}){
       if(errors.length){item.status='blocked';results.push({id:item.id,status:'blocked',errors});options.onProgress?.({phase:'blocked',index,total:plan.items.length,item,plan});continue;}
       item.status='importing';item.error=null;options.onProgress?.({phase:'importing',index,total:plan.items.length,item,plan});
       try{
-        const bundle=buildImportBundle({questions:item.questions,title:item.title.trim(),lessonId:item.lessonId||'',scope:item.scope,uid,groupId,importedBy:options.importedBy||''});
+        const bundle=buildImportBundle({questions:item.questions,title:item.title.trim(),lessonId:item.lessonId||'',scope:item.scope,uid,groupId,importedBy:options.importedBy||'',source:item.source||BATCH_SOURCES[0]});
         const result=await options.importItem(item,{operationId,bundle,signal:options.signal});
         if(result===false||result?.success===false)throw new Error(result?.error||'The import was not saved.');
         checkpoint.markSuccess(operationId,{fileName:item.fileName,questionCount:item.questions.length});

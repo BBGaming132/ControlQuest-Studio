@@ -1,12 +1,12 @@
 import { DOMAIN_TOPICS } from './content.js';
 import { cardLesson, deckLesson } from './lesson-catalog.js';
-import { cardMastery, hasUnresolvedMiss, isDue, normalizeQuestion, progressKey } from './flashcard-engine.js';
+import { cardMastery, hasUnresolvedMiss, isCardAvailable, isDue, normalizeQuestion, progressKey } from './flashcard-engine.js';
 
 export const MASTERY_DEFINITION = 'Mastered means at least 3 successful scheduled recalls, a review interval of at least 21 days, at least 80% recorded review accuracy, and 2 consecutive Good/Easy recalls. It describes your imported bank, not an exam-pass prediction.';
 export const STUDY_PRESETS = Object.freeze([
-  { id:'micro', label:'Quick spark', minutes:3, questions:5 },
-  { id:'focus', label:'Focus flight', minutes:10, questions:15 },
-  { id:'deep', label:'Deep expedition', minutes:20, questions:30 }
+  { id:'micro', label:'Quick review', minutes:3, questions:5 },
+  { id:'focus', label:'Focused review', minutes:10, questions:15 },
+  { id:'deep', label:'Extended review', minutes:20, questions:30 }
 ]);
 
 export function studyIdentity(card) {
@@ -47,12 +47,14 @@ export function uniqueStudyCards(cards=[], progressMap={}, reviews=[], options={
   }
   const result=[];
   for(const [identity,aliases] of groups){
-    const ranked=aliases.map(card=>{const saved=progressMap?.[progressKey(card)];return {card,progress:options.uid&&saved?.uid&&saved.uid!==options.uid?undefined:saved};}).sort((a,b)=>
+    const candidates=aliases.map(card=>{const saved=progressMap?.[progressKey(card)];return {card,progress:options.uid&&saved?.uid&&saved.uid!==options.uid?undefined:saved};});
+    const resetAt=Math.max(0,...candidates.map(item=>millis(item.progress?.resetAt)));
+    const ranked=candidates.filter(item=>!resetAt||Math.max(millis(item.progress?.resetAt),millis(item.progress?.lastReviewedAt))>=resetAt).sort((a,b)=>
       Number((b.progress?.repetitions||0)>0)-Number((a.progress?.repetitions||0)>0) ||
       millis(b.progress?.lastReviewedAt)-millis(a.progress?.lastReviewedAt) ||
       (b.progress?.repetitions||0)-(a.progress?.repetitions||0) || progressKey(a.card).localeCompare(progressKey(b.card)));
     const chosen=ranked[0],keys=new Set(aliases.map(progressKey));
-    const ownEvents=events.filter(e=>keys.has(`${e.scopeKey}__${e.cardId}`)||(!e.scopeKey&&aliases.some(c=>c.id===e.cardId))).sort((a,b)=>millis(b.reviewedAt)-millis(a.reviewedAt));
+    const ownEvents=events.filter(e=>(keys.has(`${e.scopeKey}__${e.cardId}`)||(!e.scopeKey&&aliases.some(c=>c.id===e.cardId)))&&(!resetAt||millis(e.reviewedAt)>resetAt)).sort((a,b)=>millis(b.reviewedAt)-millis(a.reviewedAt));
     let progress=chosen.progress?{...chosen.progress}:null;
     const latest=ownEvents[0];
     // Earlier releases let a wrong multiple-choice answer be rated Easy. Never
@@ -61,7 +63,7 @@ export function uniqueStudyCards(cards=[], progressMap={}, reviews=[], options={
       progress={...(progress||{}),state:'relearning',lastRating:'Again',successfulRecallStreak:0,lastReviewedAt:latest.reviewedAt};
     }
     const domainIds=[...new Set(aliases.flatMap(c=>domainFor(c,decks)))].sort();
-    const importedMiss=aliases.some(c=>((progressMap?.[progressKey(c)]?.importedMiss===true&&(!options.uid||progressMap[progressKey(c)].uid===options.uid))||(c.wasCorrectAtImport===false && (!options.uid||c.ownerUid===options.uid||(!c.ownerUid&&c.scopeKey===`personal_${options.uid}`)))));
+    const importedMiss=!resetAt&&aliases.some(c=>((progressMap?.[progressKey(c)]?.importedMiss===true&&(!options.uid||progressMap[progressKey(c)].uid===options.uid))||(c.wasCorrectAtImport===false && (!options.uid||c.ownerUid===options.uid||(!c.ownerUid&&c.scopeKey===`personal_${options.uid}`)))));
     const sourceImportedMiss=aliases.some(c=>c.wasCorrectAtImport===false);
     const representative={...chosen.card,wasCorrectAtImport:importedMiss?false:chosen.card.wasCorrectAtImport===true?true:undefined};
     const unresolvedMiss=hasUnresolvedMiss(representative,progress)||latest?.correct===false;
@@ -74,9 +76,11 @@ export function uniqueStudyCards(cards=[], progressMap={}, reviews=[], options={
 }
 
 function summarizeCards(cards,now){
-  const stats={total:cards.length,unseen:0,new:0,learning:0,reviewing:0,mastered:0,remaining:0,due:0,dueReviews:0,missed:0,importedMisses:0,sourceImportedMisses:0,reviewMisses:0,correct:0,incorrect:0,reviews:0,accuracy:null,masteryPct:0,answerConflicts:0};
+  const stats={suspended:0,buried:0,leeches:0,total:cards.length,unseen:0,new:0,learning:0,reviewing:0,mastered:0,remaining:0,due:0,dueReviews:0,missed:0,importedMisses:0,sourceImportedMisses:0,reviewMisses:0,correct:0,incorrect:0,reviews:0,accuracy:null,masteryPct:0,answerConflicts:0};
   for(const card of cards){
     const p=card.effectiveProgress,mastery=cardMastery(p),unseen=!p||!(p.repetitions>0);
+    if(p?.suspended)stats.suspended++;else if(!isCardAvailable(p,now))stats.buried++;
+    if(p?.leech||(p?.lapses||0)>=8)stats.leeches++;
     if(unseen){stats.unseen++;stats.new++;}
     else if(mastery==='Learning')stats.learning++;
     else if(mastery==='Mastered'&&!card.answerConflict)stats.mastered++;
@@ -132,7 +136,7 @@ export function buildDailyPlan(cards=[],progressMap={},reviews=[],options={}) {
   const completed=analytics.totals.reviewedToday,remainingGoal=Math.max(0,dailyGoal-completed);
   const priorities=analytics.domains.map(d=>({...d,priority:Number(((d.dueReviews*4+d.missed*5+d.unseen+1)*(d.examWeight/100)*(1+(100-d.masteryPct)/100)).toFixed(3))})).filter(d=>d.total).sort((a,b)=>b.priority-a.priority||a.id.localeCompare(b.id));
   const weightMap=new Map(priorities.map(d=>[d.id,d.priority]));
-  const candidates=analytics.logicalCards.filter(c=>!c.answerConflict).map(card=>{
+  const candidates=analytics.logicalCards.filter(c=>!c.answerConflict&&isCardAvailable(c.effectiveProgress,now)).map(card=>{
     const p=card.effectiveProgress,due=isDue(p,now),unseen=!p||!(p.repetitions>0);
     const overdue=p?.dueAt?Math.max(0,(now-new Date(p.dueAt))/86400000):0;
     const score=(card.unresolvedMiss?1000:0)+(due&&!unseen?700:0)+(unseen?300:0)+(weightMap.get(card.domainId)||0)+Math.min(60,overdue);

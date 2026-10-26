@@ -12,8 +12,9 @@ try{
  $('[data-cq-choice="A"]').click();$('#cqReveal').click();await $('[data-cq-rate="Good"]').onclick();
  assert.equal(calls[0].worldMode,'coop','The active Guild is the only study island destination');
  assert.equal(c.group.questWorld.stats.study,1);assert.equal(c.profile.v3.world.resources.wood,42,'Personal save stays preserved');
- assert.match($('.cq-reward-burst').textContent,/\+2 quest coins/,'Reward receipt shows actual engine result');
- assert.equal($('.island-play'),null,'Focus mode does not force gameplay');$('[data-cq-experience="expedition"]').click();assert.ok($('.expedition-view'));assert.equal($('[data-qw-mode]'),null);
+ assert.equal($('.cq-reward-burst'),null,'Focus keeps game rewards in the background');
+ assert.match($('.cq-feedback-ack').textContent,/Review saved/);
+ assert.equal($('.island-play'),null,'Focus mode does not force gameplay');$('[data-cq-experience="expedition"]').click();assert.ok($('.expedition-view'));assert.match($('.cq-reward-burst').textContent,/\+2 quest coins/,'Optional expedition shows the actual background reward');assert.equal($('[data-qw-mode]'),null);
  $('#cqNextQuestion').click();assert.ok($('#cqStudyCard'));assert.equal(c.profile.v3.pocketSession.run,run,'Returning to a question does not rebuild the queue');assert.equal(c.profile.v3.pocketSession.index,1);
  c.navigate('adventure');assert.ok($('.expedition-view'),'The shared expedition remains available beside the same question queue');
  c.navigate('feed');$('[data-cq-choice="A"]').click();$('#cqReveal').click();let finish;c.review=()=>new Promise(r=>{finish=r;});const saving=$('[data-cq-rate="Good"]').onclick();

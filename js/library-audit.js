@@ -1,6 +1,6 @@
 /** Read-only planning over the signed-in visitor's loaded library. No database reads or writes. */
 import {normalizeQuestion} from './flashcard-engine.js';
-import {LESSONS,normalizeLessonName} from './lesson-catalog.js';
+import {LESSONS,lessonMatchDetails} from './lesson-catalog.js';
 export const exactQuestionIdentity=card=>JSON.stringify([normalizeQuestion(card?.question||''),Object.values(card?.choices||{}).map(normalizeQuestion).sort()]);
 const answer=card=>normalizeQuestion(card?.choices?.[card.correctAnswer]||'');
 const ref=card=>({id:card.id||'',scopeKey:card.scopeKey||'',scope:card.scope||'',lessonId:card.lessonId||'',answer:answer(card)});
@@ -19,8 +19,8 @@ export function auditIncomingQuestions(questions=[],existingCards=[],priorQuesti
  return result;
 }
 const domainOf=card=>/^d[1-5]$/.test(card?.domainId||'')?card.domainId:Number(card?.domainNumber)>=1&&Number(card?.domainNumber)<=5?`d${Number(card.domainNumber)}`:String(card?.domain||'').match(/\bdomain\s*([1-5])\b/i)?.[1]?.replace(/^(\d)$/,'d$1')||'';
-function candidates(text){const n=normalizeLessonName(text).replace(/^\d+[a-z]\d+\s*/,'');if(!n)return [];return LESSONS.filter(l=>[l.id,l.title,...l.aliases].some(v=>{const name=normalizeLessonName(v);return n===name||(name.length>12&&(` ${n} `).includes(` ${name} `));}));}
-function evidence(card){const explicit=LESSONS.find(l=>l.id===card.lessonId);if(explicit)return {lesson:explicit,status:'matched'};
+function candidates(text){const match=lessonMatchDetails(text);return match.lesson?[match.lesson]:match.candidates;}
+function evidence(card){if(card.categoryOverride)return {lesson:LESSONS.find(l=>l.id===card.lessonId)||null,status:LESSONS.some(l=>l.id===card.lessonId)?'matched':'unmatched',manual:true};const explicit=LESSONS.find(l=>l.id===card.lessonId);if(explicit)return {lesson:explicit,status:'matched'};
  const found=[...new Map([card.knowledgeStatement,card.sessionTitle].flatMap(candidates).map(l=>[l.id,l])).values()],domain=domainOf(card);
  if(found.length!==1)return {status:found.length?'ambiguous':'unmatched'};
  if(domain&&domain!==found[0].domainId)return {status:'ambiguous',reason:'Question domain conflicts with lesson evidence.'};return {lesson:found[0],status:'matched'};
@@ -47,14 +47,14 @@ export function auditLibrary({decks=[],cards=[],uid='',groupId=null}={}){
   if(lesson&&!deck.categoryOverride&&writable(deck,{uid,groupId})&&(deck.lessonId!==lesson.id||deck.domainId!==lesson.domainId))operations.push({kind:'deck',id:deck.id,scopeKey:deck.scopeKey,scope:deck.scope,patch:{lessonId:lesson.id,lessonTitle:lesson.title,domainId:lesson.domainId},reason});
  }
  for(const card of cards){let {lesson,status}=cardEvidence.get(card);let reason='Canonical question metadata.';
-  if(!lesson&&status!=='ambiguous'){
+  if(!lesson&&status!=='ambiguous'&&!card.categoryOverride){
    const linked=decks.filter(d=>d.scopeKey===card.scopeKey&&card.deckIds?.includes(d.id)&&!['master','missed'].includes(d.kind)).map(d=>deckEvidence.get(d)).filter(Boolean);
    const possible=[...new Map(linked.filter(d=>d.status==='matched'&&d.lesson).map(d=>[d.lesson.id,d.lesson])).values()];
    if(possible.length===1&&!linked.some(d=>['mixed','ambiguous'].includes(d.status))){lesson=possible[0];status='matched';reason='Unambiguous containing lesson deck.';}else if(possible.length>1)status='ambiguous';
   }
   if(lesson&&domainOf(card)&&domainOf(card)!==lesson.domainId){lesson=null;status='ambiguous';reason='Question domain conflicts with lesson evidence.';}
   rows.push({kind:'card',id:card.id,scopeKey:card.scopeKey,status,lessonId:lesson?.id||'',reason});
-  if(lesson&&writable(card,{uid,groupId})&&(card.lessonId!==lesson.id||card.domainId!==lesson.domainId))operations.push({kind:'card',id:card.id,scopeKey:card.scopeKey,scope:card.scope,patch:{lessonId:lesson.id,lessonTitle:lesson.title,domainId:lesson.domainId,domainNumber:Number(lesson.domainId.slice(1))},reason});
+  if(lesson&&!card.categoryOverride&&writable(card,{uid,groupId})&&(card.lessonId!==lesson.id||card.domainId!==lesson.domainId))operations.push({kind:'card',id:card.id,scopeKey:card.scopeKey,scope:card.scope,patch:{lessonId:lesson.id,lessonTitle:lesson.title,domainId:lesson.domainId,domainNumber:Number(lesson.domainId.slice(1))},reason});
  }
  const categorization={operations,rows,...Object.fromEntries(['matched','ambiguous','unmatched','mixed'].map(status=>[status,rows.filter(r=>r.status===status).length]))};
  return {summary:{decks:decks.length,cards:cards.length,uniqueQuestions:index.size,duplicateGroups:duplicateGroups.length,extraCopies:duplicateGroups.reduce((n,g)=>n+g.extraCopies,0),answerConflicts:duplicateGroups.filter(g=>g.answerConflict).length,proposedCategories:operations.length},duplicateGroups,categorization,limitations:'Only the signed-in visitor’s loaded Personal, active Guild and Public library is audited. Other private accounts and unloaded Firebase records cannot be inspected. This plan does not delete or merge records.'};
