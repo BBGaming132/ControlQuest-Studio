@@ -4,10 +4,10 @@ import { cardMastery, stableHash } from './flashcard-engine.js';
 
 export const HOMEWORK_CONFIG = Object.freeze({
   version: 1, startDate: '2026-10-26', timezone: 'America/New_York',
-  secondsPerQuestion: 96, quizQuestions: 25, recallGapMinutes: 10,
+  secondsPerQuestion: 96, quizQuestions: 25, recallGapMinutes: 0,
   assignmentPoints: 20, lateAssignmentPoints: 10, quizPoints: 30, lateQuizPoints: 15, missedDeadlinePenalty: 5
 });
-export const HOMEWORK_READINESS_DEFINITION = 'Complete every unique imported QAE question in this lesson with two correct Good/Easy recalls at least 10 minutes apart after its latest miss or reset. Daily completion is separate from long-term spaced-repetition mastery.';
+export const HOMEWORK_READINESS_DEFINITION = 'Clear each question with a correct Good or Easy recall. Again and Hard return during this lesson, without a waiting period. Saved assignment completion stays complete during later retention reviews.';
 const DAY = 86400000;
 const validTime = value => value!==null&&value!==undefined&&value!==''&&Number.isFinite(new Date(value).getTime());
 const stamp = value => { const d = new Date(value ?? Date.now()); if (!Number.isFinite(d.getTime())) throw new TypeError('A valid date is required.'); return d.toISOString(); };
@@ -67,7 +67,7 @@ function cardReadiness(card, startAt, resetAt, now) {
     const time=Date.parse(e.reviewedAt);
     if(e.correct===false||e.rating==='Again'){first=null;latest=null;count=0;completedAt=null;continue;}
     if(e.correct!==true||!['Good','Easy'].includes(e.rating)){first=null;latest=null;count=0;completedAt=null;continue;}
-    if(first===null){first=time;count=1;}
+    if(first===null){first=time;count=2;completedAt=new Date(time).toISOString();}
     else if(time-first>=HOMEWORK_CONFIG.recallGapMinutes*60000){count++;completedAt=new Date(time).toISOString();}
     latest=time;
   }
@@ -123,7 +123,7 @@ export function recordHomeworkCompletion(state={},plan,lessonId,now=plan?.asOf) 
   const assignment=plan?.assignments?.find(a=>a.lessonId===lessonId);
   if(!assignment)throw new Error('Choose a lesson in this homework plan.');
   if(assignment.completedAt)return structuredClone(state);
-  if(!assignment.canComplete)throw new Error(assignment.blockedBy?'Complete the earlier lesson first.':assignment.total?'Every question needs two correct recalls at least 10 minutes apart.':'Import this lesson’s QAE questions first.');
+  if(!assignment.canComplete)throw new Error(assignment.blockedBy?'Complete the earlier lesson first.':assignment.total?'Clear every question with a correct Good or Easy recall.':'Import this lesson’s QAE questions first.');
   const completedAt=stamp(now);
   if(Date.parse(completedAt)<Date.parse(plan.asOf))throw new Error('Completion cannot be backdated before the verified plan.');
   return {...structuredClone(state),version:1,enrolledAt:state.enrolledAt||completedAt,startedAt:state.startedAt||plan.startedAt,completions:{...structuredClone(state.completions||{}),[lessonId]:{lessonId,completedAt,cardIdentities:assignment.cards.map(c=>c.studyIdentity).sort(),resetAt:plan.resetAt||null}}};

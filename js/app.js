@@ -1,4 +1,4 @@
-import {buildHomeworkPlan,buildHomeworkPublicSummary,refreshHomeworkPublicSummary,enrollHomework} from './homework-plan.js';
+import {buildHomeworkPlan,buildHomeworkPublicSummary,refreshHomeworkPublicSummary,enrollHomework,recordHomeworkCompletion} from './homework-plan.js';
 import {renderHomework,bindHomework,renderHomeworkQuiz,bindHomeworkQuiz} from './homework-view.js';
 import {renderReviewTools,bindReviewTools} from './review-tools.js';
 import {renderFocusAudio,bindFocusAudio,stopFocusAudio} from './focus-audio.js';
@@ -1481,7 +1481,7 @@ function experienceContext(){
   return {profile,user,group:state.group,library:state.library,level:levelInfo().level,isCurrent,
     avatar:()=>avatarSvg(state.profile.inventory.equipped),navigate:navigateTo,render:renderApp,toast,
     save,saveQuiet:()=>{if(isCurrent())saveProfileDebounced();},refresh:refreshStudyLibrary,download:downloadText,
-    startLessonReview:lessonId=>startLessonReview(experienceContext(),lessonId),resetStudyProgress,updateStudyAvailability,review:saveExperienceReview,worldAction:saveExperienceWorldAction,importBatch:saveExperienceBatch,
+    completeAssignment:async lessonId=>{await persistHomework(recordHomeworkCompletion(state.profile.v3.homework||{},currentHomeworkPlan(),lessonId));updateStreakForToday('Lesson completed');await saveProfileDebounced(true);},startLessonReview:lessonId=>startLessonReview(experienceContext(),lessonId),resetStudyProgress,updateStudyAvailability,review:saveExperienceReview,worldAction:saveExperienceWorldAction,importBatch:saveExperienceBatch,
     renderGuildStudy:renderGuildStudyTab,bindGuildStudy:bindTools,
     getWorld:()=>createWorld(state.group?state.group.questWorld:state.profile.v3.world),
     completeLesson:async lesson=>{
@@ -1512,7 +1512,7 @@ async function rewardExperience(event,worldMode='solo',context={}){
   window.dispatchEvent(new CustomEvent('controlquest:activity',{detail:event}));
 }
 let experienceReviewLock=false;
-async function saveExperienceReview(card,{rating,selectedAnswer,eventId,mode='pocket-quest',worldMode}){
+async function saveExperienceReview(card,{rating,selectedAnswer,eventId,mode='pocket-quest',worldMode,responseTimeMs=0}){
   if(experienceReviewLock)throw new Error('Your previous answer is still saving.');
   if(experienceWorldLock)throw new Error('Your island move is still saving. Try this answer again in a moment.');
   if(!state.user?.uid||!state.profile)throw new Error('Sign in before saving a review.');
@@ -1543,7 +1543,7 @@ async function saveExperienceReview(card,{rating,selectedAnswer,eventId,mode='po
       const logical=uniqueStudyCards(library.cards,library.progress,library.reviews,{uid:uid,decks:library.decks}).find(c=>studyIdentity(c)===studyIdentity(card));
       const saved=logical?.effectiveProgress||library.progress[progressKey(card)];
       const previous=saved&&(!saved.uid||saved.uid===uid)?saved:defaultProgress(card,uid);
-      const event=existing||{...createReviewEvent({uid:uid,card,deckId:card.deckIds?.[0]||'',mode,rating:effectiveRating,correct,responseTimeMs:0,sessionId:eventId,groupId:profile.activeGroupId,wasNew:!(previous.repetitions||0)}),id:reviewId,reviewedAt:reviewedAt.toISOString()};
+      const event=existing||{...createReviewEvent({uid:uid,card,deckId:card.deckIds?.[0]||'',mode,rating:effectiveRating,correct,responseTimeMs:Math.max(0,Math.min(86400000,Number(responseTimeMs)||0)),sessionId:eventId,groupId:profile.activeGroupId,wasNew:!(previous.repetitions||0)}),id:reviewId,reviewedAt:reviewedAt.toISOString()};
       let updates=[];
       if(!existing){
         const next=rateCard(card,previous,effectiveRating,profile.preferences.studySettings||DEFAULT_REVIEW_SETTINGS,reviewedAt);

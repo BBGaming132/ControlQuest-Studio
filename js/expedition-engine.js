@@ -23,6 +23,7 @@ export function createExpedition(saved={}){
   const valid=source.schemaVersion===1?source:{};
   const routeIndex=integer(valid.routeIndex),legIndex=integer(valid.legIndex,0,3);
   const state={schemaVersion:1,chapter:1+Math.floor(routeIndex/4),routeIndex,legIndex,activeJob:own(EXPEDITION_JOBS,valid.activeJob)?valid.activeJob:jobs[legIndex],
+    power:['balanced','shields','engines','weapons'].includes(valid.power)?valid.power:'balanced',routeChoice:['charted','hazard'].includes(valid.routeChoice)?valid.routeChoice:'charted',
     work:Object.fromEntries(jobs.map(job=>[job,integer(valid.work?.[job],0,EXPEDITION_JOBS[job].target)])),
     stores:{timber:integer(valid.stores?.timber),crystal:integer(valid.stores?.crystal),coins:integer(valid.stores?.coins)},
     fleet:{hull:valid.fleet?.hull===undefined?100:integer(valid.fleet.hull,40,100),maxHull:100,guard:integer(valid.fleet?.guard,0,10),buildings:integer(valid.fleet?.buildings)},
@@ -53,7 +54,14 @@ export function advanceExpedition(saved,event={}){
   if(!cleanId(event.id))return reject('A saved expedition command needs a unique event ID.');
   if(expedition.receipts.includes(event.id))return {...reject('That expedition turn is already saved.'),duplicate:true};
   let message='',tone='progress';
-  if(event.type==='assign'){
+  if(event.type==='tactic'){
+    if(!['power','routeChoice'].includes(event.setting))return reject('Choose a ship system or route.');
+    const allowed=event.setting==='power'?['balanced','shields','engines','weapons']:['charted','hazard'];
+    if(!allowed.includes(event.value))return reject('Choose an available tactical option.');
+    if(event.setting==='routeChoice'&&(expedition.legIndex!==0||expedition.work.gather>0))return reject('Choose your route before beginning its supply stage.');
+    if(expedition[event.setting]===event.value)return reject('This order is already active.');
+    expedition[event.setting]=event.value;message=event.setting==='power'?`Power routed to ${event.value}. The next saved recall advances the ship.`:`Route chosen: ${event.value==='hazard'?'Storm passage: greater damage, double victory coins':'Charted waters: standard risk and rewards'}.`;
+  }else if(event.type==='assign'){
     if(!own(EXPEDITION_JOBS,event.job))return reject('Choose gathering, construction, sailing or defense.');
     if(event.job==='sail'&&expedition.legIndex!==2)return reject('Gather supplies and raise the route outpost before setting sail.');
     if(event.job==='defend'&&expedition.legIndex!==3)return reject('There are no pirates here. Finish the route preparations and sail to their waters first.');
@@ -64,16 +72,16 @@ export function advanceExpedition(saved,event={}){
     expedition.stats.answers++;
     if(!event.correct){
       expedition.stats.incorrect++;expedition.repairs=Math.min(6,expedition.repairs+1);
-      const damage=Math.max(3,8-expedition.fleet.guard);const oldHull=expedition.fleet.hull;
+      const damage=Math.max(1,8-expedition.fleet.guard+(expedition.routeChoice==='hazard'?4:0)-(expedition.power==='shields'?5:0));const oldHull=expedition.fleet.hull;
       expedition.fleet.hull=Math.max(40,oldHull-damage);
       message=`A rough current delayed the crew${expedition.fleet.hull<oldHull?`: hull −${oldHull-expedition.fleet.hull}`:''}. Read the explanation; your next correct recalls repair the setback. Your completed outposts stay safe.`;tone='setback';
     }else{
       expedition.stats.correct++;
       const repairing=expedition.repairs>0;
       if(repairing){expedition.repairs--;expedition.stats.repairs++;expedition.fleet.hull=Math.min(100,expedition.fleet.hull+10);}
-      const job=expedition.activeJob,spec=EXPEDITION_JOBS[job],work=repairing?1:2;
+      const job=expedition.activeJob,spec=EXPEDITION_JOBS[job],work=repairing?1:expedition.power==='engines'&&job==='sail'||expedition.power==='weapons'&&job==='defend'?3:expedition.power==='shields'?1:2;
       expedition.work[job]=Math.min(spec.target,expedition.work[job]+work);
-      const notes=[repairing?'A correct recall repaired one setback and advanced the crew.':'Correct recall: your crew advanced two work.'];
+      const notes=[repairing?'A correct recall repaired one setback and advanced the crew.':`Correct recall: your crew advanced ${work} work with ${expedition.power} power.`];
       if(expedition.work[job]>=spec.target){
         if(job==='build'&&(expedition.stores.timber<2||expedition.stores.crystal<1)){
           notes.push('The foundation is ready. Gather two timber and one starlight to finish it.');expedition.activeJob='gather';
@@ -98,7 +106,7 @@ function finishJob(e,job,notes){
   if(job==='gather'){e.stores.timber+=3;e.stores.crystal++;e.stats.gathered++;notes.push('Crew returned with 3 timber and 1 starlight.');}
   if(job==='build'){e.stores.timber-=2;e.stores.crystal--;e.fleet.buildings++;e.fleet.guard=Math.min(10,e.fleet.guard+1);e.fleet.hull=Math.min(100,e.fleet.hull+10);e.stats.builds++;notes.push(`Outpost ${e.fleet.buildings} built. A permanent shelter and stronger guard join the expedition.`);}
   if(job==='sail'){e.stats.voyages++;notes.push('Your ship crossed the passage.');}
-  if(job==='defend'){e.stats.victories++;e.stats.arrivals++;const reward=12+Math.min(20,e.chapter);e.stores.coins+=reward;notes.push(`Pirates repelled. ${destinations[e.routeIndex%destinations.length]} secured! +${reward} island coins. A new route is charted.`);}
+  if(job==='defend'){e.stats.victories++;e.stats.arrivals++;const reward=(12+Math.min(20,e.chapter))*(e.routeChoice==='hazard'?2:1);e.stores.coins+=reward;notes.push(`Pirates repelled. ${destinations[e.routeIndex%destinations.length]} secured! +${reward} island coins. A new route is charted.`);}
   if(job===jobs[e.legIndex]){
     e.legIndex++;
     if(e.legIndex>3){e.legIndex=0;e.routeIndex++;e.chapter=1+Math.floor(e.routeIndex/4);}
