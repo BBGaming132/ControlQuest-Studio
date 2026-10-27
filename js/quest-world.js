@@ -90,6 +90,9 @@ export function advanceWorld(saved,event={}) {
   const costs=(resources={})=>Object.entries(resources).every(([key,n])=>world.resources[key]>=n);
   let feedback='',tone='success',reward=null;
   switch(event.type){
+    case 'campaign-tactic':{
+      const result=advanceExpedition(world.campaign,{...event,type:'tactic'});if(!result.changed)return reject(result.feedback.message);world.campaign=result.expedition;feedback=result.feedback.message;tone=result.feedback.tone;break;
+    }
     case 'campaign-assign':
     case 'campaign-job':{
       const result=advanceExpedition(world.campaign,{type:'assign',id:event.id,job:event.job});

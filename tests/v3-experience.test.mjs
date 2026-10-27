@@ -34,14 +34,14 @@ try{
   c.navigate('command');assert.equal($$('.cq-domain-tile').length,5);assert.equal($$('.cq-welcome img').length,0);
   // Domain selection uses the corrected category, not the old source domain.
   await click('[data-cq-domain="d1"]');assert.equal($('.cq-study-card h2').textContent,'Which audit evidence is BEST?');
-  assert.equal($('#cqReveal').disabled,true);await click('[data-cq-choice="B"]');assert.equal($('#cqReveal').disabled,false);await click('#cqReveal');
+  assert.equal($('#cqReveal').disabled,true);await click('[data-cq-choice="B"]');assert.equal($('#cqReveal').disabled,false);c.failReview=true;await click('#cqReveal');
   assert.ok($('.cq-recall-result').textContent.includes('Independent confirmation'));
   assert.ok($('#test-root').textContent.includes('scheduled as Again'));
   $('#cqListenAnswer').click();assert.ok(c.toasts.some(t=>t[0].includes('Spoken audio')));
   $('#cqCoach').click();assert.ok($('.cq-settings')===null); // Context routes to the preferences view through the host.
   c.navigate('feed');
-  c.failReview=true;await click('[data-cq-rate="Easy"]');assert.equal(c.reviews.length,0);assert.ok(c.toasts.some(t=>t[0].includes('Simulated save failure')));assert.ok($('.cq-study-card'));
-  c.failReview=false;await click('[data-cq-rate="Easy"]');assert.equal(c.reviews.length,1);assert.equal(c.reviews[0].selectedAnswer,'B');assert.equal(c.reviews[0].card.id,'audit');
+  c.failReview=true;await click('[data-cq-rate="Again"]');assert.equal(c.reviews.length,0);assert.ok(c.toasts.some(t=>t[0].includes('Simulated save failure')));assert.ok($('.cq-study-card'));
+  c.failReview=false;await click('[data-cq-rate="Again"]');assert.equal(c.reviews.length,1);assert.equal(c.reviews[0].selectedAnswer,'B');assert.equal(c.reviews[0].card.id,'audit');
   c.navigate('command');await click('[data-cq-domain="d3"]');assert.equal($('.cq-study-card h2').textContent,'A recategorized question');
   drag($('.cq-study-card h2'),[100,100],[210,102]);assert.equal($('.cq-recall-result'),null,'A swipe cannot bypass answer selection');
   await click('[data-cq-choice="A"]');drag($('.cq-study-card h2'),[100,100],[110,230]);assert.equal($('.cq-recall-result'),null,'Vertical reading scroll must not reveal');

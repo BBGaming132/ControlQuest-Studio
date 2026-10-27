@@ -22,12 +22,12 @@ const makePlan=(state={},extra={})=>buildHomeworkPlan({cards,reviews,state,uid:'
 let p=makePlan();
 assert.equal(p.nextAssignment.lessonId,'d1-t01');assert.equal(p.currentWeek.id,'week-01');assert.equal(p.overdueCount,0);assert.equal(p.completedCount,0);assert.equal(p.assignments[0].status,'today');
 assert.equal(p.assignments[0].canComplete,false);assert.equal(p.weeks[0].unlocked,false);
-assert.throws(()=>recordHomeworkCompletion({},p,'d1-t01'),/two correct/);
+assert.throws(()=>recordHomeworkCompletion({},p,'d1-t01'),/correct Good/);
 assert.throws(()=>createHomeworkQuiz(p,'week-01'),/all five/);
 reviews.push(event(0,'2026-10-25T14:00:00Z'),event(0,'2026-10-25T14:10:00Z'));
 assert.equal(makePlan().assignments[0].readyCount,0,'old legacy progress cannot silently satisfy the new plan');
 reviews.push(event(0,'2026-10-26T13:40:00Z'),event(0,'2026-10-26T13:49:59Z'));
-p=makePlan();assert.equal(p.assignments[0].ready,false);assert.equal(p.assignments[0].cards[0].homeworkReadiness.nextEligibleAt,'2026-10-26T13:50:00.000Z');
+p=makePlan();assert.equal(p.assignments[0].ready,true);assert.equal(p.assignments[0].cards[0].homeworkReadiness.nextEligibleAt,null);
 reviews.push(event(0,'2026-10-26T13:50:00Z'));
 p=makePlan();assert.equal(p.assignments[0].ready,true);assert.equal(p.assignments[0].masteredCount,0,'daily completion does not claim long-term mastery');
 let state=recordHomeworkCompletion({},p,'d1-t01');
@@ -68,8 +68,8 @@ p=makePlan(resetState);assert.equal(p.completedCount,0);assert.equal(p.assignmen
 p=makePlan(state,{progressMap:{'personal_u__card-0':{resetAt:'2026-10-26T15:55:00Z'}}});assert.equal(p.assignments[0].ready,false);assert.equal(p.assignments[0].completedAt,null);assert.equal(p.weeks[0].quiz,null);
 const foreignReviews=reviews.map(r=>({...r,uid:'someone-else'}));assert.equal(makePlan({}, {reviews:foreignReviews}).assignments[0].ready,false);
 const twice=[...reviews,...reviews];assert.equal(makePlan({}, {reviews:twice}).assignments[0].ready,true);
-const oneRepeated=[event(0,'2026-10-26T13:30:00Z'),event(0,'2026-10-26T13:30:00Z')];assert.equal(makePlan({}, {reviews:oneRepeated}).assignments[0].ready,false);
-const missed=[event(0,'2026-10-26T13:10:00Z'),event(0,'2026-10-26T13:20:00Z'),event(0,'2026-10-26T13:25:00Z','Again',false),event(0,'2026-10-26T13:30:00Z')];assert.equal(makePlan({}, {reviews:missed}).assignments[0].ready,false);
+const oneRepeated=[event(0,'2026-10-26T13:30:00Z'),event(0,'2026-10-26T13:30:00Z')];assert.equal(makePlan({}, {reviews:oneRepeated}).assignments[0].ready,true);
+const missed=[event(0,'2026-10-26T13:10:00Z'),event(0,'2026-10-26T13:20:00Z'),event(0,'2026-10-26T13:25:00Z','Again',false),event(0,'2026-10-26T13:30:00Z')];assert.equal(makePlan({}, {reviews:missed}).assignments[0].ready,true);
 assert.equal(makePlan({}, {reviews:[...missed,event(0,'2026-10-26T13:40:00Z')]}).assignments[0].ready,true);
 assert.equal(makePlan({}, {cards:[card(0,{answerConflict:true})]}).assignments[0].ready,false);
 assert.equal(makePlan({}, {cards:[card(0,{source:'Udemy course'})]}).assignments[0].total,0);

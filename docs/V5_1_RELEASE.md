@@ -1,0 +1,11 @@
+# ControlQuest 5.1
+
+Lesson assignments use a completion checklist: one correct Good/Easy recall clears a card; Again and Hard return in the next shuffled pass, without waiting for the FSRS due time. A saved assignment remains completed after future misses and due reviews. Explicit resets and newly added questions still require attention. Long-term retention remains FSRS-based and is not equated with lesson completion.
+
+Study questions and answer presentation shuffle. Original choice keys are retained for grading and explanation mapping; order-dependent choices are not shuffled. Wrong answers automatically save Again, retain the explanation, and require explicit Next. Save failures retain a retryable Again control. Current-question count-up timing and run averages are stored with the resumable session; answer durations also enter the personal review ledger. Timing is informational and stops when the answer is revealed; hidden-tab time is excluded. Session timing survives saved interactions; closing before any interaction may lose the latest unsaved seconds.
+
+The lesson tracker displays remaining questions. The completion screen has a direct save-credit action. Study activity continues protecting the existing streak independently of durable mastery.
+
+Optional expedition adds a tactical ship bridge: balanced, shields, engines and weapons power; route risk selection before gathering; persistent captain's log. Shields reduce incoming damage at slower work speed; engines accelerate sailing; weapons accelerate defense; storm routes increase damage and double victory coins. Existing world transactions and command receipts persist and deduplicate tactics. No real-time pressure, new backend, or database reset is introduced. This is an FTL-inspired tactical layer within the island campaign, not a recreation of FTL.
+
+Validation: existing suites plus continuous-lesson tests cover automatic Again, incorrect-save retries, Hard repetition, canonical grading after choice shuffling, no timed completion gate, retained completion after later misses, timing input and tactical command persistence. Browser demo checks cover wrong answer → automatic Again → shuffled retry → Good → zero remaining → saved lesson → next assignment, and a saved shield-power order. Production signed-in cross-device play and physical phone testing remain unverified.
