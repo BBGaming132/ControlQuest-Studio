@@ -503,3 +503,42 @@ body{background:radial-gradient(ellipse at 90% -10%,#2767c42b,transparent 48%),v
 .cq-session-review-label:before{background:#f59e0b}
 .cq-session-current{margin-left:auto;color:var(--text)}
 @media(max-width:420px){.cq-session-current{flex-basis:100%;margin-left:0}}
+
+/* Thumb-friendly study controls; the document remains freely scrollable. */
+.cq-mobile-study-actions{display:none}
+.cq-answer-explanation>summary{min-height:44px;display:flex;align-items:center;cursor:pointer;font-weight:650}
+@media(max-width:760px){
+ body:has(#cqStudyCard) .main{padding:10px 10px calc(100px + env(safe-area-inset-bottom,0px));width:100%;max-width:100%}
+ body:has(#cqStudyCard) .topbar{margin-bottom:8px}
+ .cq-feed-layout .cq-page-head{margin:8px 0 10px}
+ .cq-feed-layout .cq-page-head h1{font-size:18px;line-height:1.25;margin:0}
+ .cq-feed-layout .cq-page-head p,.cq-study-card>.cq-fine:first-child,.cq-feed-hint{display:none}
+ .cq-optional-games,.cq-study-settings{margin:6px 0!important;padding:8px 12px!important}
+ .cq-study-card{padding:14px!important;border-radius:16px!important;scroll-margin-top:8px;scroll-margin-bottom:100px}
+ .cq-study-card h2{font-size:18px!important;line-height:1.4!important;margin:12px 0!important}
+ .cq-card-meta{font-size:11px;line-height:1.35;margin-bottom:8px}
+ .cq-card-meta>span:first-child{max-width:85%}
+ .cq-session-timing{font-size:11px;margin:8px 0}
+ .cq-lesson-remaining{padding:8px!important;font-size:12px!important;margin:8px 0!important}
+ .cq-answer-list{gap:8px}
+ .cq-answer-list>button{min-height:48px;padding:10px!important;font-size:15px!important;line-height:1.4!important;text-align:left}
+ .cq-answer-list b{width:25px;height:25px;flex-shrink:0}
+ .cq-study-card .cq-rating-row,.cq-study-card .cq-rating-label,.cq-rating-label+.cq-fine,.cq-study-card>#cqReveal,.cq-feedback-ack>#cqNextQuestion{display:none}
+ .cq-feedback-ack{padding:8px 0;margin:8px 0}
+ .cq-feedback-ack .cq-fine{display:none}
+ .cq-answer-explanation{margin:10px 0;border-top:1px solid var(--line)}
+ .cq-recall-result{padding:12px!important;font-size:14px!important;line-height:1.5}
+ .cq-answer-tools button{min-height:44px;font-size:12px}
+ .cq-mobile-study-actions{display:block;position:fixed;z-index:100;left:0;right:0;bottom:0;padding:10px 12px calc(10px + env(safe-area-inset-bottom,0px));background:var(--panel);border-top:1px solid var(--line);box-shadow:0 -4px 18px #0001}
+ .cq-mobile-study-actions>button{width:100%;min-height:48px;font-size:16px}
+ .cq-mobile-ratings{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:6px}
+ .cq-mobile-ratings>button{min-height:48px;padding:10px 2px;font-size:14px;background:var(--panel2);color:var(--text);border:1px solid var(--line);border-radius:12px}
+ body:has(#cqStudyCard) [class*="audio"]{scroll-margin-bottom:110px}
+ .cq-study-card>*{max-width:100%;overflow-wrap:anywhere}
+}
+@media(prefers-reduced-motion:reduce){.cq-study-card *{scroll-behavior:auto!important;animation:none!important;transition:none!important}}
+@media(max-width:760px){
+ .cq-mobile-study-actions{bottom:calc(70px + env(safe-area-inset-bottom,0px));padding-bottom:10px}
+ body:has(#cqStudyCard) .main{padding-bottom:calc(180px + env(safe-area-inset-bottom,0px))}
+ .cq-study-card{scroll-margin-bottom:180px}
+}
