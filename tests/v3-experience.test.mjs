@@ -40,8 +40,8 @@ try{
   $('#cqListenAnswer').click();assert.ok(c.toasts.some(t=>t[0].includes('Spoken audio')));
   $('#cqCoach').click();assert.ok($('.cq-settings')===null); // Context routes to the preferences view through the host.
   c.navigate('feed');
-  c.failReview=true;await click('[data-cq-rate="Again"]');assert.equal(c.reviews.length,0);assert.ok(c.toasts.some(t=>t[0].includes('Simulated save failure')));assert.ok($('.cq-study-card'));
-  c.failReview=false;await click('[data-cq-rate="Again"]');assert.equal(c.reviews.length,1);assert.equal(c.reviews[0].selectedAnswer,'B');assert.equal(c.reviews[0].card.id,'audit');
+  c.failReview=true;await click('#cqRetryReviews');assert.equal(c.reviews.length,0);assert.ok($('[data-cq-sync]').textContent.includes('Simulated save failure'));assert.ok($('.cq-study-card'));
+  c.failReview=false;await click('#cqRetryReviews');assert.equal(c.reviews.length,1);assert.equal(c.reviews[0].selectedAnswer,'B');assert.equal(c.reviews[0].card.id,'audit');
   c.navigate('command');await click('[data-cq-domain="d3"]');assert.equal($('.cq-study-card h2').textContent,'A recategorized question');
   drag($('.cq-study-card h2'),[100,100],[210,102]);assert.equal($('.cq-recall-result'),null,'A swipe cannot bypass answer selection');
   await click('[data-cq-choice="A"]');drag($('.cq-study-card h2'),[100,100],[110,230]);assert.equal($('.cq-recall-result'),null,'Vertical reading scroll must not reveal');
@@ -66,6 +66,6 @@ try{
   other.navigate('adventure');assert.ok($('.expedition-view'));assert.equal($('[data-qw-mode]'),null,'The island has no competing personal/Guild mode selectors');
   // A delayed save from a signed-out member must not advance the next member's UI.
   const pending=context('pending-member');let resolveReview;pending.review=()=>new Promise(resolve=>{resolveReview=resolve;});pending.navigate('command');await click('[data-cq-domain="d5"]');await click('[data-cq-choice="B"]');await click('#cqReveal');
-  const oldSave=$('[data-cq-rate="Good"]').onclick();const nextMember=context('new-member',{empty:true});nextMember.navigate('feed');resolveReview();await oldSave;assert.equal($('.cq-study-card'),null);assert.equal($('.cq-feed-interlude'),null);assert.ok($('#test-root').textContent.includes('Add your questions to begin.'));
+  const oldSave=$('[data-cq-rate="Good"]').onclick();await new Promise(r=>setTimeout(r,0));const nextMember=context('new-member',{empty:true});nextMember.navigate('feed');resolveReview();await oldSave;assert.equal($('.cq-study-card'),null);assert.equal($('.cq-feed-interlude'),null);assert.ok($('#test-root').textContent.includes('Add your questions to begin.'));
   console.log('V3 experience: all views, feed save/error/interlude flow, safe swipe controls, corrected-domain queue, lesson filtering/audio/checkpoint consistency, empty recovery, and member/async state isolation passed.');
 }finally{window.speechSynthesis?.cancel();dom.window.close();}

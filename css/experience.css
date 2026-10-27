@@ -488,3 +488,18 @@ body{background:radial-gradient(ellipse at 90% -10%,#2767c42b,transparent 48%),v
  .cq-expedition-world{max-height:calc(100dvh - 150px);overflow-y:auto;overscroll-behavior-y:contain;scrollbar-width:thin;scrollbar-color:var(--line) transparent;scroll-padding-block:12px}
  .cq-expedition-world>.expedition-view{min-height:0;overflow:visible}
 }
+
+/* Separate initial lesson work from extra review passes, including pending work. */
+.cq-session-progress{margin:12px 0 16px}
+.cq-session-track{display:flex;gap:3px;height:12px;overflow:hidden;border-radius:6px;background:var(--panel2)}
+.cq-session-segment{display:block;position:relative;flex-basis:0;min-width:0;overflow:hidden}
+.cq-session-segment>i{display:block;height:100%}
+.cq-session-lesson{background:color-mix(in srgb,var(--primary) 22%,var(--panel2))}
+.cq-session-lesson>i{background:var(--primary)}
+.cq-session-review{background:repeating-linear-gradient(135deg,#f59e0b44 0 4px,#f59e0b22 4px 8px)}
+.cq-session-review>i{background:#f59e0b}
+.cq-session-legend{display:flex;gap:8px 16px;flex-wrap:wrap;margin-top:8px;font-size:11px;line-height:1.5;color:var(--muted)}
+.cq-session-lesson-label:before,.cq-session-review-label:before{content:"";display:inline-block;width:8px;height:8px;margin-right:6px;border-radius:2px;background:var(--primary)}
+.cq-session-review-label:before{background:#f59e0b}
+.cq-session-current{margin-left:auto;color:var(--text)}
+@media(max-width:420px){.cq-session-current{flex-basis:100%;margin-left:0}}
