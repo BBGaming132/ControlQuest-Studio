@@ -1521,7 +1521,7 @@ async function saveExperienceReview(card,{rating,selectedAnswer,eventId,mode='po
   const uid=state.user.uid,profile=state.profile,library=state.library,group=state.group;
   worldMode=group?'coop':'solo';
   const assertContext=()=>{if(state.user?.uid!==uid||state.profile!==profile)throw new Error('Account changed while saving. Sign back in to finish the review.');if((state.group?.id||null)!==(group?.id||null))throw new Error('Your Guild changed. Return to the original Guild to finish this review.');};
-  const persist=async()=>{assertContext();await saveProfile(profile);assertContext();if(profile.activeGroupId){await updateMemberSummary(profile.activeGroupId,profile);assertContext();}};
+  const persist=async(summary=true)=>{assertContext();await saveProfile(profile);assertContext();if(summary&&profile.activeGroupId){await updateMemberSummary(profile.activeGroupId,profile);assertContext();}};
   const hasChoices=Object.keys(card.choices||{}).length>=2;
   if(hasChoices&&(!Object.hasOwn(card.choices,selectedAnswer)||!Object.hasOwn(card.choices,card.correctAnswer)))throw new Error('Select an available answer before saving this question.');
   profile.v3 ||= {};profile.v3.reviewReceipts ||= {};
@@ -1555,7 +1555,7 @@ async function saveExperienceReview(card,{rating,selectedAnswer,eventId,mode='po
       // Save the exact intended update first. After a partial network failure or
       // reload, retries replay these snapshots instead of incrementing again.
     }
-    if(!receipt.intentPersisted){await persist();receipt.intentPersisted=true;}
+    if(!receipt.intentPersisted){await persist(false);receipt.intentPersisted=true;}
     if(!receipt.reviewSaved){
       await Promise.all([...receipt.updates.map(p=>saveStudyProgress(uid,p)),saveStudyReview(uid,receipt.event)]);
       assertContext();

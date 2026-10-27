@@ -18,7 +18,7 @@ try{
  $('#cqNextQuestion').click();$('[data-cq-choice="A"]').click();$('#cqReveal').click();await $('[data-cq-rate="Good"]').onclick();$('#cqNextQuestion').click();
  assert.equal($('#cqStudyCard h2').textContent,first,'Miss returns automatically after initial pass');assert.match($('.cq-lesson-remaining').textContent,/1 questions left/);
  $('[data-cq-choice="A"]').click();$('#cqReveal').click();await $('[data-cq-rate="Hard"]').onclick();$('#cqNextQuestion').click();assert.ok($('#cqStudyCard'),'Hard repeats without waiting');
- $('[data-cq-choice="A"]').click();$('#cqReveal').click();await $('[data-cq-rate="Easy"]').onclick();$('#cqNextQuestion').click();assert.ok($('#cqCompleteLesson'));assert.equal(calls.length,4);assert.equal(new Set(calls.map(c=>c.eventId)).size,4);assert.ok(calls.every(c=>Number.isFinite(c.responseTimeMs)));
+ $('[data-cq-choice="A"]').click();$('#cqReveal').click();await $('[data-cq-rate="Easy"]').onclick();$('#cqNextQuestion').click();assert.ok($('#cqCompleteLesson'));await settle();assert.equal(calls.length,4);assert.equal(new Set(calls.map(c=>c.eventId)).size,4);assert.ok(calls.every(c=>Number.isFinite(c.responseTimeMs)));
  const options={cards,reviews:c.library.reviews,uid:'loop',state:c.profile.v3.homework};const plan=buildHomeworkPlan(options);const completed=recordHomeworkCompletion(options.state,plan,'d1-t01');
  const later=[...c.library.reviews,{id:'later',uid:'loop',cardId:cards[0].id,scopeKey:cards[0].scopeKey,rating:'Again',correct:false,reviewedAt:new Date(Date.now()+1000).toISOString()}];
  assert.ok(buildHomeworkPlan({...options,state:completed,reviews:later,now:Date.now()+2000}).assignments[0].completedAt,'Later misses cannot revoke completion');
