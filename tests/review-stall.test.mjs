@@ -1,0 +1,11 @@
+import assert from 'node:assert/strict';
+import {createReviewOutbox} from '../js/review-outbox.js';
+let raw=null,finish,calls=0,changes=0;
+const storage={getItem:()=>raw,setItem:(k,v)=>{raw=v;}};
+const q=createReviewOutbox({storage,key:'test',stallAfterMs:5,onChange:()=>changes++,save:()=>{calls++;return new Promise(r=>finish=r);}});
+q.enqueue({id:'one',card:{id:'c'},input:{eventId:'one'}});
+await new Promise(r=>setTimeout(r,15));
+assert.equal(q.isStalled(),true);assert.equal(q.list().length,1);assert.equal(JSON.parse(raw).length,1);
+q.retry();await new Promise(r=>setTimeout(r,5));assert.equal(calls,1,'Recovery must not start overlapping writes');
+finish();await q.idle();assert.equal(q.isStalled(),false);assert.equal(q.list().length,0);assert.ok(changes>=3);
+console.log('Stalled writes remain durable and serialized, expose recovery, and clear after late success.');
