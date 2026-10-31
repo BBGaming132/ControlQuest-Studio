@@ -72,6 +72,7 @@ export function profileStorageSnapshot(profile) {
 export async function saveProfile(profile) {
   const snapshot=profileStorageSnapshot(profile);
   if (!ready) return saveLocal({ profile:snapshot });
+  try{
   const {root,chunks}=await packProfile(snapshot);
   // Never publish references until all immutable chunks are confirmed saved.
   for(let i=0;i<chunks.length;i+=20)await Promise.all(chunks.slice(i,i+20).map(chunk=>fs().setDoc(fs().doc(db,'users',profile.uid,'studyReviews',chunk.id),{...chunk,uid:profile.uid})));
@@ -79,6 +80,7 @@ export async function saveProfile(profile) {
   // retain the oversized fields that this migration is intended to move.
   const payload=withStamp({...root,_profileChunks:root._profileChunks||null});
   await fs().setDoc(userRef(profile.uid),payload,{mergeFields:Object.keys(payload)});
+  }catch(error){throw new Error(`Profile save (5.1.5): ${error.message}`,{cause:error});}
 }
 export async function backupProfile(profile, reason='Manual Backup') {
   const backup = { profile, reason, createdAt: new Date().toISOString() };
