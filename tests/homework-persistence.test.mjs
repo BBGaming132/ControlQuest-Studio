@@ -35,7 +35,7 @@ await assert.rejects(saveHomeworkRecord('a','quiz','week-01',{...resetQuiz,id:'q
 // first callback is discarded just as Firestore discards a conflicted attempt.
 const source=await readFile(new URL('../js/firebase-service.js',import.meta.url),'utf8');
 const injected=source.replace("import { firebaseConfig } from '../config/firebase-config.js';","const firebaseConfig={enabled:false};")+'\nexport function __testCloud(adapter){ready=true;auth={currentUser:{uid:"a"}};db={};globalThis.window={__cqFirebase:{fsMod:adapter}};}';
-const cloud=await import('data:text/javascript;base64,'+Buffer.from(injected).toString('base64'));
+const cloud=await import('data:text/javascript;base64,'+Buffer.from(injected.replace('./profile-chunks.js',new URL('../js/profile-chunks.js',import.meta.url).href)).toString('base64'));
 const docs=new Map(),ref=(...parts)=>parts.slice(1).join('/');let callbacks=0;
 const adapter={doc:ref,collection:ref,getDocs:async path=>({docs:[...docs].filter(([key])=>key.startsWith(path+'/')&&key.split('/').length===path.split('/').length+1).map(([key,value])=>({id:key.split('/').at(-1),data:()=>structuredClone(value)}))}),runTransaction:async(db,callback)=>{let result;for(let pass=0;pass<2;pass++){callbacks++;const staged=[];result=await callback({get:async key=>({exists:()=>docs.has(key),data:()=>structuredClone(docs.get(key))}),set:(key,value)=>staged.push([key,structuredClone(value)])});if(pass===1)for(const [key,value] of staged)docs.set(key,value);}return result;}};
 adapter.getDoc=async key=>({exists:()=>docs.has(key),data:()=>structuredClone(docs.get(key))});adapter.arrayUnion=(...values)=>({__union:values});adapter.writeBatch=()=>{const writes=[];return {set:(key,value)=>writes.push([key,value]),commit:async()=>{for(const [key,value] of writes){const old=docs.get(key)||{},merged={...old,...value};for(const [field,item] of Object.entries(value))if(item?.__union)merged[field]=[...new Set([...(old[field]||[]),...item.__union])];docs.set(key,merged);}}};};
@@ -45,3 +45,13 @@ const cloudAnswer=await cloud.saveHomeworkRecord('a','quiz','week-01',answerHome
 await assert.rejects(cloud.saveHomeworkRecord('b','quiz','week-01',{...base,uid:'b'}),/own account/);
 await assert.rejects(cloud.saveStudyAuditEvent('b',{id:'foreign',type:'session-start'}),/own account/);
 console.log('Homework persistence: compact snapshots, full owner-scoped review history, exact retries, concurrent quiz revisions, immutable submissions/timers, verified resets/archive and Firestore transaction retries passed.');
+// A profile over 1 MiB migrates without recursively retaining old nested data.
+let rejectChunks=false;
+adapter.setDoc=async(key,value,options)=>{if(rejectChunks&&value.recordType==='profile-chunk')throw Error('Interrupted chunk upload');const result=options?.mergeFields?{...(docs.get(key)||{}),...structuredClone(value)}:structuredClone(value);assert.ok(Buffer.byteLength(JSON.stringify(result))<1048576,'Every write fits the document budget');docs.set(key,result);};
+const bigProfile={uid:'a',v3:{history:'full-history '.repeat(100000),reviewReceipts:{pending:{event:{id:'keep-me'}}}},stats:{xp:42}};
+docs.set('users/a',{uid:'a',v3:{oldLargeField:'legacy'}});
+rejectChunks=true;await assert.rejects(cloud.saveProfile(bigProfile),/Interrupted/);assert.equal(docs.get('users/a').v3.oldLargeField,'legacy','Failed migration cannot replace root');
+rejectChunks=false;await cloud.saveProfile(bigProfile);assert.equal(docs.get('users/a').v3,null,'Top-level replacement removes old nested fields');
+const restored=await cloud.loadProfile('a');assert.deepEqual(restored.v3,bigProfile.v3);assert.deepEqual(restored.stats,{xp:42});
+assert.ok(!(await cloud.loadStudyLibrary('a')).reviews.some(r=>r.recordType==='profile-chunk'),'Chunks are not study answers');
+console.log('Cloud oversized-profile migration, interrupted-write safety, rehydration and review isolation pass.');

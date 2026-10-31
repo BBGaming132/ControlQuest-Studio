@@ -1,3 +1,4 @@
+import {packProfile,unpackProfile} from './profile-chunks.js';
 import { firebaseConfig } from '../config/firebase-config.js';
 
 let app, auth, db, currentUnsub;
@@ -58,7 +59,7 @@ function groupRef(groupId){ return fs().doc(db, 'groups', groupId); }
 export async function loadProfile(uid) {
   if (!ready) return loadLocal()?.profile || null;
   const snap = await fs().getDoc(userRef(uid));
-  return snap.exists() ? snap.data() : null;
+  return snap.exists() ? unpackProfile(snap.data(),async id=>{const part=await fs().getDoc(fs().doc(db,'users',uid,'studyReviews',id));return part.exists()?part.data():null;}) : null;
 }
 export function profileStorageSnapshot(profile) {
   const homework=profile.v3?.homework;
@@ -71,7 +72,13 @@ export function profileStorageSnapshot(profile) {
 export async function saveProfile(profile) {
   const snapshot=profileStorageSnapshot(profile);
   if (!ready) return saveLocal({ profile:snapshot });
-  await fs().setDoc(userRef(profile.uid), withStamp(snapshot), { merge: true });
+  const {root,chunks}=await packProfile(snapshot);
+  // Never publish references until all immutable chunks are confirmed saved.
+  for(let i=0;i<chunks.length;i+=20)await Promise.all(chunks.slice(i,i+20).map(chunk=>fs().setDoc(fs().doc(db,'users',profile.uid,'studyReviews',chunk.id),{...chunk,uid:profile.uid})));
+  // Top-level replacement removes old nested payloads; recursive merge would
+  // retain the oversized fields that this migration is intended to move.
+  const payload=withStamp({...root,_profileChunks:root._profileChunks||null});
+  await fs().setDoc(userRef(profile.uid),payload,{mergeFields:Object.keys(payload)});
 }
 export async function backupProfile(profile, reason='Manual Backup') {
   const backup = { profile, reason, createdAt: new Date().toISOString() };
@@ -398,6 +405,7 @@ export async function saveCategoryPatch({uid,groupId,kind,id,scope,patch,expecte
 function splitStudyRecords(records) {
   const reviews=[],activityRecords=[],homeworkQuizzes={},homeworkCompletions={},homeworkQuizHistory=[];
   for(const r of records){
+    if(r.recordType==='profile-chunk')continue;
     if(r.recordType==='account-activity')activityRecords.push(r);
     else if(r.recordType==='homework-quiz')homeworkQuizzes[r.key]=r.value;
     else if(r.recordType==='homework-completion')homeworkCompletions[r.key]=r.value;
