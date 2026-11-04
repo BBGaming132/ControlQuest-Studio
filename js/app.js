@@ -1,3 +1,4 @@
+import {requestConceptPractice,catalogPracticeSet,practiceCards} from './concept-practice.js';
 import {buildHomeworkPlan,buildHomeworkPublicSummary,refreshHomeworkPublicSummary,enrollHomework,recordHomeworkCompletion} from './homework-plan.js';
 import {renderHomework,bindHomework,renderHomeworkQuiz,bindHomeworkQuiz} from './homework-view.js';
 import {renderReviewTools,bindReviewTools} from './review-tools.js';
@@ -5,7 +6,7 @@ import {renderFocusAudio,bindFocusAudio,stopFocusAudio} from './focus-audio.js';
 import {auditLibrary} from './library-audit.js';
 import {renderMissionPanel,bindMissionPanel,renderMissionShortcut} from './mission-panel.js';
 import { randomId, sha256Hex } from './runtime-crypto.js';
-import { EXPERIENCE_VIEWS, renderExperience, bindExperience, renderExperienceSettings, bindExperienceSettings, startLessonReview, invalidateReviewSession } from './experience.js';
+import { EXPERIENCE_VIEWS, renderExperience, bindExperience, renderExperienceSettings, bindExperienceSettings, startLessonReview, startQuizPractice, invalidateReviewSession } from './experience.js';
 import { CISA_MICROLESSONS } from './cisa-learning.js';
 import { createWorld, advanceWorld } from './quest-world.js';
 import { appendActivityEvent } from './activity-bridge.js';
@@ -91,9 +92,16 @@ async function init(){
     state.firebase = await withTimeout(initFirebase(), 8000, { enabled:false, reason:'Firebase startup timed out. Check network access to gstatic.com or Firebase config.' });
     onAuth(async user => {
       try {
+        if(state.user?.uid!==user?.uid){
+          state.groupUnsub?.();state.groupUnsub=null;
+          state.communityUnsub?.();state.communityUnsub=null;
+          state.library={decks:[],cards:[],progress:{},reviews:[],loaded:false};
+          state.group=null;state.profile=null;
+        }
         state.user = user;
         if (!user) { state.communityUnsub?.();state.communityUnsub=null;state.profile = null; state.group = null; renderAuth(); return; }
         let profile = await loadProfile(user.uid);
+        if(state.user!==user)return;
         if (!profile) profile = defaultProfile(user);
         profile = migrateProfile(profile, user);
         state.profile = profile;
@@ -200,10 +208,45 @@ async function loadActiveGroup(groupId){
   if(state.group && isFirebaseReady()) state.groupUnsub = subscribeGroup(groupId, g=>{ const previousLibraryVersion=state.group?.studyLibraryUpdatedAt; state.group = g; if(g?.studyLibraryUpdatedAt && g.studyLibraryUpdatedAt!==previousLibraryVersion) refreshStudyLibrary().then(()=>renderIfApp()); else renderIfApp(); });
 }
 
+let studyRefreshSequence=0,communityRefreshSequence=0;
+function libraryRefreshSnapshot(library){
+  const arrayKeys=['decks','cards','reviews','activityRecords','homeworkQuizHistory'];
+  const mapKeys=['progress','homeworkQuizzes','homeworkCompletions'];
+  const identity=item=>`${item.scopeKey||''}|${item.id||item.weekId||item.lessonId||''}`;
+  return Object.fromEntries([...arrayKeys.map(key=>[key,new Map((library[key]||[]).map(item=>[identity(item),JSON.stringify(item)]))]),...mapKeys.map(key=>[key,new Map(Object.entries(library[key]||{}).map(([id,item])=>[id,JSON.stringify(item)]))])]);
+}
+function mergeFetchedStudyLibrary(loaded,live,before){
+  const result={...loaded};
+  const identity=item=>`${item.scopeKey||''}|${item.id||item.weekId||item.lessonId||''}`;
+  for(const key of ['decks','cards','reviews','activityRecords','homeworkQuizHistory','progress','homeworkQuizzes','homeworkCompletions']){
+    const isList=['decks','cards','reviews','activityRecords','homeworkQuizHistory'].includes(key);
+    const entries=value=>isList?(value||[]).map(item=>[identity(item),item]):Object.entries(value||{});
+    const latest=new Map(entries(live[key])),merged=new Map(entries(loaded[key]));
+    for(const [id,item] of latest)if(before[key]?.get(id)!==JSON.stringify(item))merged.set(id,item);
+    for(const id of before[key]?.keys()||[])if(!latest.has(id))merged.delete(id);
+    result[key]=isList?[...merged.values()]:Object.fromEntries(merged);
+  }
+  result.quizArchive=result.homeworkQuizHistory;
+  return result;
+}
 async function refreshStudyLibrary(){
-  if(!state.user) return;
-  try{ const uid=state.user.uid,profile=state.profile;const loaded=await loadStudyLibrary(uid,profile?.activeGroupId||null);if(state.user?.uid!==uid||state.profile!==profile)return;state.library={...loaded,loaded:true};hydrateHomeworkRecords();await refreshCommunityLibrary();if(state.user?.uid!==uid||state.profile!==profile)return;updateHomeworkSummary();await saveProfileDebounced(true); }
-  catch(error){ console.error('Study Library Load Failed',error); state.library={decks:[],cards:[],progress:{},reviews:[],loaded:true,error:friendly(error)}; }
+  if(!state.user)return;
+  const uid=state.user.uid,profile=state.profile,groupId=profile?.activeGroupId||null,sequence=++studyRefreshSequence;
+  const current=()=>state.user?.uid===uid&&state.profile===profile&&(profile?.activeGroupId||null)===groupId&&sequence===studyRefreshSequence;
+  const before=libraryRefreshSnapshot(state.library);
+  try{
+    const loaded=await loadStudyLibrary(uid,groupId);if(!current())return;
+    // Keep the object held by an in-flight review/quiz. Overlay changes confirmed
+    // while the request was pending so an older response cannot erase them.
+    Object.assign(state.library,mergeFetchedStudyLibrary(loaded,state.library,before),{loaded:true,error:null});
+    hydrateHomeworkRecords();await refreshCommunityLibrary();if(!current())return;
+    updateHomeworkSummary();await saveProfileDebounced(true);
+  }catch(error){
+    if(!current())return;
+    console.error('Study Library Load Failed',error);
+    // A refresh or summary-save error must not discard usable cached questions.
+    state.library.loaded=true;state.library.error=friendly(error);
+  }
 }
 
 async function migrateLegacyStudyLibrary(){
@@ -292,7 +335,12 @@ function renderApp(){
   audioCleanup=bindFocusAudio(app);
   startTimerTicker();
 }
-function renderIfApp(){ if(state.user && state.profile) renderApp(); }
+function renderIfApp(){
+  // Realtime Guild/member updates must not replace a question being answered.
+  // The latest state is picked up by the next deliberate navigation/render.
+  if(document.querySelector('#cqStudyCard, .hw-quiz-question'))return;
+  if(state.user && state.profile)renderApp();
+}
 
 function getTopbar(){
   const boost = activeBoost();
@@ -751,7 +799,7 @@ async function executeQaeImport({questions,parsed,label,scope,lessonId,sharePubl
   const uniqueNew=bundle.cards.filter(card=>!existingKeys.has(`${card.scopeKey}:${card.id}`)); const duplicates=bundle.cards.length-uniqueNew.length;
   const correct=questions.filter(q=>q.isCorrect===true).length; const missed=questions.filter(q=>q.isCorrect===false); const domains=[...new Set(questions.map(q=>q.domain).filter(Boolean))].join(', ') || 'Imported QAE';
   const duplicateSession=(state.profile.qaeImports||[]).some(item=>item.sessionFingerprint===bundle.sessionFingerprint&&item.scope===scope);
-  if(scope!=='Public'){await saveStudyImport({uid:state.user.uid,groupId:state.profile.activeGroupId,decks:bundle.decks,cards:bundle.cards});state.library=mergeUniqueLibrary(state.library,bundle);}
+  if(scope!=='Public'){await saveStudyImport({uid:state.user.uid,groupId:state.profile.activeGroupId,decks:bundle.decks,cards:bundle.cards});Object.assign(state.library,mergeUniqueLibrary(state.library,bundle));}
   if(sharePublic){try{const count=await publishDeckToCommunity(bundle.decks[0],bundle.cards);if(scope==='Public'&&!count){toast('Choose a lesson category before publishing these unmatched questions.','error');return false;}}catch(error){if(scope==='Public')throw error;toast(`Private import saved; public sync needs retry: ${friendly(error)}`,'error');}}
   if(scope==='Guild'&&state.group){state.group.studyLibraryUpdatedAt=new Date().toISOString();await saveGroup(state.group);}
   const importedAt=new Date().toISOString(); const importId=randomId();
@@ -775,7 +823,7 @@ function addMissedToDeck(id){
     const fp=cardFingerprint(miss.topic||miss.summary,{});
     const card={id:`card_${fp}`,fingerprint:fp,scope:deck.scope,scopeKey:deck.scopeKey,deckIds:[deck.id],source:'Missed Concept',question:miss.topic||miss.summary,choices:{},correctAnswer:'',justifications:{_:miss.rule||miss.summary},domain:miss.domain||'',knowledgeStatement:miss.topic||'',tags:[miss.domain,miss.topic].filter(Boolean),ownerUid:state.user.uid,importedAt:new Date().toISOString(),updatedAt:new Date().toISOString()};
     await saveStudyCard({uid:state.user.uid,groupId:state.profile.activeGroupId,card});
-    state.library=mergeUniqueLibrary(state.library,{cards:[card],decks:[]});
+    Object.assign(state.library,mergeUniqueLibrary(state.library,{cards:[card],decks:[]}));
     award({xp:6,coins:2,reason:'Missed Concept Added To Study Library',type:'Flashcards'}); await saveProfileDebounced(true); renderApp();
   },'Add Card');
 }
@@ -1120,10 +1168,10 @@ function bindTools(){
 }
 async function libraryDeckModal(id=null){
   const current=libraryDecks().find(d=>d.id===id); const defaultScope=state.profile.activeGroupId?'Guild':'Personal';
-  modal(current?'Edit Deck':'Create Original Deck',`<div class="form-grid"><label><span class="label-title">Deck Title</span><input id="libraryDeckTitle" value="${escAttr(current?.title||'')}"></label><label><span class="label-title">Scope</span><select id="libraryDeckScope" ${current?'disabled':''}><option ${((current?.scope||defaultScope)==='Guild')?'selected':''}>Guild</option><option ${((current?.scope||defaultScope)==='Personal')?'selected':''}>Personal</option><option ${current?.scope==='Public'?'selected':''}>Public</option></select></label></div>${categoryFields(current)}<label><span class="label-title">Description</span><textarea id="libraryDeckDescription">${esc(current?.description||'')}</textarea></label><label><span class="label-title">Optional Bulk Cards</span><textarea id="libraryDeckBulk" placeholder="Question[TAB]Answer — one card per line"></textarea></label><p class="helper">Public material is visible to all signed-in members. Share only content you are authorized to redistribute.</p>`,async()=>{const title=$('#libraryDeckTitle').value.trim();if(!title)return toast('Deck title is required.','error');const scope=current?.scope||$('#libraryDeckScope').value;if(scope==='Guild'&&!state.profile.activeGroupId)return toast('Join a Guild first.','error');const key=scopeKey(scope,state.user.uid,state.profile.activeGroupId);const deck=current?{...current,title,description:$('#libraryDeckDescription').value.trim(),updatedAt:new Date().toISOString()}:{id:makeDeckId(title,scope,state.user.uid,state.profile.activeGroupId,randomId()),title,description:$('#libraryDeckDescription').value.trim(),scope,scopeKey:key,ownerUid:state.user.uid,groupId:scope==='Guild'?state.profile.activeGroupId:null,createdBy:state.profile.displayName,kind:'custom',createdAt:new Date().toISOString(),updatedAt:new Date().toISOString()};Object.assign(deck,readCategoryFields(current));const cards=$('#libraryDeckBulk').value.split(/\n+/).map(line=>line.split('\t')).filter(parts=>parts[0]?.trim()&&parts[1]?.trim()).map(parts=>{const question=parts[0].trim(),answer=parts.slice(1).join('\t').trim(),fp=cardFingerprint(question,{});return{id:`card_${fp}`,fingerprint:fp,scope,scopeKey:key,deckIds:[deck.id],source:'Original Deck',question,choices:{},correctAnswer:'',justifications:{_:answer},tags:[title],ownerUid:state.user.uid,importedAt:new Date().toISOString(),updatedAt:new Date().toISOString()};});await saveStudyImport({uid:state.user.uid,groupId:state.profile.activeGroupId,decks:[deck],cards});state.library=mergeUniqueLibrary(state.library,{decks:[deck],cards});state.selectedDeckId=deck.id;if(deck.lessonId||current?.lessonId||current?.kind==='lesson'){try{await publishDeckToCommunity(deck,rawDeckCards(deck));}catch(error){toast(`Deck saved; public sync needs retry: ${friendly(error)}`,'error');}}renderApp();},current?'Save Deck':'Create Deck');
+  modal(current?'Edit Deck':'Create Original Deck',`<div class="form-grid"><label><span class="label-title">Deck Title</span><input id="libraryDeckTitle" value="${escAttr(current?.title||'')}"></label><label><span class="label-title">Scope</span><select id="libraryDeckScope" ${current?'disabled':''}><option ${((current?.scope||defaultScope)==='Guild')?'selected':''}>Guild</option><option ${((current?.scope||defaultScope)==='Personal')?'selected':''}>Personal</option><option ${current?.scope==='Public'?'selected':''}>Public</option></select></label></div>${categoryFields(current)}<label><span class="label-title">Description</span><textarea id="libraryDeckDescription">${esc(current?.description||'')}</textarea></label><label><span class="label-title">Optional Bulk Cards</span><textarea id="libraryDeckBulk" placeholder="Question[TAB]Answer — one card per line"></textarea></label><p class="helper">Public material is visible to all signed-in members. Share only content you are authorized to redistribute.</p>`,async()=>{const title=$('#libraryDeckTitle').value.trim();if(!title)return toast('Deck title is required.','error');const scope=current?.scope||$('#libraryDeckScope').value;if(scope==='Guild'&&!state.profile.activeGroupId)return toast('Join a Guild first.','error');const key=scopeKey(scope,state.user.uid,state.profile.activeGroupId);const deck=current?{...current,title,description:$('#libraryDeckDescription').value.trim(),updatedAt:new Date().toISOString()}:{id:makeDeckId(title,scope,state.user.uid,state.profile.activeGroupId,randomId()),title,description:$('#libraryDeckDescription').value.trim(),scope,scopeKey:key,ownerUid:state.user.uid,groupId:scope==='Guild'?state.profile.activeGroupId:null,createdBy:state.profile.displayName,kind:'custom',createdAt:new Date().toISOString(),updatedAt:new Date().toISOString()};Object.assign(deck,readCategoryFields(current));const cards=$('#libraryDeckBulk').value.split(/\n+/).map(line=>line.split('\t')).filter(parts=>parts[0]?.trim()&&parts[1]?.trim()).map(parts=>{const question=parts[0].trim(),answer=parts.slice(1).join('\t').trim(),fp=cardFingerprint(question,{});return{id:`card_${fp}`,fingerprint:fp,scope,scopeKey:key,deckIds:[deck.id],source:'Original Deck',question,choices:{},correctAnswer:'',justifications:{_:answer},tags:[title],ownerUid:state.user.uid,importedAt:new Date().toISOString(),updatedAt:new Date().toISOString()};});await saveStudyImport({uid:state.user.uid,groupId:state.profile.activeGroupId,decks:[deck],cards});Object.assign(state.library,mergeUniqueLibrary(state.library,{decks:[deck],cards}));state.selectedDeckId=deck.id;if(deck.lessonId||current?.lessonId||current?.kind==='lesson'){try{await publishDeckToCommunity(deck,rawDeckCards(deck));}catch(error){toast(`Deck saved; public sync needs retry: ${friendly(error)}`,'error');}}renderApp();},current?'Save Deck':'Create Deck');
   bindCategoryFields();
 }
-function libraryCardModal(deckId){ const deck=libraryDecks().find(d=>d.id===deckId);if(!deck)return;modal('Add Original Study Card',`<label><span class="label-title">Question / Prompt</span><textarea id="newCardQuestion"></textarea></label><div class="form-grid"><input id="newCardA" placeholder="A. Optional choice"><input id="newCardB" placeholder="B. Optional choice"><input id="newCardC" placeholder="C. Optional choice"><input id="newCardD" placeholder="D. Optional choice"><label><span class="label-title">Correct Choice</span><select id="newCardCorrect"><option value="">Simple Flashcard</option><option>A</option><option>B</option><option>C</option><option>D</option></select></label></div><label><span class="label-title">Answer / Explanation</span><textarea id="newCardExplanation"></textarea></label>`,async()=>{const question=$('#newCardQuestion').value.trim(),explanation=$('#newCardExplanation').value.trim();if(!question||!explanation)return toast('Question and explanation are required.','error');const choices={};['A','B','C','D'].forEach(l=>{const v=$(`#newCard${l}`).value.trim();if(v)choices[l]=v;});const correct=$('#newCardCorrect').value;if(correct&&!choices[correct])return toast('The selected correct choice needs text.','error');const fp=cardFingerprint(question,choices);const card={id:`card_${fp}`,fingerprint:fp,scope:deck.scope,scopeKey:deck.scopeKey,deckIds:[deck.id],source:'Original Card',question,choices,correctAnswer:correct,justifications:correct?{[correct]:explanation}:{_:explanation},tags:[deck.title],ownerUid:state.user.uid,importedAt:new Date().toISOString(),updatedAt:new Date().toISOString()};await saveStudyCard({uid:state.user.uid,groupId:state.profile.activeGroupId,card});state.library=mergeUniqueLibrary(state.library,{cards:[card],decks:[]});renderApp();},'Add Card'); }
+function libraryCardModal(deckId){ const deck=libraryDecks().find(d=>d.id===deckId);if(!deck)return;modal('Add Original Study Card',`<label><span class="label-title">Question / Prompt</span><textarea id="newCardQuestion"></textarea></label><div class="form-grid"><input id="newCardA" placeholder="A. Optional choice"><input id="newCardB" placeholder="B. Optional choice"><input id="newCardC" placeholder="C. Optional choice"><input id="newCardD" placeholder="D. Optional choice"><label><span class="label-title">Correct Choice</span><select id="newCardCorrect"><option value="">Simple Flashcard</option><option>A</option><option>B</option><option>C</option><option>D</option></select></label></div><label><span class="label-title">Answer / Explanation</span><textarea id="newCardExplanation"></textarea></label>`,async()=>{const question=$('#newCardQuestion').value.trim(),explanation=$('#newCardExplanation').value.trim();if(!question||!explanation)return toast('Question and explanation are required.','error');const choices={};['A','B','C','D'].forEach(l=>{const v=$(`#newCard${l}`).value.trim();if(v)choices[l]=v;});const correct=$('#newCardCorrect').value;if(correct&&!choices[correct])return toast('The selected correct choice needs text.','error');const fp=cardFingerprint(question,choices);const card={id:`card_${fp}`,fingerprint:fp,scope:deck.scope,scopeKey:deck.scopeKey,deckIds:[deck.id],source:'Original Card',question,choices,correctAnswer:correct,justifications:correct?{[correct]:explanation}:{_:explanation},tags:[deck.title],ownerUid:state.user.uid,importedAt:new Date().toISOString(),updatedAt:new Date().toISOString()};await saveStudyCard({uid:state.user.uid,groupId:state.profile.activeGroupId,card});Object.assign(state.library,mergeUniqueLibrary(state.library,{cards:[card],decks:[]}));renderApp();},'Add Card'); }
 async function deleteLibraryDeckFlow(id){ const deck=libraryDecks().find(d=>d.id===id);if(!deck)return;await confirmModal('Delete Deck',`Delete “${esc(deck.title)}”? Cards shared with a Master deck remain in the Master bank.`,async()=>{await deleteStudyDeck({uid:state.user.uid,groupId:state.profile.activeGroupId,deck});state.library.decks=state.library.decks.filter(d=>!(d.id===deck.id&&d.scopeKey===deck.scopeKey));state.library.cards=state.library.cards.map(c=>c.scopeKey===deck.scopeKey?{...c,deckIds:(c.deckIds||[]).filter(x=>x!==deck.id)}:c);if(state.selectedDeckId===deck.id)state.selectedDeckId=null;renderApp();}); }
 function exportLibraryDeck(id){ const deck=libraryDecks().find(d=>d.id===id);if(!deck)return;const rows=libraryCardsForDeck(deck).map(c=>[c.question,c.correctAnswer,c.choices?.[c.correctAnswer]||'',c.justifications?.[c.correctAnswer]||c.justifications?._||'',c.domain,c.knowledgeStatement].map(v=>String(v||'').replace(/\t/g,' ')).join('\t'));downloadText(`${safeFile(deck.title)}.tsv`,`Question\tCorrect Letter\tCorrect Answer\tExplanation\tDomain\tKnowledge Statement\n${rows.join('\n')}`,'text/tab-separated-values'); }
 async function startGuildStudy(missedOnly){ const deck=libraryDecks().find(d=>d.id===$('#guildStudyDeck').value);if(!deck)return;let cards=libraryCardsForDeck(deck).filter(c=>!c.answerConflict&&c.correctAnswer&&Object.keys(c.choices||{}).length>=2);if(missedOnly)cards=cards.filter(c=>c.wasCorrectAtImport===false);cards=[...cards].sort(()=>Math.random()-.5).slice(0,30);if(!cards.length)return toast('No eligible questions in that Guild deck.','error');state.group.studySession={id:randomId(),active:true,title:missedOnly?'Guild Missed-Question Review':'Guild Question Review',deckId:deck.id,scopeKey:deck.scopeKey,cardKeys:cards.map(libraryCardKey),index:0,participants:[state.user.uid],responses:{},scores:{},revealed:false,hostUid:state.user.uid,startedAt:new Date().toISOString()};await persistNewGuildStudySession();renderApp(); }
@@ -1289,7 +1337,19 @@ function showCelebration(title,msg,onConfirm=()=>{},confirmLabel='Celebrate'){ c
 function confetti(n=24){ for(let i=0;i<n;i++){const el=document.createElement('i'); el.className='confetti'; el.style.left=Math.random()*100+'vw'; el.style.background=`hsl(${Math.random()*360},80%,60%)`; el.style.animationDelay=Math.random()*.25+'s'; document.body.appendChild(el); setTimeout(()=>el.remove(),1800);} }
 
 async function saveAll({group=false}={}){ await saveProfileDebounced(true); if(state.profile?.activeGroupId) await updateMemberSummary(state.profile.activeGroupId,state.profile); if(group && state.group) await saveGroup(state.group); }
-let saveTimer; async function saveProfileDebounced(immediate=false){ if(!state.profile)return; if(immediate){ await saveProfile(state.profile); if(state.profile.activeGroupId) await updateMemberSummary(state.profile.activeGroupId,state.profile); return; } clearTimeout(saveTimer); saveTimer=setTimeout(async()=>{await saveProfile(state.profile); if(state.profile.activeGroupId) await updateMemberSummary(state.profile.activeGroupId,state.profile);},450); }
+let saveTimer;
+async function saveProfileDebounced(immediate=false){
+  clearTimeout(saveTimer);
+  const profile=state.profile,uid=state.user?.uid;
+  if(!profile)return;
+  const save=async()=>{
+    if(state.profile!==profile||state.user?.uid!==uid)return;
+    await saveProfile(profile);
+    if(state.profile===profile&&state.user?.uid===uid&&profile.activeGroupId)await updateMemberSummary(profile.activeGroupId,profile);
+  };
+  if(immediate)return save();
+  saveTimer=setTimeout(()=>save().catch(error=>{console.warn('Background profile save paused:',error.message);}),1500);
+}
 
 async function resetStatsFlow(){
   await confirmModal('Reset Testing Stats','This creates a backup before reset. Continue?',async()=>{
@@ -1437,13 +1497,17 @@ function readCategoryFields(deck=null){
   return {lessonId:lesson?.id||'',lessonTitle:lesson?.title||'',domainId:domain,categoryOverride:!!deck?.categoryOverride||changed,tags:($('#editCategoryTags')?.value||'').split(',').map(t=>t.trim()).filter(Boolean)};
 }
 async function refreshCommunityLibrary(){
+  const uid=state.user?.uid,profile=state.profile,groupId=profile?.activeGroupId||null,sequence=++communityRefreshSequence;
+  const current=()=>state.user?.uid===uid&&state.profile===profile&&(profile?.activeGroupId||null)===groupId&&sequence===communityRefreshSequence;
   try{
-    const {contributions,statuses}=await loadCommunityLibrary();const combined=aggregateCommunityLibrary(contributions,statuses);
+    const {contributions,statuses}=await loadCommunityLibrary();if(!current())return;
+    const combined=aggregateCommunityLibrary(contributions,statuses);
     state.library.decks=[...(state.library.decks||[]).filter(d=>!d.community),...combined.decks];
     state.library.cards=[...(state.library.cards||[]).filter(c=>c.source!=='Community lesson'),...combined.cards];
     state.library.publicLessonStatus=statuses;state.library.publicContributions=contributions;state.library.communityError=null;
-  }catch(error){state.library.communityError=friendly(error);}
+  }catch(error){if(current())state.library.communityError=friendly(error);}
 }
+
 async function publishDeckToCommunity(deck,cards){
   const contributions=await buildPublicContributions({deck,cards,uid:state.user.uid,name:state.profile.displayName});
   await savePublicContributions(state.user.uid,contributions,`${deck.scopeKey}|${deck.id}`);
@@ -1481,7 +1545,7 @@ function experienceContext(){
   return {profile,user,group:state.group,library:state.library,level:levelInfo().level,isCurrent,
     avatar:()=>avatarSvg(state.profile.inventory.equipped),navigate:navigateTo,render:renderApp,toast,
     save,saveQuiet:()=>{if(isCurrent())saveProfileDebounced();},refresh:refreshStudyLibrary,download:downloadText,
-    completeAssignment:async lessonId=>{await persistHomework(recordHomeworkCompletion(state.profile.v3.homework||{},currentHomeworkPlan(),lessonId));updateStreakForToday('Lesson completed');await saveProfileDebounced(true);},startLessonReview:lessonId=>startLessonReview(experienceContext(),lessonId),resetStudyProgress,updateStudyAvailability,review:saveExperienceReview,worldAction:saveExperienceWorldAction,importBatch:saveExperienceBatch,
+    completeAssignment:async lessonId=>{await persistHomework(recordHomeworkCompletion(state.profile.v3.homework||{},currentHomeworkPlan(),lessonId));updateStreakForToday('Lesson completed');await saveProfileDebounced(true);},startLessonReview:lessonId=>startLessonReview(experienceContext(),lessonId),resetStudyProgress,updateStudyAvailability,review:saveExperienceReview,generatePractice:generateConceptPractice,worldAction:saveExperienceWorldAction,importBatch:saveExperienceBatch,
     renderGuildStudy:renderGuildStudyTab,bindGuildStudy:bindTools,
     getWorld:()=>createWorld(state.group?state.group.questWorld:state.profile.v3.world),
     completeLesson:async lesson=>{
@@ -1612,6 +1676,29 @@ async function saveExperienceWorldAction(event,mode='solo'){
     assertContext();toast(result.feedback?.message||'Your island is saved.');return result;
   }finally{experienceWorldLock=false;}
 }
+async function generateConceptPractice(card,missCount=1){
+  const user=state.user,profile=state.profile,library=state.library,uid=user?.uid;
+  if(!uid||typeof user.getIdToken!=='function')throw new Error('Sign in to generate concept practice. Demo practice does not call the AI service.');
+  const endpoint=localStorage.getItem(`cqPracticeEndpoint:${uid}`);
+  if(!endpoint)throw new Error('Connect your secured concept practice service in Profile first.');
+  const lessonId=card.lessonId||cardLesson(card)?.id;
+  if(!lessonId)throw new Error('Assign this question to a lesson before generating targeted practice.');
+  const lesson=LESSONS.find(l=>l.id===lessonId);
+  // Send topic descriptions, not private imported question banks or answer history.
+  const concepts=[card.concept,lesson?.title,lesson?.domainName].filter(Boolean);
+  const set=await requestConceptPractice({endpoint,getToken:()=>user.getIdToken(),lessonId,concepts,missCount});
+  const current=()=>{if(state.user?.uid!==uid||state.profile!==profile)throw new Error('Account changed. Return to the original account to open this practice.');};
+  current();
+  const catalog=await catalogPracticeSet(set,{uid}),deckId=`ai_${catalog.id}`;
+  const deck={id:deckId,title:`Concept practice: ${lesson?.title||lessonId}`,scope:'Personal',scopeKey:scopeKey('Personal',uid),ownerUid:uid,lessonId,domainId:lesson?.domainId||'',kind:'lesson',source:'AI-generated concept practice',homeworkExcluded:true,createdAt:catalog.generatedAt,contributors:[]};
+  const cards=practiceCards(catalog,uid).map(q=>({...q,deckIds:[deckId]}));
+  await saveStudyImport({uid,groupId:null,decks:[deck],cards});current();
+  // Keep the context's library object alive for session resume and queued saves.
+  const merged=mergeUniqueLibrary(state.library,{decks:[deck],cards});
+  Object.assign(state.library,merged);if(library!==state.library)Object.assign(library,merged);
+  return cards;
+}
+
 async function saveExperienceBatch(item,{bundle,operationId}){
   const user=state.user,profile=state.profile,library=state.library,group=state.group,uid=user?.uid,groupId=profile?.activeGroupId;
   const assertContext=()=>{if(state.user?.uid!==uid||state.profile!==profile||state.profile.activeGroupId!==groupId)throw new Error('Your account or Guild changed. Preview this batch again.');};
@@ -1622,7 +1709,7 @@ async function saveExperienceBatch(item,{bundle,operationId}){
   if(!receipt.privateSaved&&item.scope!=='Public'){
     for(const deck of bundle.decks){deck.createdBy=profile.displayName;deck.contributors=[profile.displayName];deck.importOperationId=operationId;}
     await saveStudyImport({uid,groupId,decks:bundle.decks,cards:bundle.cards});assertContext();
-    state.library=mergeUniqueLibrary(state.library,bundle);receipt.privateSaved=true;profile.v3.importReceipts[operationId]=receipt;await persist();
+    Object.assign(state.library,mergeUniqueLibrary(state.library,bundle));receipt.privateSaved=true;profile.v3.importReceipts[operationId]=receipt;await persist();
   }
   if((item.sharePublic||item.scope==='Public')&&!receipt.publicSaved){
     const contributions=await buildPublicContributions({deck:bundle.decks[0],cards:bundle.cards,uid,name:profile.displayName});assertContext();
@@ -1674,6 +1761,7 @@ function homeworkContext(){
     onNavigate:navigateTo,onRender:renderApp,onError:message=>toast(message,'error'),
     onFreeStudy:()=>navigateTo('feed'),onOpenQuiz:weekId=>{state.homeworkQuizWeek=weekId;state.homeworkQuizIndex=undefined;navigateTo('homeworkQuiz');},
     onQuizIndex:index=>{state.homeworkQuizIndex=index;},
+    onPracticeQuiz:(weekId,practice)=>startQuizPractice(experienceContext(),weekId,practice),
     onStudyLesson:async lessonId=>{try{if(!c.profile.v3.homework?.enrolledAt)await persistHomework(enrollHomework(c.profile.v3.homework));if(!c.isCurrent())return;startLessonReview(experienceContext(),lessonId);}catch(error){toast(friendly(error),'error');}},
     onSaveHomework:persistHomework};
 }
@@ -1681,6 +1769,9 @@ async function persistHomework(next){
   if(homeworkSaving)throw new Error('Your previous homework change is still saving.');
   const profile=state.profile,uid=state.user?.uid,library=state.library;
   const current=()=>{if(state.profile!==profile||state.user?.uid!==uid)throw new Error('Account changed. Reopen your study plan.');};
+  const previous=profile.v3?.homework||{};
+  const metadata=h=>JSON.stringify({...h,quizzes:undefined});
+  const quizAnswerOnly=metadata(previous)===metadata(next)&&Object.entries(next.quizzes||{}).every(([key,q])=>previous.quizzes?.[key]?.id===q.id&&previous.quizzes[key].status===q.status);
   homeworkSaving=true;
   try{
     current();
@@ -1696,7 +1787,7 @@ async function persistHomework(next){
         const saved=await saveHomeworkRecord(uid,'quiz',key,value);current();library.homeworkQuizzes ||= {};library.homeworkQuizzes[key]=saved;next.quizzes[key]=saved;
       }
     }
-    profile.v3.homework=next;updateHomeworkSummary();await saveProfileDebounced(true);current();return next;
+    profile.v3.homework=next;updateHomeworkSummary();if(quizAnswerOnly)saveProfileDebounced();else await saveProfileDebounced(true);current();return next;
   }finally{homeworkSaving=false;}
 }
 async function recordAccountActivity(type,description,details={}){

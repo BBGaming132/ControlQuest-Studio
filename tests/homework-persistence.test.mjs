@@ -55,3 +55,31 @@ rejectChunks=false;await cloud.saveProfile(bigProfile);assert.equal(docs.get('us
 const restored=await cloud.loadProfile('a');assert.deepEqual(restored.v3,bigProfile.v3);assert.deepEqual(restored.stats,{xp:42});
 assert.ok(!(await cloud.loadStudyLibrary('a')).reviews.some(r=>r.recordType==='profile-chunk'),'Chunks are not study answers');
 console.log('Cloud oversized-profile migration, interrupted-write safety, rehydration and review isolation pass.');
+
+// Confirmed immutable blobs are never uploaded again as answer receipts change.
+const originalSet=adapter.setDoc,written=[];
+adapter.setDoc=async(...args)=>{written.push(args[0]);return originalSet(...args);};
+await cloud.saveProfile({...bigProfile,v3:{...bigProfile.v3,reviewReceipts:{pending:{event:{id:'next'}}}}});
+assert.ok(written.length<=2,'One changed tail chunk and one root write replace dozens of blob uploads');assert.equal(written.at(-1),'users/a');written.length=0;await cloud.saveProfile({...bigProfile,v3:{...bigProfile.v3,reviewReceipts:{pending:{event:{id:'next'}}}}});assert.deepEqual(written,['users/a'],'Identical retry does not re-upload confirmed blobs');
+// Overlapping callers publish in request order, even while the first write waits.
+let releaseFirst,enteredFirst;const entered=new Promise(r=>enteredFirst=r),release=new Promise(r=>releaseFirst=r);let first=true;
+adapter.setDoc=async(...args)=>{if(args[0]==='users/a'&&first){first=false;enteredFirst();await release;}return originalSet(...args);};
+const older={uid:'a',stats:{xp:50}},newer={uid:'a',stats:{xp:51}};
+const saveOlder=cloud.saveProfile(older);await entered;const saveNewer=cloud.saveProfile(newer);newer.stats.xp=999;releaseFirst();await Promise.all([saveOlder,saveNewer]);
+assert.equal(docs.get('users/a').stats.xp,51,'Publication is ordered and snapshots cannot mutate in flight');
+// Exclude historical blob documents server-side, preserving legacy review records.
+const getCollection=adapter.getDocs,queries=[];
+adapter.documentId=()=> '__name__';adapter.where=(field,op,value)=>({field,op,value});adapter.query=(path,condition)=>({path,condition});
+adapter.getDocs=async query=>{if(typeof query==='string')return getCollection(query);queries.push(query);const snap=await getCollection(query.path);return {docs:snap.docs.filter(d=>query.condition.op==='<'?d.id<query.condition.value:d.id>=query.condition.value)};};
+docs.set('users/a/studyReviews/aaa-legacy',{id:'aaa-legacy',correct:true});docs.set('users/a/studyReviews/zzz-legacy',{id:'zzz-legacy',correct:false});
+const filtered=await cloud.loadStudyLibrary('a');assert.ok(filtered.reviews.some(r=>r.id==='aaa-legacy'));assert.ok(filtered.reviews.some(r=>r.id==='zzz-legacy'));assert.equal(queries.length,2);assert.ok(!filtered.reviews.some(r=>r.recordType==='profile-chunk'));
+console.log('Sync regression: immutable chunk reuse, serialized snapshots and server-side blob exclusion pass.');
+
+const summaries=[];adapter.setDoc=async(...args)=>{summaries.push(args);return originalSet(...args);};
+const member={uid:'a',displayName:'Test',stats:{xp:100},timezone:'UTC'};
+await Promise.all([cloud.updateMemberSummary('guild-test',member),cloud.updateMemberSummary('guild-test',member)]);
+assert.equal(summaries.length,1,'Equivalent member summaries skip duplicate writes');
+await cloud.updateMemberSummary('guild-test',{...member,stats:{xp:101}});assert.equal(summaries.length,2,'Changed stats still publish');
+let failSummary=true;adapter.setDoc=async(...args)=>{if(failSummary){failSummary=false;throw Error('Summary interrupted');}return originalSet(...args);};
+const changed={...member,stats:{xp:102}};await assert.rejects(cloud.updateMemberSummary('guild-test',changed),/interrupted/);await cloud.updateMemberSummary('guild-test',changed);assert.equal(docs.get('groups/guild-test')?.members?.a?.xp??docs.get('guilds/guild-test')?.members?.a?.xp,102,'Failed summaries are retried');
+console.log('Member summary change detection, concurrent deduplication and failed-write retry pass.');

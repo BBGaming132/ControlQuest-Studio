@@ -26,6 +26,12 @@ try{
  quizIndex=0;draw();assert.equal(root.querySelector('[data-hw-answer="A"]').getAttribute('aria-pressed'),'true','Saved answer objects render selected on revisit');
  assert.equal(c.homework.quizzes['week-01'].deadlineAt,deadline,'Reload/rerender never resets clock');
  root.querySelector('[data-hw-submit-quiz]').click();await flush();assert.equal(c.homework.quizzes['week-01'].status,'submitted');assert.equal(c.homework.quizzes['week-01'].result.correct,1);assert.ok(root.textContent.includes('1 of 5 correct.'));assert.ok(root.textContent.includes('The explanation belongs after submission.'));assert.equal(root.querySelector('[data-hw-timer]'),null);
+ assert.ok(root.querySelector('[data-hw-practice]'),'Submitted mistakes have a focused practice action');
+ let practiceRequest=null;c.onPracticeQuiz=(weekId,practice)=>{practiceRequest={weekId,practice};};
+ root.querySelector('[data-hw-practice]').click();assert.equal(practiceRequest.weekId,'week-01');assert.equal(practiceRequest.practice.pending.length,4);
+ page='home';draw();assert.ok(root.querySelector('.hw-practice'),'Pending work remains on Today after leaving results');
+ root.querySelector('[data-hw-practice]').click();assert.equal(practiceRequest.weekId,undefined);assert.equal(practiceRequest.practice.pending.length,4);
+ page='quiz';
  // Expiration finalizes an existing fixed-deadline attempt on re-entry.
  c.homework={...c.homework,quizzes:{}};const plan=buildHomeworkPlan({...c,state:c.homework,now:time});let quiz=createHomeworkQuiz(plan,'week-01',{uid:'learner',now:time});c.homework=recordHomeworkQuiz(c.homework,quiz);time='2026-10-26T14:09:00Z';draw();await flush();assert.equal(c.homework.quizzes['week-01'].status,'submitted');assert.equal(c.homework.quizzes['week-01'].submittedAt,quiz.deadlineAt);assert.equal(c.homework.quizzes['week-01'].result.unanswered,5);
  // Reset invalidates the plan's attempt even when the archived raw quiz remains saved.

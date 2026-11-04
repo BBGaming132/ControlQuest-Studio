@@ -3,6 +3,8 @@ import { firebaseConfig } from '../config/firebase-config.js';
 
 let app, auth, db, currentUnsub;
 let ready = false;
+const confirmedProfileChunks=new Map(),profileSaveQueues=new Map(),memberSummaryQueues=new Map(),confirmedMemberSummaries=new Map();
+function chunkCache(uid){if(!confirmedProfileChunks.has(uid))confirmedProfileChunks.set(uid,new Set());return confirmedProfileChunks.get(uid);}
 let localKey = 'controlquest_v24_local_state';
 let localStudyKey = 'controlquest_v27_study_library';
 
@@ -59,7 +61,7 @@ function groupRef(groupId){ return fs().doc(db, 'groups', groupId); }
 export async function loadProfile(uid) {
   if (!ready) return loadLocal()?.profile || null;
   const snap = await fs().getDoc(userRef(uid));
-  return snap.exists() ? unpackProfile(snap.data(),async id=>{const part=await fs().getDoc(fs().doc(db,'users',uid,'studyReviews',id));return part.exists()?part.data():null;}) : null;
+  return snap.exists() ? unpackProfile(snap.data(),async id=>{const part=await fs().getDoc(fs().doc(db,'users',uid,'studyReviews',id));if(part.exists()){chunkCache(uid).add(id);return part.data();}return null;}) : null;
 }
 export function profileStorageSnapshot(profile) {
   const homework=profile.v3?.homework;
@@ -69,18 +71,29 @@ export function profileStorageSnapshot(profile) {
   const compact={...homework,quizzes:Object.fromEntries(Object.entries(homework.quizzes||{}).map(([id,q])=>[id,{id:q.id||id,weekId:q.weekId||id,uid:q.uid||profile.uid,status:q.status||null,resetAt:q.resetAt||null,startedAt:q.startedAt||null,deadlineAt:q.deadlineAt||null,dueAt:q.dueAt||null,submittedAt:q.submittedAt||null,result:q.result?Object.fromEntries(['correct','total','incorrect','unanswered','accuracy','timedOut','durationSeconds'].filter(key=>q.result[key]!==undefined).map(key=>[key,q.result[key]])):null,_revision:q._revision||0,storedSeparately:true}])),completions:Object.fromEntries(Object.entries(homework.completions||{}).map(([id,c])=>[id,{lessonId:id,completedAt:c.completedAt||null,resetAt:c.resetAt||null,storedSeparately:true}]))};
   return {...profile,v3:{...profile.v3,homework:compact}};
 }
-export async function saveProfile(profile) {
-  const snapshot=profileStorageSnapshot(profile);
+export function saveProfile(profile) {
+  // Capture the intended state before a previous write yields. Serializing root
+  // publications prevents a slow older save overwriting a newer receipt.
+  const snapshot=JSON.parse(JSON.stringify(profileStorageSnapshot(profile))),uid=profile.uid;
+  const previous=profileSaveQueues.get(uid)||Promise.resolve();
+  const operation=previous.catch(()=>{}).then(()=>saveProfileSnapshot(snapshot));
+  profileSaveQueues.set(uid,operation);
+  operation.finally(()=>{if(profileSaveQueues.get(uid)===operation)profileSaveQueues.delete(uid);}).catch(()=>{});
+  return operation;
+}
+async function saveProfileSnapshot(snapshot) {
+  const profile=snapshot;
   if (!ready) return saveLocal({ profile:snapshot });
   try{
   const {root,chunks}=await packProfile(snapshot);
   // Never publish references until all immutable chunks are confirmed saved.
-  for(let i=0;i<chunks.length;i+=20)await Promise.all(chunks.slice(i,i+20).map(chunk=>fs().setDoc(fs().doc(db,'users',profile.uid,'studyReviews',chunk.id),{...chunk,uid:profile.uid})));
+  const confirmed=chunkCache(profile.uid),missing=chunks.filter(chunk=>!confirmed.has(chunk.id));
+  for(let i=0;i<missing.length;i+=20)await Promise.all(missing.slice(i,i+20).map(async chunk=>{await fs().setDoc(fs().doc(db,'users',profile.uid,'studyReviews',chunk.id),{...chunk,uid:profile.uid});confirmed.add(chunk.id);}));
   // Top-level replacement removes old nested payloads; recursive merge would
   // retain the oversized fields that this migration is intended to move.
   const payload=withStamp({...root,_profileChunks:root._profileChunks||null});
   await fs().setDoc(userRef(profile.uid),payload,{mergeFields:Object.keys(payload)});
-  }catch(error){throw new Error(`Profile save (5.1.5): ${error.message}`,{cause:error});}
+  }catch(error){throw new Error(`Profile save: ${error.message}`,{cause:error});}
 }
 export async function backupProfile(profile, reason='Manual Backup') {
   const backup = { profile, reason, createdAt: new Date().toISOString() };
@@ -116,8 +129,18 @@ export async function saveGroup(group,{includeLiveState=false}={}) {
 }
 export async function updateMemberSummary(groupId,profile){
   if(!groupId||!profile)return;
-  if(!ready){const group=await loadGroup(groupId);if(!group)return;group.members ||= {};group.members[profile.uid]=publicSummary(profile);await saveGroup(group);return;}
-  await fs().setDoc(groupRef(groupId),withStamp({members:{[profile.uid]:publicSummary(profile)}}),{merge:true});
+  const summary=publicSummary(profile),{updatedAt,...stable}=summary,key=JSON.stringify([ready,groupId,profile.uid]);
+  if(stable.homework){const {updatedAt,asOf,...homework}=stable.homework;stable.homework=homework;}
+  const fingerprint=JSON.stringify(stable);
+  const previous=memberSummaryQueues.get(key)||Promise.resolve();
+  const operation=previous.catch(()=>{}).then(async()=>{
+    if(confirmedMemberSummaries.get(key)===fingerprint)return;
+    if(!ready){const group=await loadGroup(groupId);if(!group)return;group.members ||= {};group.members[summary.uid]=summary;await saveGroup(group);}
+    else await fs().setDoc(groupRef(groupId),withStamp({members:{[summary.uid]:summary}}),{merge:true});
+    confirmedMemberSummaries.set(key,fingerprint);
+  });
+  memberSummaryQueues.set(key,operation);
+  try{return await operation;}finally{if(memberSummaryQueues.get(key)===operation)memberSummaryQueues.delete(key);}
 }
 export function publicSummary(profile) {
   return {
@@ -172,6 +195,19 @@ async function docsFromCollection(ref) {
   return snap.docs.map(d => ({ id: d.id, ...d.data() }));
 }
 
+async function studyRecordsWithoutChunks(uid){
+ const ref=collectionRefFor('Personal',uid,null,'review'),api=fs();
+ // Profile blobs share the existing private collection for rules compatibility.
+ // Exclude their reserved ID range on the server, before downloading records.
+ if(!api.query||!api.where||!api.documentId)return docsFromCollection(ref);
+ const field=api.documentId();
+ const groups=await Promise.all([
+  docsFromCollection(api.query(ref,api.where(field,'<','profile_chunk_'))),
+  docsFromCollection(api.query(ref,api.where(field,'>=','profile_chunk_\uf8ff')))
+ ]);
+ return groups.flat();
+}
+
 export async function loadStudyLibrary(uid, groupId = null) {
   if (!ready) {
     const local = loadLocalStudy();
@@ -189,7 +225,7 @@ export async function loadStudyLibrary(uid, groupId = null) {
     Promise.all(deckPromises),
     Promise.all(cardPromises),
     docsFromCollection(collectionRefFor('Personal', uid, null, 'progress')),
-    docsFromCollection(collectionRefFor('Personal', uid, null, 'review'))
+    studyRecordsWithoutChunks(uid)
   ]);
   return {
     decks: deckGroups.flat(),

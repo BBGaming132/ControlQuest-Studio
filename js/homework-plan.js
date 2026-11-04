@@ -1,3 +1,4 @@
+import { choiceOrder, shuffle } from './study-session.js';
 import { LESSONS, cardLesson, deckLesson } from './lesson-catalog.js';
 import { uniqueStudyCards, studyIdentity } from './study-intelligence.js';
 import { cardMastery, stableHash } from './flashcard-engine.js';
@@ -79,7 +80,7 @@ export function buildHomeworkPlan(options = {}) {
   const now=Date.parse(stamp(options.now)),schedule=buildHomeworkSchedule(options),today=calendarDay(now,schedule.timezone);
   const startAt=validTime(state.startedAt)?state.startedAt:zonedInstant(schedule.startDate,schedule.timezone);
   const resetAt=options.resetAt||state.resetAt||null;
-  const logical=uniqueStudyCards(cards,progressMap,reviews,{uid,decks});
+  const logical=uniqueStudyCards(cards.filter(card=>card.homeworkExcluded!==true),progressMap,reviews,{uid,decks});
   const originals=new Map(cards.map(c=>[`${c.scopeKey}__${c.id}`,c]));
   const lessonCards=new Map();
   for(const card of logical){
@@ -130,14 +131,14 @@ export function recordHomeworkCompletion(state={},plan,lessonId,now=plan?.asOf) 
 }
 function quizQuestion(card,lessonId) {
   const identity=card.studyIdentity||studyIdentity(card);
-  return {id:`question-${stableHash(identity)}`,identity,cardId:card.id,scopeKey:card.scopeKey,lessonId,question:card.question,choices:structuredClone(card.choices),correctAnswer:card.correctAnswer,justifications:structuredClone(card.justifications||{}),explanation:card.explanation||''};
+  return {id:`question-${stableHash(identity)}`,identity,aliases:structuredClone(card.aliases||[]),cardId:card.id,scopeKey:card.scopeKey,lessonId,question:card.question,choices:structuredClone(card.choices),correctAnswer:card.correctAnswer,justifications:structuredClone(card.justifications||{}),explanation:card.explanation||''};
 }
 export function createHomeworkQuiz(plan,weekId,options={}) {
   const week=plan?.weeks?.find(w=>w.id===weekId);
   if(!week?.unlocked)throw new Error('Complete all five assigned lessons to unlock this quiz.');
   if(week.quiz)return structuredClone(week.quiz);
   const startedAt=stamp(options.now??plan.asOf),uid=options.uid||plan.uid||'personal';
-  const lessons=plan.assignments.filter(a=>a.weekId===weekId),banks=lessons.map(a=>a.cards.filter(c=>!c.answerConflict&&c.correctAnswer&&c.choices?.[c.correctAnswer]).map(c=>quizQuestion(c,a.lessonId)));
+  const lessons=plan.assignments.filter(a=>a.weekId===weekId),banks=lessons.map(a=>a.cards.filter(c=>c.homeworkExcluded!==true&&!c.answerConflict&&c.correctAnswer&&c.choices?.[c.correctAnswer]).map(c=>quizQuestion(c,a.lessonId)));
   if(banks.some(b=>!b.length))throw new Error('Each assigned lesson needs questions with verified answer keys.');
   const resetEpoch=Math.max(Date.parse(plan.resetAt)||0,...lessons.flatMap(a=>a.cards.map(c=>Date.parse(c.effectiveProgress?.resetAt)||0)));
   const resetAt=resetEpoch?new Date(resetEpoch).toISOString():null;
@@ -149,7 +150,9 @@ export function createHomeworkQuiz(plan,weekId,options={}) {
     const q=bank.shift();if(q&&!seen.has(q.identity)&&questions.length<limit){seen.add(q.identity);questions.push(q);}
   }
   if(questions.length<lessons.length)throw new Error('This quiz needs a unique question from every lesson.');
-  questions.forEach((q,index)=>{q.id=`question-${index+1}`;});
+  const random=options.random||Math.random;
+  questions.splice(0,questions.length,...shuffle(questions,random));
+  questions.forEach((q,index)=>{q.id=`question-${index+1}`;q.choiceOrder=choiceOrder(q,random);});
   const durationSeconds=questions.length*HOMEWORK_CONFIG.secondsPerQuestion;
   return {version:1,id:`quiz-${stableHash(seed)}`,weekId,uid,resetAt,startedAt,deadlineAt:new Date(Date.parse(startedAt)+durationSeconds*1000).toISOString(),dueAt:week.dueAt,durationSeconds,questions,answers:{},status:'active'};
 }
