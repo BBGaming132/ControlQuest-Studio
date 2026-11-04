@@ -542,3 +542,23 @@ body{background:radial-gradient(ellipse at 90% -10%,#2767c42b,transparent 48%),v
  body:has(#cqStudyCard) .main{padding-bottom:calc(180px + env(safe-area-inset-bottom,0px))}
  .cq-study-card{scroll-margin-bottom:180px}
 }
+/* Sync acknowledgments reserve one small row instead of pushing the active
+   question down. Diagnostics expand only when requested, over the page. */
+.cq-review-sync{position:relative;display:flex;align-items:center;gap:8px;height:52px;min-height:52px;margin:0 0 8px;padding:0 4px;font-size:13px;line-height:1.3;box-sizing:border-box}
+.cq-review-sync>span{flex:1;min-width:0}
+.cq-review-sync>button,.cq-sync-details>summary{min-height:44px;font-size:13px;padding:8px;display:flex;align-items:center;white-space:nowrap}
+.cq-sync-details>summary{cursor:pointer}
+.cq-sync-details>div{position:absolute;z-index:110;top:100%;left:0;right:0;padding:16px;max-height:40vh;overflow:auto;overflow-wrap:anywhere;background:var(--panel);color:var(--text);border:1px solid var(--line);border-radius:12px;box-shadow:0 8px 24px #0003}
+@media(max-width:760px){
+ input:not([type=checkbox]):not([type=radio]),select,textarea{font-size:16px!important}
+ .cq-review-sync{font-size:12px;gap:4px}
+ .cq-review-sync>button,.cq-sync-details>summary{font-size:12px;padding:6px}
+ .cq-mobile-study-actions{box-sizing:border-box;padding-left:max(12px,env(safe-area-inset-left));padding-right:max(12px,env(safe-area-inset-right))}
+ .cq-mobile-study-actions button{touch-action:manipulation}
+ .cq-study-card,.cq-feed-layout{min-width:0}
+ .cq-study-card{overflow-anchor:none}
+ .cq-answer-explanation>summary{overflow-wrap:anywhere;line-height:1.4}
+}
+.cq-answer-tools{flex-wrap:wrap}
+.cq-ai-label{font-size:13px;line-height:1.5;color:var(--muted);padding:8px 0}
+@media(max-width:760px){.cq-answer-tools #cqGeneratePractice{flex-basis:100%;max-width:100%;text-align:left}.cq-answer-tools button{white-space:normal}}

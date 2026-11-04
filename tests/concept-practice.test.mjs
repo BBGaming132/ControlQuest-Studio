@@ -1,0 +1,15 @@
+import assert from 'node:assert/strict';
+import {practiceCount,validatePracticeSet,generationEndpoint,requestConceptPractice,catalogPracticeSet,practiceCards} from '../js/concept-practice.js';
+assert.equal(practiceCount(1),10);assert.equal(practiceCount(100),15);
+assert.throws(()=>generationEndpoint('http://service.test'));assert.throws(()=>generationEndpoint('https://key@service.test'));assert.throws(()=>generationEndpoint('https://service.test?key=secret'));
+const questions=Array.from({length:10},(_,i)=>({question:`Original scenario ${i}`,concept:'Independence',choices:{A:'A',B:'B',C:'C',D:'D'},correctAnswer:'B',justifications:{A:'A reason',B:'B reason',C:'C reason',D:'D reason'}}));
+assert.equal(validatePracticeSet({questions},{lessonId:'d1-t01'}).questions.length,10);
+assert.throws(()=>validatePracticeSet({questions:[...questions.slice(0,9),questions[0]]}));
+let sent;const set=await requestConceptPractice({endpoint:'https://service.test/practice',getToken:async()=>'user-token',lessonId:'d1-t01',concepts:['Independence'],missCount:2,fetcher:async(url,options)=>{sent=options;return {ok:true,text:async()=>JSON.stringify({catalogId:'shared-id',questions})};}});
+assert.equal(sent.headers.Authorization,'Bearer user-token');assert.equal(JSON.parse(sent.body).count,10);assert.ok(!sent.body.includes('user-token'));
+const map=new Map();const entry=await catalogPracticeSet(set,{uid:'a',storage:{setItem:(k,v)=>map.set(k,v)}});assert.equal(map.size,1);assert.ok(practiceCards(entry,'a').every(c=>c.homeworkExcluded&&c.aiGenerated));
+await assert.rejects(requestConceptPractice({endpoint:'https://service.test',getToken:async()=>null,concepts:['x']}),/Sign in/);
+await assert.rejects(catalogPracticeSet(set,{uid:'a',storage:{setItem(){throw new Error('Storage full');}}}),/Storage full/);
+await assert.rejects(requestConceptPractice({endpoint:'https://service.test',getToken:async()=>'token',lessonId:'d1-t01',concepts:['x'],fetcher:async()=>({ok:false,status:503})}),/503/);
+await assert.rejects(requestConceptPractice({endpoint:'https://service.test',getToken:async()=>'token',lessonId:'d1-t01',concepts:['x'],fetcher:async()=>({ok:true,text:async()=>JSON.stringify({questions})})}),/catalog entry/);
+console.log('Concept generation: authenticated endpoint, strict validation, catalog persistence and supplemental cards passed.');
