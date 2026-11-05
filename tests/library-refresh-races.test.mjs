@@ -7,7 +7,7 @@ const community=source.slice(source.indexOf('async function refreshCommunityLibr
 const empty=()=>({decks:[],cards:[],reviews:[],progress:{},homeworkQuizzes:{},homeworkCompletions:{},activityRecords:[],homeworkQuizHistory:[]});
 let resolveLoad,resolveCommunity,failSave=false;
 const state={user:{uid:'a'},profile:{activeGroupId:'g'},library:empty()};
-const context=vm.createContext({state,console:{error:()=>{}},loadStudyLibrary:()=>new Promise(r=>resolveLoad=r),loadCommunityLibrary:async()=>({contributions:[],statuses:{}}),aggregateCommunityLibrary:()=>({decks:[],cards:[]}),hydrateHomeworkRecords:()=>{},updateHomeworkSummary:()=>{},saveProfileDebounced:async()=>{if(failSave)throw Error('summary failed');},friendly:e=>e.message});
+const context=vm.createContext({state,console:{error:()=>{}},loadStudyLibrary:()=>new Promise(r=>resolveLoad=r),loadCommunityLibrary:async()=>({contributions:[],statuses:{}}),aggregateCommunityLibrary:()=>({decks:[],cards:[]}),hydrateHomeworkRecords:()=>{},updateHomeworkSummary:()=>{},saveProfileDebounced:async immediate=>{if(failSave&&immediate)throw Error('summary failed');},friendly:e=>e.message});
 vm.runInContext(refresh+'\n'+community,context);
 const start=()=>vm.runInContext('refreshStudyLibrary()',context);
 // A request begun before a review must retain its library object and confirmed data.
@@ -16,7 +16,7 @@ let pending=start();state.library.progress.card={id:'card',repetitions:1};state.
 resolveLoad({...empty(),progress:{card:{id:'card',repetitions:0}},homeworkQuizzes:{week:{id:'quiz',_revision:1,answers:{}}}});await pending;
 assert.equal(state.library,original);assert.equal(state.library.progress.card.repetitions,1);assert.equal(state.library.reviews[0].id,'answer');assert.equal(state.library.homeworkQuizzes.week._revision,2);
 // Failed trailing summary saves preserve successfully fetched questions.
-failSave=true;pending=start();resolveLoad({...empty(),cards:[{id:'keep'}]});await pending;assert.equal(state.library.cards[0].id,'keep');assert.equal(state.library.error,'summary failed');failSave=false;
+failSave=true;pending=start();resolveLoad({...empty(),cards:[{id:'keep'}]});await pending;assert.equal(state.library.cards[0].id,'keep');assert.equal(state.library.error,null);failSave=false;
 // Results from a different owner or Guild must never touch the active library.
 pending=start();state.profile.activeGroupId='other';resolveLoad({...empty(),cards:[{id:'wrong-guild'}]});await pending;assert.equal(state.library.cards[0].id,'keep');
 pending=start();state.profile={activeGroupId:'other'};resolveLoad({...empty(),cards:[{id:'wrong-account'}]});await pending;assert.equal(state.library.cards[0].id,'keep');

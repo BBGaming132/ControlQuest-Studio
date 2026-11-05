@@ -3,7 +3,7 @@ import { firebaseConfig } from '../config/firebase-config.js';
 
 let app, auth, db, currentUnsub;
 let ready = false;
-const confirmedProfileChunks=new Map(),profileSaveQueues=new Map(),memberSummaryQueues=new Map(),confirmedMemberSummaries=new Map();
+const confirmedProfileChunks=new Map(),profileSaveQueues=new Map(),memberSummaryQueues=new Map(),confirmedMemberSummaries=new Map(),confirmedProfileSnapshots=new Map();
 function chunkCache(uid){if(!confirmedProfileChunks.has(uid))confirmedProfileChunks.set(uid,new Set());return confirmedProfileChunks.get(uid);}
 let localKey = 'controlquest_v24_local_state';
 let localStudyKey = 'controlquest_v27_study_library';
@@ -85,6 +85,8 @@ async function saveProfileSnapshot(snapshot) {
   const profile=snapshot;
   if (!ready) return saveLocal({ profile:snapshot });
   try{
+  const {updatedAt,...stable}=snapshot,fingerprint=JSON.stringify(stable);
+  if(confirmedProfileSnapshots.get(profile.uid)===fingerprint)return;
   const {root,chunks}=await packProfile(snapshot);
   // Never publish references until all immutable chunks are confirmed saved.
   const confirmed=chunkCache(profile.uid),missing=chunks.filter(chunk=>!confirmed.has(chunk.id));
@@ -93,6 +95,7 @@ async function saveProfileSnapshot(snapshot) {
   // retain the oversized fields that this migration is intended to move.
   const payload=withStamp({...root,_profileChunks:root._profileChunks||null});
   await fs().setDoc(userRef(profile.uid),payload,{mergeFields:Object.keys(payload)});
+  confirmedProfileSnapshots.set(profile.uid,fingerprint);
   }catch(error){throw new Error(`Profile save: ${error.message}`,{cause:error});}
 }
 export async function backupProfile(profile, reason='Manual Backup') {
@@ -104,7 +107,7 @@ export async function backupProfile(profile, reason='Manual Backup') {
 export async function deleteProfileData(profile) {
   await backupProfile(profile, 'Profile Delete Backup');
   if (!ready) { localStorage.removeItem(localKey); return; }
-  await fs().deleteDoc(userRef(profile.uid));
+  await fs().deleteDoc(userRef(profile.uid));confirmedProfileSnapshots.delete(profile.uid);
 }
 
 export async function createGroup(group) {
@@ -470,6 +473,7 @@ export async function saveHomeworkRecord(uid,kind,key,value) {
   const comparable=quiz=>{const copy={...quiz};delete copy._revision;return JSON.stringify(copy);};
   const isReset=previous=>kind==='quiz'&&previous?.value&&incoming.id!==previous.value.id;
   const update=(previous,resetVerified=false)=>{
+    if(kind==='completion'&&previous?.value&&comparable(previous.value)===comparable(incoming))return previous;
     let next=incoming;
     if(kind==='quiz'){
       const prior=previous?.value,revision=Number(prior?._revision)||0;
@@ -513,6 +517,6 @@ export async function saveHomeworkRecord(uid,kind,key,value) {
     }
     const record=update(previous,resetVerified);
     if(isReset(previous)){const old=archive(previous);transaction.set(docRefFor('Personal',uid,null,'review',old.id),old);}
-    transaction.set(ref,record);return record.value;
+    if(record!==previous)transaction.set(ref,record);return record.value;
   });
 }

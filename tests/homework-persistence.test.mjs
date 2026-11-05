@@ -60,7 +60,7 @@ console.log('Cloud oversized-profile migration, interrupted-write safety, rehydr
 const originalSet=adapter.setDoc,written=[];
 adapter.setDoc=async(...args)=>{written.push(args[0]);return originalSet(...args);};
 await cloud.saveProfile({...bigProfile,v3:{...bigProfile.v3,reviewReceipts:{pending:{event:{id:'next'}}}}});
-assert.ok(written.length<=2,'One changed tail chunk and one root write replace dozens of blob uploads');assert.equal(written.at(-1),'users/a');written.length=0;await cloud.saveProfile({...bigProfile,v3:{...bigProfile.v3,reviewReceipts:{pending:{event:{id:'next'}}}}});assert.deepEqual(written,['users/a'],'Identical retry does not re-upload confirmed blobs');
+assert.ok(written.length<=2,'One changed tail chunk and one root write replace dozens of blob uploads');assert.equal(written.at(-1),'users/a');written.length=0;await cloud.saveProfile({...bigProfile,v3:{...bigProfile.v3,reviewReceipts:{pending:{event:{id:'next'}}}}});assert.deepEqual(written,[],'Identical confirmed profile retry does not write root or blobs');
 // Overlapping callers publish in request order, even while the first write waits.
 let releaseFirst,enteredFirst;const entered=new Promise(r=>enteredFirst=r),release=new Promise(r=>releaseFirst=r);let first=true;
 adapter.setDoc=async(...args)=>{if(args[0]==='users/a'&&first){first=false;enteredFirst();await release;}return originalSet(...args);};
