@@ -16,7 +16,7 @@ function fixture({profile,library,store}={}){
   const state={user:{uid:'u'},group:null,profile:profile||{uid:'u',activeGroupId:null,preferences:{studySettings:DEFAULT_REVIEW_SETTINGS},stats:{xp:0,coins:0},studyHistory:{reviews:0,correct:0,incorrect:0},v3:{activity:[]}},library:library||{cards:[first,alias],decks:[],progress:{},reviews:[]}};
   const data=store||{progress:{},reviews:{},profile:null,profileCalls:0,progressCalls:0};
   const hooks={failProfileAt:0,failProgressAt:0,onProfile:null,onProgress:null,onGuild:null};
-  const guildCalls=[];
+  const guildCalls=[],streakCalls=[],awardCalls=[];
   const context=vm.createContext({state,crypto:globalThis.crypto,TextEncoder,Date,Uint8Array,Object,Math,Number,String,Error,
     defaultProgress,rateCard,progressKey,createReviewEvent,DEFAULT_REVIEW_SETTINGS,uniqueStudyCards,studyIdentity,createWorld,advanceWorld,appendActivityEvent,randomId,sha256Hex,
     currentStudyCard:()=>state.library.cards[0],reviewGapForRating:()=>0,friendly:e=>e.message,renderApp(){},persistActiveStudySession(){state.profile.activeStudySession={...state.studySession};},saveProfileDebounced:async()=>{data.profile=structuredClone(state.profile);},window:{dispatchEvent(){}},CustomEvent:class{constructor(type,options){this.type=type;this.detail=options.detail;}},toast(){},
@@ -25,10 +25,11 @@ function fixture({profile,library,store}={}){
     saveStudyProgress:async(uid,p)=>{data.progressCalls++;await hooks.onProgress?.(uid,p,data.progressCalls);if(data.progressCalls===hooks.failProgressAt)throw new Error('progress unavailable');assert.equal(uid,'u');data.progress[p.id]=structuredClone(p);},
     saveStudyReview:async(uid,e)=>{assert.equal(uid,'u');data.reviews[e.id]=structuredClone(e);},
     mutateGuildWorld:async(id,event)=>{guildCalls.push({id,event});await hooks.onGuild?.(id,event);return advanceWorld(createWorld(state.group?.questWorld),event);},
-    award:({xp,coins})=>{state.profile.stats.xp+=xp;state.profile.stats.coins+=coins;}
+    updateStreakForToday:(reason,date)=>{streakCalls.push({reason,date});},
+    award:({xp,coins},options)=>{awardCalls.push(options);state.profile.stats.xp+=xp;state.profile.stats.coins+=coins;}
   });
   vm.runInContext(rewardSource+'\n'+legacySource+'\nglobalThis.review=saveExperienceReview;globalThis.legacy=applyCardRating;',context);
-  return {state,data,hooks,guildCalls,review:context.review,legacy:context.legacy,first,alias};
+  return {state,data,hooks,guildCalls,streakCalls,awardCalls,review:context.review,legacy:context.legacy,first,alias};
 }
 const args={rating:'Easy',selectedAnswer:'B',eventId:'run:1:0'};
 const f=fixture();await f.review(f.first,args);
@@ -123,3 +124,13 @@ await assert.rejects(pendingGuild.review(pendingGuild.first,{rating:'Good',selec
 pendingGuild.state.group={id:'other',questWorld:createWorld()};pendingGuild.state.profile.activeGroupId='other';
 await assert.rejects(pendingGuild.review(pendingGuild.first,{rating:'Good',selectedAnswer:'A',eventId:'keep-destination'}),/original Guild|pending review/);assert.equal(pendingGuild.guildCalls.length,0,'retry in another Guild cannot retarget the reward');
 console.log('One-island review routing: arcade defaults, preserved personal archive, exactly-once Guild rewards and pending destination isolation passed.');
+
+const offline=fixture();offline.state.profile.timezone='America/New_York';
+const originalTime='2026-11-04T04:30:00.000Z';
+await offline.review(offline.first,{rating:'Good',selectedAnswer:'A',eventId:'offline-original-day',reviewedAt:originalTime});
+assert.equal(Object.values(offline.data.reviews)[0].reviewedAt,originalTime);
+assert.equal(offline.state.library.progress[progressKey(offline.first)].lastReviewedAt,originalTime);
+assert.equal(offline.streakCalls[0].date,'2026-11-03','Streak credit uses original local study day, not replay day');
+assert.equal(offline.awardCalls[0].skipStreak,true,'Generic reward must not increment replay day streak');
+await offline.review(offline.first,{rating:'Good',selectedAnswer:'A',eventId:'offline-original-day',reviewedAt:originalTime});
+assert.equal(offline.streakCalls.length,1,'Duplicate replay cannot add another streak award');

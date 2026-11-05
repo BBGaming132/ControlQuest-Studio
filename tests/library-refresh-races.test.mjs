@@ -7,7 +7,7 @@ const community=source.slice(source.indexOf('async function refreshCommunityLibr
 const empty=()=>({decks:[],cards:[],reviews:[],progress:{},homeworkQuizzes:{},homeworkCompletions:{},activityRecords:[],homeworkQuizHistory:[]});
 let resolveLoad,resolveCommunity,failSave=false;
 const state={user:{uid:'a'},profile:{activeGroupId:'g'},library:empty()};
-const context=vm.createContext({state,console:{error:()=>{}},loadStudyLibrary:()=>new Promise(r=>resolveLoad=r),loadCommunityLibrary:async()=>({contributions:[],statuses:{}}),aggregateCommunityLibrary:()=>({decks:[],cards:[]}),hydrateHomeworkRecords:()=>{},updateHomeworkSummary:()=>{},saveProfileDebounced:async immediate=>{if(failSave&&immediate)throw Error('summary failed');},friendly:e=>e.message});
+const context=vm.createContext({state,console:{error:()=>{}},loadStudyLibrary:()=>new Promise(r=>resolveLoad=r),loadCommunityLibrary:async()=>({contributions:[],statuses:{}}),aggregateCommunityLibrary:()=>({decks:[],cards:[]}),hydrateHomeworkRecords:()=>{},restorePendingHomework:()=>{},updateHomeworkSummary:()=>{},saveProfileDebounced:async immediate=>{if(failSave&&immediate)throw Error('summary failed');},friendly:e=>e.message});
 vm.runInContext(refresh+'\n'+community,context);
 const start=()=>vm.runInContext('refreshStudyLibrary()',context);
 // A request begun before a review must retain its library object and confirmed data.

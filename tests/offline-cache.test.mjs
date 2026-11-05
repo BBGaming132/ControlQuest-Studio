@@ -1,0 +1,23 @@
+import assert from 'node:assert/strict';
+import {readFile} from 'node:fs/promises';
+const storage=new Map();globalThis.localStorage={getItem:k=>storage.get(k)||null,setItem:(k,v)=>storage.set(k,v)};
+let source=await readFile(new URL('../js/firebase-service.js',import.meta.url),'utf8');
+source=source.replace("import { firebaseConfig } from '../config/firebase-config.js';","const firebaseConfig={enabled:false};").replace('./profile-chunks.js',new URL('../js/profile-chunks.js',import.meta.url).href);
+source+='\nexport function __cloud(adapter){ready=true;auth={currentUser:{uid:"a"}};db={};globalThis.window={__cqFirebase:{fsMod:adapter}};}';
+const cloud=await import('data:text/javascript;base64,'+Buffer.from(source).toString('base64'));
+const docs=new Map([['users/a',{uid:'a',stats:{xp:1}}],['users/a/studyCards/q',{id:'q',scopeKey:'personal_a',question:'Saved question'}]]);
+let readError=null,writeError=null;
+const adapter={doc:(db,...parts)=>parts.join('/'),collection:(db,...parts)=>parts.join('/'),getDoc:async path=>{if(readError)throw readError;return {exists:()=>docs.has(path),data:()=>structuredClone(docs.get(path))};},getDocs:async path=>{if(readError)throw readError;return {docs:[...docs].filter(([key])=>key.startsWith(path+'/')&&key.split('/').length===path.split('/').length+1).map(([key,data])=>({id:key.split('/').at(-1),data:()=>structuredClone(data)}))};},setDoc:async(path,data)=>{if(writeError)throw writeError;docs.set(path,structuredClone(data));}};
+cloud.__cloud(adapter);
+await cloud.loadProfile('a');await cloud.loadStudyLibrary('a','guild-a');
+await cloud.saveStudyProgress('a',{id:'progress-q',repetitions:2});await cloud.saveStudyReview('a',{id:'answer',correct:true});await cloud.saveProfile({uid:'a',stats:{xp:2}});
+readError=Object.assign(Error('Quota exceeded.'),{code:'resource-exhausted'});
+assert.equal((await cloud.loadProfile('a')).stats.xp,2);const cached=await cloud.loadStudyLibrary('a','guild-a');assert.equal(cached.cards[0].question,'Saved question');assert.equal(cached.progress['progress-q'].repetitions,2);assert.equal(cached.reviews[0].id,'answer');assert.equal(cached.offline,true);assert.equal(cloud.getOfflineCacheStatus('a').offline,true);
+await assert.rejects(cloud.loadProfile('b'),/Quota/);await assert.rejects(cloud.loadStudyLibrary('a','different-guild'),/Quota/);
+readError=Object.assign(Error('Permission denied'),{code:'permission-denied'});await assert.rejects(cloud.loadProfile('a'),/Permission/);await assert.rejects(cloud.loadStudyLibrary('a','guild-a'),/Permission/);
+writeError=Object.assign(Error('Quota exceeded.'),{code:'resource-exhausted'});await assert.rejects(cloud.saveProfile({uid:'a',stats:{xp:999}}),/Quota/);await assert.rejects(cloud.saveStudyReview('a',{id:'unconfirmed'}),/Quota/);
+readError=Object.assign(Error('Unavailable'),{code:'unavailable'});assert.equal((await cloud.loadProfile('a')).stats.xp,2);assert.equal((await cloud.loadStudyLibrary('a','guild-a')).reviews.some(r=>r.id==='unconfirmed'),false);
+// A failed cache write retains its prior snapshot and never turns cloud success into failure.
+readError=null;writeError=null;const originalSet=localStorage.setItem;localStorage.setItem=()=>{throw Object.assign(Error('Device full'),{name:'QuotaExceededError'});};await cloud.saveProfile({uid:'a',stats:{xp:3}});assert.equal(docs.get('users/a').stats.xp,3);localStorage.setItem=originalSet;
+readError=Object.assign(Error('Quota exceeded'),{code:'resource-exhausted'});assert.equal((await cloud.loadProfile('a')).stats.xp,2);
+console.log('Offline cache: confirmed read/write snapshots, account/Guild isolation, quota/network fallback, auth rejection, failed-write nonconfirmation and cache-full preservation pass.');

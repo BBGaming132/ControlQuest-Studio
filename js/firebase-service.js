@@ -8,6 +8,56 @@ function chunkCache(uid){if(!confirmedProfileChunks.has(uid))confirmedProfileChu
 let localKey = 'controlquest_v24_local_state';
 let localStudyKey = 'controlquest_v27_study_library';
 
+// Confirmed cloud snapshots only: this cache never acknowledges a failed write.
+const offlineCacheStatus=new Map(),libraryCacheKeys=new Map(),cacheQueues=new Map();
+let cacheDatabase;
+const cacheKey=(uid,kind,groupId=null)=>JSON.stringify([uid,kind,groupId]);
+export function getOfflineCacheStatus(uid,kind='profile',groupId=null){return offlineCacheStatus.get(cacheKey(uid,kind,groupId))||{offline:false};}
+export function isRecoverableCloudError(error){
+ const code=String(error?.code||'').replace(/^firestore\//,''),message=String(error?.message||'');
+ if(['permission-denied','unauthenticated'].includes(code)||/permission|unauthenticated|insufficient permissions/i.test(message))return false;
+ return ['resource-exhausted','unavailable','deadline-exceeded','network-request-failed'].includes(code)||/quota exceeded|network.*(?:failed|unavailable)|client is offline|failed to fetch/i.test(message);
+}
+async function cacheStore(mode,key,value){
+ if(typeof indexedDB==='undefined'){
+   const storageKey='cq-confirmed-cache:'+key;
+   if(mode==='read'){const raw=localStorage.getItem(storageKey);return raw?JSON.parse(raw):null;}
+   localStorage.setItem(storageKey,JSON.stringify(value));return;
+ }
+ cacheDatabase ||= new Promise((resolve,reject)=>{const request=indexedDB.open('controlquest-confirmed-cache',1);request.onupgradeneeded=()=>request.result.createObjectStore('snapshots');request.onsuccess=()=>resolve(request.result);request.onerror=()=>reject(request.error);});
+ const database=await cacheDatabase;
+ return new Promise((resolve,reject)=>{const tx=database.transaction('snapshots',mode==='read'?'readonly':'readwrite'),store=tx.objectStore('snapshots');let result;
+   const request=mode==='read'?store.get(key):store.put(value,key);request.onsuccess=()=>{result=request.result;};tx.oncomplete=()=>resolve(result);tx.onerror=()=>reject(tx.error);tx.onabort=()=>reject(tx.error||new Error('Cache transaction interrupted.'));
+ });
+}
+async function rememberConfirmed(key,data){
+ try{const record={savedAt:new Date().toISOString(),data:JSON.parse(JSON.stringify(data))};if(JSON.stringify(record).length>20000000)return;await cacheStore('write',key,record);offlineCacheStatus.set(key,{offline:false,savedAt:record.savedAt});}
+ catch(error){offlineCacheStatus.set(key,{...offlineCacheStatus.get(key),cacheError:error.message});}
+}
+async function fallbackConfirmed(key,error){
+ if(!isRecoverableCloudError(error))throw error;
+ let record;try{record=await cacheStore('read',key);}catch{}
+ if(!record?.data)throw error;
+ offlineCacheStatus.set(key,{offline:true,savedAt:record.savedAt,error:error.message});return record;
+}
+async function updateConfirmedLibraries(uid,change){
+ await Promise.all([...(libraryCacheKeys.get(uid)||[])].map(key=>{
+   const prior=cacheQueues.get(key)||Promise.resolve();const work=prior.catch(()=>{}).then(async()=>{try{const record=await cacheStore('read',key);if(record?.data){change(record.data,key);await rememberConfirmed(key,record.data);}}catch{}});
+   cacheQueues.set(key,work);return work.finally(()=>{if(cacheQueues.get(key)===work)cacheQueues.delete(key);});
+ }));
+}
+
+async function cacheImportedLibrary(uid,groupId,decks=[],cards=[]){
+ await updateConfirmedLibraries(uid,(library,key)=>{
+  const cacheGroup=JSON.parse(key)[2];
+  for(const [field,items] of [['decks',decks],['cards',cards]]){
+   const merged=new Map((library[field]||[]).map(item=>[`${item.scopeKey}|${item.id}`,item]));
+   for(const item of items){if(item.scope==='Guild'&&cacheGroup!==groupId)continue;const id=`${item.scopeKey}|${item.id}`,old=merged.get(id)||{};merged.set(id,{...old,...item,...(field==='cards'?{deckIds:[...new Set([...(old.deckIds||[]),...(item.deckIds||[])])]}:{})});}
+   library[field]=[...merged.values()];
+  }
+ });
+}
+
 export async function initFirebase() {
   if (!firebaseConfig?.enabled) return { enabled: false, reason: 'Firebase Disabled' };
   try {
@@ -60,8 +110,12 @@ function groupRef(groupId){ return fs().doc(db, 'groups', groupId); }
 
 export async function loadProfile(uid) {
   if (!ready) return loadLocal()?.profile || null;
-  const snap = await fs().getDoc(userRef(uid));
-  return snap.exists() ? unpackProfile(snap.data(),async id=>{const part=await fs().getDoc(fs().doc(db,'users',uid,'studyReviews',id));if(part.exists()){chunkCache(uid).add(id);return part.data();}return null;}) : null;
+  const key=cacheKey(uid,'profile');
+  try{
+    const snap=await fs().getDoc(userRef(uid));
+    const profile=snap.exists()?await unpackProfile(snap.data(),async id=>{const part=await fs().getDoc(fs().doc(db,'users',uid,'studyReviews',id));if(part.exists()){chunkCache(uid).add(id);return part.data();}return null;}):null;
+    await rememberConfirmed(key,profile);return profile;
+  }catch(error){return (await fallbackConfirmed(key,error)).data;}
 }
 export function profileStorageSnapshot(profile) {
   const homework=profile.v3?.homework;
@@ -96,6 +150,7 @@ async function saveProfileSnapshot(snapshot) {
   const payload=withStamp({...root,_profileChunks:root._profileChunks||null});
   await fs().setDoc(userRef(profile.uid),payload,{mergeFields:Object.keys(payload)});
   confirmedProfileSnapshots.set(profile.uid,fingerprint);
+  await rememberConfirmed(cacheKey(profile.uid,'profile'),snapshot);
   }catch(error){throw new Error(`Profile save: ${error.message}`,{cause:error});}
 }
 export async function backupProfile(profile, reason='Manual Backup') {
@@ -108,6 +163,7 @@ export async function deleteProfileData(profile) {
   await backupProfile(profile, 'Profile Delete Backup');
   if (!ready) { localStorage.removeItem(localKey); return; }
   await fs().deleteDoc(userRef(profile.uid));confirmedProfileSnapshots.delete(profile.uid);
+  await rememberConfirmed(cacheKey(profile.uid,'profile'),null);
 }
 
 export async function createGroup(group) {
@@ -216,6 +272,9 @@ export async function loadStudyLibrary(uid, groupId = null) {
     const local = loadLocalStudy();
     return { decks: local.decks || [], cards: local.cards || [], progress: local.progress || {}, ...splitStudyRecords((local.reviews || []).filter(r=>!r.uid||r.uid===uid)) };
   }
+  const key=cacheKey(uid,'library',groupId);
+  if(!libraryCacheKeys.has(uid))libraryCacheKeys.set(uid,new Set());libraryCacheKeys.get(uid).add(key);
+  try{
   const deckPromises = [docsFromCollection(collectionRefFor('Personal', uid, null, 'deck'))];
   const cardPromises = [docsFromCollection(collectionRefFor('Personal', uid, null, 'card'))];
   if (groupId) {
@@ -230,12 +289,14 @@ export async function loadStudyLibrary(uid, groupId = null) {
     docsFromCollection(collectionRefFor('Personal', uid, null, 'progress')),
     studyRecordsWithoutChunks(uid)
   ]);
-  return {
+  const library={
     decks: deckGroups.flat(),
     cards: cardGroups.flat(),
     progress: Object.fromEntries(progressDocs.map(p => [p.id, p])),
     ...splitStudyRecords(reviewDocs)
   };
+  await rememberConfirmed(key,library);return library;
+  }catch(error){const record=await fallbackConfirmed(key,error);return {...record.data,offline:true,cacheSavedAt:record.savedAt};}
 }
 
 async function commitBatchOperations(operations) {
@@ -284,6 +345,7 @@ export async function saveStudyImport({ uid, groupId, decks = [], cards = [] }) 
   }
   for(const card of cards.filter(c=>c.wasCorrectAtImport===false)){const id=`${card.scopeKey}__${card.id}`;operations.push(batch=>batch.set(docRefFor('Personal',uid,null,'progress',id),{id,uid,cardId:card.id,scope:card.scope,scopeKey:card.scopeKey,importedMiss:true},{merge:true}));}
   await commitBatchOperations(operations);
+  await cacheImportedLibrary(uid,groupId,decks,cards);
 }
 
 export async function saveStudyDeck({ uid, groupId, deck }) {
@@ -297,6 +359,7 @@ export async function saveStudyDeck({ uid, groupId, deck }) {
     return;
   }
   await fs().setDoc(docRefFor(deck.scope, uid, groupId, 'deck', deck.id), withStamp(deck), { merge: true });
+  await cacheImportedLibrary(uid,groupId,[deck]);
 }
 
 export async function saveStudyCard({ uid, groupId, card }) {
@@ -310,6 +373,7 @@ export async function saveStudyCard({ uid, groupId, card }) {
     return;
   }
   await fs().setDoc(docRefFor(card.scope, uid, groupId, 'card', card.id), withStamp(card), { merge: true });
+  await cacheImportedLibrary(uid,groupId,[],[card]);
 }
 
 export async function saveStudyProgress(uid, progress) {
@@ -322,6 +386,7 @@ export async function saveStudyProgress(uid, progress) {
     return;
   }
   await fs().setDoc(docRefFor('Personal', uid, null, 'progress', progress.id), withStamp(progress), { merge: true });
+  await updateConfirmedLibraries(uid,library=>{library.progress ||= {};library.progress[progress.id]={...library.progress[progress.id],...progress};});
 }
 
 export async function saveStudyReview(uid, review) {
@@ -335,6 +400,7 @@ export async function saveStudyReview(uid, review) {
     return;
   }
   await fs().setDoc(docRefFor('Personal', uid, null, 'review', review.id), review);
+  await updateConfirmedLibraries(uid,library=>{if(!review.recordType||review.recordType==='study-review')library.reviews=[review,...(library.reviews||[]).filter(r=>r.id!==review.id)];});
 }
 
 export async function deleteStudyDeck({ uid, groupId, deck }) {
@@ -507,7 +573,7 @@ export async function saveHomeworkRecord(uid,kind,key,value) {
   // Resolve possible reset evidence, then reread the evidence document inside
   // the transaction so a concurrent device cannot invalidate that reset proof.
   let resetCandidates=null;
-  return fs().runTransaction(db,async transaction=>{
+  const savedValue=await fs().runTransaction(db,async transaction=>{
     const snap=await transaction.get(ref),previous=snap.exists()?snap.data():null;
     let resetVerified=false;
     if(isReset(previous)&&incoming.resetAt){
@@ -519,4 +585,6 @@ export async function saveHomeworkRecord(uid,kind,key,value) {
     if(isReset(previous)){const old=archive(previous);transaction.set(docRefFor('Personal',uid,null,'review',old.id),old);}
     if(record!==previous)transaction.set(ref,record);return record.value;
   });
+  await updateConfirmedLibraries(uid,library=>{const field=kind==='quiz'?'homeworkQuizzes':'homeworkCompletions';library[field] ||= {};library[field][key]=savedValue;});
+  return savedValue;
 }
