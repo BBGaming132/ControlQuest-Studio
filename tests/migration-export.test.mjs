@@ -1,0 +1,17 @@
+import assert from 'node:assert/strict';
+import {packProfile} from '../js/profile-chunks.js';
+import {validateExport} from '../scripts/migration/validate-export.mjs';
+const profile={uid:'owner',v3:{history:'📚'.repeat(13000)}};
+const packed=await packProfile(profile);
+const fixture={format:'controlquest-migration-v1',capturedAt:'2026-11-05T00:00:00Z',complete:false,documents:[{path:'users/owner',data:packed.root},...packed.chunks.map(c=>({path:`users/owner/studyReviews/${c.id}`,data:{...c,uid:'owner'}}))],pending:[{uid:'owner',id:'run:1',payload:{rating:'Again'}}]};
+const report=await validateExport(fixture);assert.equal(report.profilesHydrated,1);assert.equal(report.pendingEventCount,1);assert.equal(report.cutoverApproved,false);assert.equal(report.warnings.length,2);
+assert.equal(report.manifestSha256,(await validateExport({...fixture,documents:[...fixture.documents].reverse()})).manifestSha256);
+await assert.rejects(validateExport({...fixture,documents:fixture.documents.slice(0,-1)}),/Profile data could not/);
+const corrupt=structuredClone(fixture);corrupt.documents[1].data.data+='x';await assert.rejects(validateExport(corrupt),/hash/);
+await assert.rejects(validateExport({...fixture,documents:[...fixture.documents,fixture.documents[0]]}),/Duplicate/);
+await assert.rejects(validateExport({...fixture,pending:[...fixture.pending,{uid:'owner',id:'run:1',payload:{rating:'Good'}}]}),/Conflicting/);
+await assert.rejects(validateExport({...fixture,documents:[{path:'users/owner',data:{uid:'other'}}]}),/UID mismatch/);
+const compact={format:fixture.format,capturedAt:fixture.capturedAt,documents:[{path:'users/owner',data:{uid:'owner',v3:{homework:{quizzes:{week01:{storedSeparately:true}}}}}}]};
+await assert.rejects(validateExport(compact),/Missing separate homework/);
+compact.documents.push({path:'users/owner/studyReviews/homework_quiz_week01',data:{uid:'owner',recordType:'homework-quiz',key:'week01',value:{weekId:'week01'}}});assert.equal((await validateExport(compact)).profilesHydrated,1);
+console.log('Migration staging: hashes, hydration, missing chunks/homework, ownership, manifest ordering and pending event conflicts passed; no provider access.');
