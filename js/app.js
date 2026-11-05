@@ -1,3 +1,5 @@
+import {nextPacificReset} from './review-outbox.js';
+import {homeworkJournal,pendingReviewEvents,mergePendingHomework,streakSnapshot} from './offline-homework.js';
 import {saveErrorMessage} from './save-errors.js';
 import {requestConceptPractice,catalogPracticeSet,practiceCards} from './concept-practice.js';
 import {buildHomeworkPlan,buildHomeworkPublicSummary,refreshHomeworkPublicSummary,enrollHomework,recordHomeworkCompletion} from './homework-plan.js';
@@ -107,14 +109,16 @@ async function init(){
         profile = migrateProfile(profile, user);
         state.profile = profile;
         applyTheme();
-        await saveProfileDebounced(true);
-        if (profile.activeGroupId) await loadActiveGroup(profile.activeGroupId);
+        saveProfileDebounced();
+        if (profile.activeGroupId)try{await loadActiveGroup(profile.activeGroupId);}catch(error){console.warn('Guild unavailable',error.message);}
         await refreshStudyLibrary();
-        await recordAccountActivity('session-start','Authenticated app session started');
+        void recordAccountActivity('session-start','Authenticated app session started').catch(error=>console.warn('Activity sync paused',error.message));
         state.communityUnsub?.();
         let publicRefreshTimer;
         state.communityUnsub=subscribeCommunityLibrary(()=>{clearTimeout(publicRefreshTimer);publicRefreshTimer=setTimeout(()=>refreshStudyLibrary().then(renderIfApp),250);},error=>{state.library.communityError=friendly(error);});
-        await migrateLegacyStudyLibrary();
+        restorePendingHomework();
+        retryPendingHomework();
+        if(!state.library.offline)await migrateLegacyStudyLibrary();
         restoreActiveStudySession();
         startClock();
         renderApp();
@@ -240,7 +244,7 @@ async function refreshStudyLibrary(){
     // Keep the object held by an in-flight review/quiz. Overlay changes confirmed
     // while the request was pending so an older response cannot erase them.
     Object.assign(state.library,mergeFetchedStudyLibrary(loaded,state.library,before),{loaded:true,error:null});
-    hydrateHomeworkRecords();await refreshCommunityLibrary();if(!current())return;
+    hydrateHomeworkRecords();restorePendingHomework();await refreshCommunityLibrary();if(!current())return;
     updateHomeworkSummary();saveProfileDebounced();
   }catch(error){
     if(!current())return;
@@ -506,8 +510,9 @@ function completeDailyQuest(id,{auto=false}={}){
   return true;
 }
 function dailyQuestCount(){ ensureDailyQuestDate(); return Math.min(3,Object.keys(state.profile.daily?.quests||{}).filter(k=>k!=='completionChest').length); }
-function updateStreakForToday(reason='Study Activity'){
-  const stats=state.profile.stats; const today=localDateForProfile();
+function updateStreakForToday(reason='Study Activity',date=localDateForProfile()){
+  const stats=state.profile.stats; const today=date;
+  if(stats.lastStreakDate&&stats.lastStreakDate>today)return false;
   if(stats.lastStreakDate===today) return false;
   let continues=false; const last=stats.lastStreakDate;
   if(!last) continues=false;
@@ -1546,7 +1551,7 @@ function experienceContext(){
   return {profile,user,group:state.group,library:state.library,level:levelInfo().level,isCurrent,
     avatar:()=>avatarSvg(state.profile.inventory.equipped),navigate:navigateTo,render:renderApp,toast,
     save,saveQuiet:()=>{if(isCurrent())saveProfileDebounced();},refresh:refreshStudyLibrary,download:downloadText,
-    completeAssignment:async lessonId=>{await persistHomework(recordHomeworkCompletion(state.profile.v3.homework||{},currentHomeworkPlan(),lessonId));updateStreakForToday('Lesson completed');saveProfileDebounced();},startLessonReview:lessonId=>startLessonReview(experienceContext(),lessonId),resetStudyProgress,updateStudyAvailability,review:saveExperienceReview,generatePractice:generateConceptPractice,worldAction:saveExperienceWorldAction,importBatch:saveExperienceBatch,
+    pendingHomework:()=>pendingHomeworkList(),syncHomework:retryPendingHomework,completeAssignment:async lessonId=>{await persistHomework(recordHomeworkCompletion(state.profile.v3.homework||{},currentHomeworkPlan(),lessonId));},startLessonReview:lessonId=>startLessonReview(experienceContext(),lessonId),resetStudyProgress,updateStudyAvailability,review:saveExperienceReview,generatePractice:generateConceptPractice,worldAction:saveExperienceWorldAction,importBatch:saveExperienceBatch,
     renderGuildStudy:renderGuildStudyTab,bindGuildStudy:bindTools,
     getWorld:()=>createWorld(state.group?state.group.questWorld:state.profile.v3.world),
     completeLesson:async lesson=>{
@@ -1577,7 +1582,7 @@ async function rewardExperience(event,worldMode='solo',context={}){
   window.dispatchEvent(new CustomEvent('controlquest:activity',{detail:event}));
 }
 let experienceReviewLock=false;
-async function saveExperienceReview(card,{rating,selectedAnswer,eventId,mode='pocket-quest',worldMode,responseTimeMs=0}){
+async function saveExperienceReview(card,{rating,selectedAnswer,eventId,mode='pocket-quest',worldMode,responseTimeMs=0,reviewedAt:originalReviewedAt}){
   if(experienceReviewLock)throw new Error('Your previous answer is still saving.');
   if(experienceWorldLock)throw new Error('Your island move is still saving. Try this answer again in a moment.');
   if(!state.user?.uid||!state.profile)throw new Error('Sign in before saving a review.');
@@ -1604,7 +1609,7 @@ async function saveExperienceReview(card,{rating,selectedAnswer,eventId,mode='po
       assertContext();
       const existing=library.reviews.find(e=>e.uid===uid&&(e.id===reviewId||e.sessionId===eventId));
       const correct=hasChoices?selectedAnswer===card.correctAnswer:rating!=='Again';
-      const effectiveRating=correct?rating:'Again',reviewedAt=new Date();
+      const effectiveRating=correct?rating:'Again',reviewedAt=new Date(originalReviewedAt||Date.now());
       const logical=uniqueStudyCards(library.cards,library.progress,library.reviews,{uid:uid,decks:library.decks}).find(c=>studyIdentity(c)===studyIdentity(card));
       const saved=logical?.effectiveProgress||library.progress[progressKey(card)];
       const previous=saved&&(!saved.uid||saved.uid===uid)?saved:defaultProgress(card,uid);
@@ -1635,7 +1640,9 @@ async function saveExperienceReview(card,{rating,selectedAnswer,eventId,mode='po
       profile.studyHistory ||= {reviews:0,correct:0,incorrect:0};
       profile.studyHistory.reviews=(Number(profile.studyHistory.reviews)||0)+1;
       const outcome=event.correct?'correct':'incorrect';profile.studyHistory[outcome]=(Number(profile.studyHistory[outcome])||0)+1;
-      award({xp:event.correct?4:2,coins:event.correct?2:1,reason:event.correct?'Pocket Quest recall':'Pocket Quest repair',type:'Flashcards'});
+      award({xp:event.correct?4:2,coins:event.correct?2:1,reason:event.correct?'Pocket Quest recall':'Pocket Quest repair',type:'Flashcards'},{skipStreak:true});
+      const reviewDay=new Intl.DateTimeFormat('en-CA',{timeZone:profile.timezone||'America/New_York',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date(event.reviewedAt));
+      updateStreakForToday('Saved study activity',reviewDay);
       receipt.historyRecorded=true;
     }
     receipts[eventId]={complete:true,cardIdentity:receipt.cardIdentity,savedAt:event.reviewedAt};
@@ -1750,7 +1757,7 @@ function hydrateHomeworkRecords(){
   h.quizzes={...h.quizzes,...state.library.homeworkQuizzes};
   h.completions={...h.completions,...state.library.homeworkCompletions};
 }
-function currentHomeworkPlan(){return buildHomeworkPlan({cards:state.library.cards,progressMap:state.library.progress,reviews:state.library.reviews,decks:state.library.decks,uid:state.user.uid,state:state.profile.v3?.homework||{}});}
+function currentHomeworkPlan(){return buildHomeworkPlan({cards:state.library.cards,progressMap:state.library.progress,reviews:[...state.library.reviews,...pendingReviewEvents(localStorage,state.user.uid,state.profile.activeGroupId)],decks:state.library.decks,uid:state.user.uid,state:state.profile.v3?.homework||{}});}
 function updateHomeworkSummary(){if(!state.profile||!state.library.loaded)return;state.profile.v3 ||= {};const plan=currentHomeworkPlan();state.profile.v3.homeworkSummary=buildHomeworkPublicSummary(plan,state.profile.v3.homework||{});}
 function homeworkContext(){
   const c=experienceContext();
@@ -1766,7 +1773,44 @@ function homeworkContext(){
     onStudyLesson:async lessonId=>{try{if(!c.profile.v3.homework?.enrolledAt)await persistHomework(enrollHomework(c.profile.v3.homework));if(!c.isCurrent())return;startLessonReview(experienceContext(),lessonId);}catch(error){toast(friendly(error),'error');}},
     onSaveHomework:persistHomework};
 }
+function pendingHomeworkList(){try{const entry=homeworkJournal(localStorage,state.user?.uid).read();return entry?[entry]:[];}catch{return [];}}
+function restorePendingHomework(){
+ const entry=homeworkJournal(localStorage,state.user.uid).read();if(!entry)return;
+ state.profile.v3 ||= {};state.profile.v3.homework=mergePendingHomework(state.profile.v3.homework||{},entry.homework);
+ if(entry.streak.lastStreakDate&&(!state.profile.stats.lastStreakDate||entry.streak.lastStreakDate>=state.profile.stats.lastStreakDate))Object.assign(state.profile.stats,streakSnapshot(entry.streak));
+}
+let homeworkReplay=null;
+function homeworkRetryKey(uid){return `cq-homework-retry-${uid}`;}
+async function retryPendingHomework(){
+ if(homeworkReplay)return homeworkReplay;
+ const uid=state.user?.uid,profile=state.profile;if(!uid||!profile)return;
+ const journal=homeworkJournal(localStorage,uid),entry=journal.read();if(!entry)return;
+ const retryAt=Number(localStorage.getItem(homeworkRetryKey(uid))||0);if(Date.now()<retryAt)return;
+ // Answers must be acknowledged first; locally completed lessons never bypass that check.
+ if(pendingReviewEvents(localStorage,uid,profile.activeGroupId).length)return;
+ homeworkReplay=(async()=>{try{
+   await persistHomeworkCloud(mergePendingHomework(profile.v3.homework||{},entry.homework));
+   if(state.user?.uid!==uid||state.profile!==profile)return;
+   await saveProfile(profile);journal.clear(entry);localStorage.removeItem(homeworkRetryKey(uid));renderIfApp();
+ }catch(error){const quota=/quota|resource-exhausted/i.test(`${error.code||''} ${error.message}`);localStorage.setItem(homeworkRetryKey(uid),String(quota?Date.parse(nextPacificReset(Date.now())):Date.now()+300000));console.warn('Local lesson credit waiting to sync:',error.message);}finally{homeworkReplay=null;}})();
+ return homeworkReplay;
+}
 async function persistHomework(next){
+ const previous=state.profile.v3?.homework||{};
+ // Timed quiz revisions retain their existing transactional conflict checks.
+ if(JSON.stringify(previous.quizzes||{})!==JSON.stringify(next.quizzes||{}))return persistHomeworkCloud(next);
+ const journal=homeworkJournal(localStorage,state.user.uid);
+ journal.save(next,state.profile.stats); // Fail closed before changing visible state if device storage is full.
+ state.profile.v3 ||= {};state.profile.v3.homework=next;
+ const newlyCompleted=Object.entries(next.completions||{}).filter(([id,value])=>value.completedAt&&!previous.completions?.[id]?.completedAt);
+ if(newlyCompleted.length)updateStreakForToday('Lesson completed locally');
+ journal.save(next,state.profile.stats);
+ updateHomeworkSummary();void retryPendingHomework();return next;
+}
+window.addEventListener('online',()=>retryPendingHomework());
+// Lightweight local check: network work occurs only when pending credits exist and answers drained.
+setInterval(()=>retryPendingHomework(),60000);
+async function persistHomeworkCloud(next){
   if(homeworkSaving)throw new Error('Your previous homework change is still saving.');
   const profile=state.profile,uid=state.user?.uid,library=state.library;
   const current=()=>{if(state.profile!==profile||state.user?.uid!==uid)throw new Error('Account changed. Reopen your study plan.');};

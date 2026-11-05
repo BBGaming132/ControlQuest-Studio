@@ -1,0 +1,30 @@
+import assert from 'node:assert/strict';
+import {createReviewOutbox,nextPacificReset} from '../js/review-outbox.js';
+const within=(input,expected)=>assert.ok(Math.abs(Date.parse(nextPacificReset(Date.parse(input)))-Date.parse(expected))<2000,`${input}: ${nextPacificReset(Date.parse(input))}`);
+within('2026-07-01T20:00:00Z','2026-07-02T07:01:00Z');
+within('2026-12-01T20:00:00Z','2026-12-02T08:01:00Z');
+within('2026-03-08T08:30:00Z','2026-03-09T07:01:00Z');
+within('2026-11-01T07:30:00Z','2026-11-02T08:01:00Z');
+const data=new Map(),storage={getItem:k=>data.get(k)||null,setItem:(k,v)=>data.set(k,v)};
+let time=Date.parse('2026-11-04T20:00:00Z'),calls=0,original;
+const box=createReviewOutbox({storage,key:'q',now:()=>time,save:async entry=>{calls++;original=entry.input.reviewedAt;if(calls===1)throw Object.assign(new Error('Quota exceeded'),{code:'resource-exhausted'});}});
+box.enqueue({id:'a',card:{id:'a'},input:{rating:'Good',eventId:'a'}});await box.idle();
+assert.equal(box.list()[0].quotaPaused,true);assert.equal(original,'2026-11-04T20:00:00.000Z');
+await box.retry();await box.resume();assert.equal(calls,1,'Manual and resume retries respect quota cooldown');
+const retryAt=box.list()[0].retryAt;box.pause();
+time=Date.parse(retryAt)+1000;
+const reloaded=createReviewOutbox({storage,key:'q',now:()=>time,save:async entry=>{calls++;assert.equal(entry.input.reviewedAt,original);}});
+await new Promise(r=>setTimeout(r,15));await reloaded.idle();
+assert.equal(calls,2);assert.deepEqual(reloaded.list(),[]);
+console.log('Quota retries: Pacific DST reset, persisted cooldown, no early retry, startup recovery and original timestamp passed.');
+{
+ const legacy={id:'legacy',state:'failed',error:'Quota exceeded.',card:{id:'old-card'},input:{eventId:'legacy',rating:'Good',reviewedAt:'2026-11-03T20:00:00.000Z'}};
+ const other={id:'unrelated',state:'failed',error:'Network down',card:{id:'other'},input:{eventId:'unrelated',rating:'Again'}};
+ storage.setItem('legacy',JSON.stringify([legacy,other]));let attempts=0;
+ const upgraded=createReviewOutbox({storage,key:'legacy',now:()=>time,save:async entry=>{attempts++;assert.deepEqual(entry.input,legacy.input);throw new Error('Quota exceeded.');}});
+ await upgraded.idle();assert.equal(attempts,1,'One upgrade probe handles unknown old quota failure date');
+ assert.ok(upgraded.list()[0].retryAt);assert.deepEqual(upgraded.list()[1],other,'Unrelated failed entries remain identical');
+ await upgraded.retry();assert.equal(attempts,1,'Fresh quota response prevents further early retries');upgraded.pause();
+ const again=createReviewOutbox({storage,key:'legacy',now:()=>time,save:async()=>attempts++});await again.idle();assert.equal(attempts,1,'Reload preserves cooldown after the single probe');again.pause();
+}
+console.log('Legacy quota migration: single automatic probe, durable cooldown and unrelated entries preserved.');
