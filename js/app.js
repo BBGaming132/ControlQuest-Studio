@@ -1,3 +1,4 @@
+import {saveErrorMessage} from './save-errors.js';
 import {requestConceptPractice,catalogPracticeSet,practiceCards} from './concept-practice.js';
 import {buildHomeworkPlan,buildHomeworkPublicSummary,refreshHomeworkPublicSummary,enrollHomework,recordHomeworkCompletion} from './homework-plan.js';
 import {renderHomework,bindHomework,renderHomeworkQuiz,bindHomeworkQuiz} from './homework-view.js';
@@ -240,7 +241,7 @@ async function refreshStudyLibrary(){
     // while the request was pending so an older response cannot erase them.
     Object.assign(state.library,mergeFetchedStudyLibrary(loaded,state.library,before),{loaded:true,error:null});
     hydrateHomeworkRecords();await refreshCommunityLibrary();if(!current())return;
-    updateHomeworkSummary();await saveProfileDebounced(true);
+    updateHomeworkSummary();saveProfileDebounced();
   }catch(error){
     if(!current())return;
     console.error('Study Library Load Failed',error);
@@ -1345,7 +1346,7 @@ async function saveProfileDebounced(immediate=false){
   const save=async()=>{
     if(state.profile!==profile||state.user?.uid!==uid)return;
     await saveProfile(profile);
-    if(state.profile===profile&&state.user?.uid===uid&&profile.activeGroupId)await updateMemberSummary(profile.activeGroupId,profile);
+    if(state.profile===profile&&state.user?.uid===uid&&profile.activeGroupId){try{await updateMemberSummary(profile.activeGroupId,profile);}catch(error){console.warn('Profile saved; Guild summary update paused:',error.message);}}
   };
   if(immediate)return save();
   saveTimer=setTimeout(()=>save().catch(error=>{console.warn('Background profile save paused:',error.message);}),1500);
@@ -1400,7 +1401,7 @@ function levelInfo(){ const xp=state.profile?.stats?.xp||0; const level=Math.max
 function qaeAccuracy(){ const t=state.profile?.stats?.qaeQuestions||0; return t?Math.round((state.profile.stats.qaeCorrect||0)/t*100):0; }
 function titleCase(s=''){ return String(s).replace(/[-_]/g,' ').replace(/\b\w/g,c=>c.toUpperCase()); }
 function esc(s=''){ return String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); } function escAttr(s=''){return esc(s);}
-function friendly(e){ return e?.message || String(e); }
+function friendly(e){ return saveErrorMessage(e); }
 function pick(a){ return a[Math.floor(Math.random()*a.length)]; } function rand(min,max){return Math.floor(Math.random()*(max-min+1))+min;} function slug(s){return String(s).toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'').slice(0,50);} function safeFile(s){return String(s).replace(/[^a-z0-9-_]+/gi,'_').slice(0,60)||'note';}
 function parseLocal(iso){ if(!iso)return null; const [y,m,d]=iso.slice(0,10).split('-').map(Number); return new Date(y,m-1,d); }
 function dateIso(d){ return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`; }
@@ -1545,7 +1546,7 @@ function experienceContext(){
   return {profile,user,group:state.group,library:state.library,level:levelInfo().level,isCurrent,
     avatar:()=>avatarSvg(state.profile.inventory.equipped),navigate:navigateTo,render:renderApp,toast,
     save,saveQuiet:()=>{if(isCurrent())saveProfileDebounced();},refresh:refreshStudyLibrary,download:downloadText,
-    completeAssignment:async lessonId=>{await persistHomework(recordHomeworkCompletion(state.profile.v3.homework||{},currentHomeworkPlan(),lessonId));updateStreakForToday('Lesson completed');await saveProfileDebounced(true);},startLessonReview:lessonId=>startLessonReview(experienceContext(),lessonId),resetStudyProgress,updateStudyAvailability,review:saveExperienceReview,generatePractice:generateConceptPractice,worldAction:saveExperienceWorldAction,importBatch:saveExperienceBatch,
+    completeAssignment:async lessonId=>{await persistHomework(recordHomeworkCompletion(state.profile.v3.homework||{},currentHomeworkPlan(),lessonId));updateStreakForToday('Lesson completed');saveProfileDebounced();},startLessonReview:lessonId=>startLessonReview(experienceContext(),lessonId),resetStudyProgress,updateStudyAvailability,review:saveExperienceReview,generatePractice:generateConceptPractice,worldAction:saveExperienceWorldAction,importBatch:saveExperienceBatch,
     renderGuildStudy:renderGuildStudyTab,bindGuildStudy:bindTools,
     getWorld:()=>createWorld(state.group?state.group.questWorld:state.profile.v3.world),
     completeLesson:async lesson=>{
@@ -1772,22 +1773,34 @@ async function persistHomework(next){
   const previous=profile.v3?.homework||{};
   const metadata=h=>JSON.stringify({...h,quizzes:undefined});
   const quizAnswerOnly=metadata(previous)===metadata(next)&&Object.entries(next.quizzes||{}).every(([key,q])=>previous.quizzes?.[key]?.id===q.id&&previous.quizzes[key].status===q.status);
+  const settings=h=>JSON.stringify({...h,quizzes:undefined,completions:undefined});
+  const recordsOnly=settings(previous)===settings(next);
+  let confirmedRecords=0;
   homeworkSaving=true;
   try{
     current();
     for(const [key,value] of Object.entries(next.completions||{})){
       if(value.storedSeparately)continue;
       if(JSON.stringify(library.homeworkCompletions?.[key])!==JSON.stringify(value)){
-        const saved=await saveHomeworkRecord(uid,'completion',key,value);current();library.homeworkCompletions ||= {};library.homeworkCompletions[key]=saved;next.completions[key]=saved;
+        const saved=await saveHomeworkRecord(uid,'completion',key,value);current();library.homeworkCompletions ||= {};library.homeworkCompletions[key]=saved;next.completions[key]=saved;confirmedRecords++;
       }
     }
     for(const [key,value] of Object.entries(next.quizzes||{})){
       if(value.storedSeparately)continue;
       if(JSON.stringify(library.homeworkQuizzes?.[key])!==JSON.stringify(value)){
-        const saved=await saveHomeworkRecord(uid,'quiz',key,value);current();library.homeworkQuizzes ||= {};library.homeworkQuizzes[key]=saved;next.quizzes[key]=saved;
+        const saved=await saveHomeworkRecord(uid,'quiz',key,value);current();library.homeworkQuizzes ||= {};library.homeworkQuizzes[key]=saved;next.quizzes[key]=saved;confirmedRecords++;
       }
     }
-    profile.v3.homework=next;updateHomeworkSummary();if(quizAnswerOnly)saveProfileDebounced();else await saveProfileDebounced(true);current();return next;
+    profile.v3.homework=next;updateHomeworkSummary();
+    // Completion/quiz records are the authority and have already been confirmed.
+    // Derived profile/Guild summaries must not turn saved credit into a failure.
+    if(quizAnswerOnly||recordsOnly)saveProfileDebounced();
+    else try{await saveProfileDebounced(true);}catch(error){
+      if(!confirmedRecords)throw error;
+      console.warn('Homework saved; profile summary update paused:',error.message);
+      toast('Lesson or quiz saved. Profile summary sync is pending.','info');
+    }
+    current();return next;
   }finally{homeworkSaving=false;}
 }
 async function recordAccountActivity(type,description,details={}){
