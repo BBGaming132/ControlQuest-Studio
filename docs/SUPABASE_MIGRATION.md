@@ -1,5 +1,11 @@
 # ControlQuest: staged Supabase migration framework
 
+## ControlQuest 5.4.0 database release
+
+Version 5.4.0 uses Supabase for profiles, study libraries, reviews, homework, Guilds, and shared content. Firebase Authentication still issues the existing users' sign-in tokens. The release uses the approved November 15 export as its starting point. The four profiles, two Guilds, 4,820 application records and three Guild memberships were matched against that snapshot before release.
+
+Profile creation, an actual lesson review through cloud confirmation, concurrent writes, and Guild access were tested with disposable identities. The live app uses the existing offline queues and retains their confirmation rules. Guild subscriptions check for updates roughly every 2.5 seconds, and shared library subscriptions check every 30 seconds. Older Firestore clients are fenced by read-only rules. Keep the original data and prior ruleset for recovery. The optional separately deployed AI concept practice service has its own datastore configuration.
+
 ## November 15 staging status
 
 The ControlQuest Supabase project contains a verified private Firestore snapshot and a separate read-only dataset for testing. The export was captured at 3:27 p.m. Eastern on November 15, 2026. The archive checksum and all 17,970 source records were checked. The private staging copy contains 4,860 records, including the 40 profile chunks still referenced by the four profiles. The remaining 13,110 chunks are in the original ZIP. The read dataset contains 4,820 records with all four profiles hydrated, both Guilds, and three explicit Guild memberships. One legacy Guild has no recorded owner, so the migration leaves that role unresolved.

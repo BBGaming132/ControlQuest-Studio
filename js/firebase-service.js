@@ -3,6 +3,7 @@ import { firebaseConfig } from '../config/firebase-config.js';
 
 let app, auth, db, currentUnsub;
 let ready = false;
+let databaseProvider = 'firestore';
 const confirmedProfileChunks=new Map(),profileSaveQueues=new Map(),memberSummaryQueues=new Map(),confirmedMemberSummaries=new Map(),confirmedProfileSnapshots=new Map();
 function chunkCache(uid){if(!confirmedProfileChunks.has(uid))confirmedProfileChunks.set(uid,new Set());return confirmedProfileChunks.get(uid);}
 let localKey = 'controlquest_v24_local_state';
@@ -63,12 +64,20 @@ export async function initFirebase() {
   try {
     const appMod = await import('https://www.gstatic.com/firebasejs/10.12.5/firebase-app.js');
     const authMod = await import('https://www.gstatic.com/firebasejs/10.12.5/firebase-auth.js');
-    const fsMod = await import('https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore.js');
-    window.__cqFirebase = { appMod, authMod, fsMod };
     app = appMod.initializeApp(firebaseConfig);
     auth = authMod.getAuth(app);
     await authMod.setPersistence(auth, authMod.browserLocalPersistence);
-    db = fsMod.getFirestore(app);
+    databaseProvider = firebaseConfig.databaseProvider || 'firestore';
+    let fsMod;
+    if (databaseProvider === 'supabase') {
+      const { createSupabaseDatabase } = await import('./supabase-database.js');
+      fsMod = createSupabaseDatabase({ ...firebaseConfig.supabase, auth });
+      db = {};
+    } else {
+      fsMod = await import('https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore.js');
+      db = fsMod.getFirestore(app);
+    }
+    window.__cqFirebase = { appMod, authMod, fsMod };
     ready = true;
     return { enabled: true };
   } catch (error) {
@@ -78,6 +87,7 @@ export async function initFirebase() {
 }
 
 export function isFirebaseReady(){ return ready && auth && db; }
+export function isSupabaseReady(){ return ready && databaseProvider==='supabase'; }
 export function getAuthInstance(){ return auth; }
 
 export function onAuth(callback) {
@@ -141,7 +151,7 @@ async function saveProfileSnapshot(snapshot) {
   try{
   const {updatedAt,...stable}=snapshot,fingerprint=JSON.stringify(stable);
   if(confirmedProfileSnapshots.get(profile.uid)===fingerprint)return;
-  const {root,chunks}=await packProfile(snapshot);
+  const {root,chunks}=databaseProvider==='supabase'?{root:snapshot,chunks:[]}:await packProfile(snapshot);
   // Never publish references until all immutable chunks are confirmed saved.
   const confirmed=chunkCache(profile.uid),missing=chunks.filter(chunk=>!confirmed.has(chunk.id));
   for(let i=0;i<missing.length;i+=20)await Promise.all(missing.slice(i,i+20).map(async chunk=>{await fs().setDoc(fs().doc(db,'users',profile.uid,'studyReviews',chunk.id),{...chunk,uid:profile.uid});confirmed.add(chunk.id);}));
@@ -176,6 +186,16 @@ export async function loadGroup(groupId) {
   if (!ready) return loadLocal()?.group || null;
   const snap = await fs().getDoc(groupRef(groupId));
   return snap.exists() ? snap.data() : null;
+}
+
+export async function joinGuild(groupId, invite, profile) {
+  if (ready && databaseProvider === 'supabase') return fs().joinGuild(groupId, invite, publicSummary(profile));
+  const group = await loadGroup(groupId);
+  if (!group || group.code !== invite) return null;
+  group.members ||= {};
+  group.members[profile.uid] = publicSummary(profile);
+  await saveGroup(group);
+  return group;
 }
 export async function saveGroup(group,{includeLiveState=false}={}) {
   if(!group?.id)return;
@@ -256,6 +276,7 @@ async function docsFromCollection(ref) {
 
 async function studyRecordsWithoutChunks(uid){
  const ref=collectionRefFor('Personal',uid,null,'review'),api=fs();
+ if(isSupabaseReady())return docsFromCollection(ref);
  // Profile blobs share the existing private collection for rules compatibility.
  // Exclude their reserved ID range on the server, before downloading records.
  if(!api.query||!api.where||!api.documentId)return docsFromCollection(ref);
@@ -403,6 +424,24 @@ export async function saveStudyReview(uid, review) {
   await updateConfirmedLibraries(uid,library=>{if(!review.recordType||review.recordType==='study-review')library.reviews=[review,...(library.reviews||[]).filter(r=>r.id!==review.id)];});
 }
 
+export async function saveStudyReviewBundle(uid, updates, review) {
+  if (!isSupabaseReady() || auth.currentUser?.uid !== uid || review.uid !== uid || !review.id) {
+    throw new Error('Sign in to your own account before saving a review.');
+  }
+  const batch = fs().writeBatch(db);
+  for (const progress of updates) {
+    if (progress.uid !== uid || !progress.id) throw new Error('Invalid review progress.');
+    batch.set(docRefFor('Personal', uid, null, 'progress', progress.id), withStamp(progress), { merge: true });
+  }
+  batch.set(docRefFor('Personal', uid, null, 'review', review.id), review);
+  await batch.commit();
+  await updateConfirmedLibraries(uid, library => {
+    library.progress ||= {};
+    for (const progress of updates) library.progress[progress.id] = { ...library.progress[progress.id], ...progress };
+    library.reviews = [review, ...(library.reviews || []).filter(item => item.id !== review.id)];
+  });
+}
+
 export async function deleteStudyDeck({ uid, groupId, deck }) {
   if (!deck) return;
   if (!ready) {
@@ -530,13 +569,16 @@ export async function saveStudyAuditEvent(uid,event) {
   await saveStudyReview(uid,record);return record;
 }
 const homeworkWrites=new Map();
+const comparableJson = value => JSON.stringify(value, (_key, item) =>
+  item && typeof item === 'object' && !Array.isArray(item)
+    ? Object.fromEntries(Object.keys(item).sort().map(key => [key, item[key]])) : item);
 export async function saveHomeworkRecord(uid,kind,key,value) {
   if(!uid||!['quiz','completion'].includes(kind)||!/^[-a-zA-Z0-9_]+$/.test(key)||!value||typeof value!=='object')throw new Error('Invalid homework record.');
   if(ready&&auth?.currentUser?.uid!==uid)throw new Error('Sign in to your own account.');
   // Keep the caller's revision immutable: Firestore may rerun this callback.
   const incoming=structuredClone(value),id=`homework_${kind}_${key}`,lock=`${uid}:${id}`;
   if(kind==='quiz'&&(incoming.uid!==uid||incoming.weekId!==key||!incoming.id||!['active','submitted'].includes(incoming.status)))throw new Error('This quiz belongs to another account or week.');
-  const comparable=quiz=>{const copy={...quiz};delete copy._revision;return JSON.stringify(copy);};
+  const comparable=quiz=>{const copy={...quiz};delete copy._revision;return comparableJson(copy);};
   const isReset=previous=>kind==='quiz'&&previous?.value&&incoming.id!==previous.value.id;
   const update=(previous,resetVerified=false)=>{
     if(kind==='completion'&&previous?.value&&comparable(previous.value)===comparable(incoming))return previous;
@@ -551,7 +593,7 @@ export async function saveHomeworkRecord(uid,kind,key,value) {
       }else{
         if(revision!==(Number(incoming._revision)||0))throw new Error('This quiz changed on another device. Reload to resume the latest answers.');
         if(prior?.status==='submitted'||prior?.result)throw new Error('A submitted quiz cannot be overwritten.');
-        if(prior&&['id','weekId','uid','startedAt','deadlineAt','dueAt','durationSeconds','resetAt','questions'].some(field=>JSON.stringify(prior[field])!==JSON.stringify(incoming[field])))throw new Error('An active quiz cannot be restarted, replaced, or given extra time.');
+        if(prior&&['id','weekId','uid','startedAt','deadlineAt','dueAt','durationSeconds','resetAt','questions'].some(field=>comparableJson(prior[field])!==comparableJson(incoming[field])))throw new Error('An active quiz cannot be restarted, replaced, or given extra time.');
       }
       next={...incoming,_revision:revision+1};
     }

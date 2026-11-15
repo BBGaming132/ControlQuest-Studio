@@ -1,6 +1,11 @@
 // Paste your working Firebase config here and keep enabled: true.
 export const firebaseConfig = {
   enabled: true,
+  databaseProvider: "supabase",
+  supabase: {
+    projectRef: "ogviikrhwsnpumcfsvdf",
+    publishableKey: "sb_publishable_rMpKwYbMtV-xwcyJSaTK-w__tn9zu5K"
+  },
   apiKey: "AIzaSyCRAC_UP6SP1pM8QjgurD6emk50d6YHC1I",
   authDomain: "controlquest-studio-18ba7.firebaseapp.com",
   projectId: "controlquest-studio-18ba7",
