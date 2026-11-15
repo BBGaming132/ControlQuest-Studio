@@ -1,6 +1,16 @@
 # ControlQuest: staged Supabase migration framework
 
-Prepared 2026-11-04. This is a migration design and offline validation tool, not an activated migration. No production export, Supabase project, schema, auth setting or application provider switch has been performed. Publish and verify the urgent offline recovery patch first. Keep all browser data and pending answers. A quota-blocked Firestore read is not an empty dataset and must never be exported as one.
+## November 15 staging status
+
+The ControlQuest Supabase project contains a verified private Firestore snapshot and a separate read-only dataset for testing. The export was captured at 3:27 p.m. Eastern on November 15, 2026. The archive checksum and all 17,970 source records were checked. The private staging copy contains 4,860 records, including the 40 profile chunks still referenced by the four profiles. The remaining 13,110 chunks are in the original ZIP. The read dataset contains 4,820 records with all four profiles hydrated, both Guilds, and three explicit Guild memberships. One legacy Guild has no recorded owner, so the migration leaves that role unresolved.
+
+The [preview read adapter](../scripts/migration/supabase-snapshot-reader.mjs) returns profiles, Guilds, personal and shared study libraries, and community contributions. It uses the existing Firebase UID and a publishable Supabase key. The database accepts reads only from verified Firebase identities for this project, and Guild membership is enforced separately from sign-in. The live app still uses Firestore while the Supabase write path is being built.
+
+For a signed-in preview, add Firebase project `controlquest-studio-18ba7` under [ControlQuest Supabase Third-Party Auth](https://supabase.com/dashboard/project/ogviikrhwsnpumcfsvdf/auth/third-party). Use Firebase Admin to add the `role: authenticated` custom claim to the pilot account while preserving its other claims. Refresh the account's ID token before running the read adapter. Use a verified project admin session for the role change. See the [Firebase Auth integration instructions](https://supabase.com/docs/guides/auth/third-party/firebase-auth).
+
+Before cutover, finish the Supabase write adapter, verify sign-in and app behavior with a real account, and reconcile every change since the snapshot, including pending device work. Verify the legacy Guild's intended owner before giving anyone its owner-only controls. The existing export and policy tests can be rerun without sending any browser data to Supabase. The SQL files in `scripts/migration` load the hydrated staging table and verify account and Guild isolation.
+
+The original migration design below was prepared on November 4, 2026. Keep all browser data and pending answers through cutover. A quota-blocked Firestore read can hide existing records and must stop an export.
 
 ## Recommended boundary
 

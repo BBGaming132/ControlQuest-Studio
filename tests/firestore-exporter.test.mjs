@@ -1,2 +1,3 @@
 import {spawnSync} from 'node:child_process';
-const r=spawnSync('python3',['-B','-m','unittest','discover','-s','tests','-p','test_firestore_exporter.py'],{stdio:'inherit'});process.exit(r.status??1);
+const python=process.platform==='win32'?'python':'python3';
+const r=spawnSync(python,['-B','-m','unittest','discover','-s','tests','-p','test_firestore_exporter.py'],{stdio:'inherit'});process.exit(r.status??1);

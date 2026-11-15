@@ -509,7 +509,7 @@ export async function saveCategoryPatch({uid,groupId,kind,id,scope,patch,expecte
 }
 
 
-function splitStudyRecords(records) {
+export function splitStudyRecords(records) {
   const reviews=[],activityRecords=[],homeworkQuizzes={},homeworkCompletions={},homeworkQuizHistory=[];
   for(const r of records){
     if(r.recordType==='profile-chunk')continue;

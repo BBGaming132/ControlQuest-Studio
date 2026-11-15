@@ -17,7 +17,7 @@ const persisted=[];bindings.saveProfile=async p=>persisted.push(structuredClone(
 const context=vm.createContext({...bindings,window:dom.window,document:dom.window.document,location:dom.window.location,localStorage:dom.window.localStorage,URL,URLSearchParams,Date,Intl,console,crypto:globalThis.crypto,TextEncoder,Uint8Array,AbortController,
  setInterval:()=>1,clearInterval(){},setTimeout:()=>1,clearTimeout(){},requestAnimationFrame:fn=>fn(),CustomEvent:dom.window.CustomEvent,
 });
-const executable=source.replace(/^import[^\n]+\n/gm,'').replace('\ninit();\n','\n');
+const executable=source.replace(/^import[^\n]+\n/gm,'').replace(/^init\(\);\r?$/m,'');
 vm.runInContext(executable+'\nglobalThis.shell={state,defaultProfile,renderApp,navigateTo};',context);
 const {state,defaultProfile,renderApp,navigateTo}=context.shell;
 state.user={uid:'shell-user',email:'learner@example.test'};state.profile=defaultProfile(state.user);state.profile.preferences.onboardingComplete=true;
