@@ -12,6 +12,14 @@ The hosted Firebase connection passed a live test on November 15, 2026. A tempor
 
 Before cutover, finish the Supabase write adapter, verify sign-in and app behavior with a real account, and reconcile every change since the snapshot, including pending device work. Verify the legacy Guild's intended owner before giving anyone its owner-only controls. The existing export and policy tests can be rerun without sending any browser data to Supabase. The SQL files in `scripts/migration` load the hydrated staging table and verify account and Guild isolation.
 
+## Study save preview
+
+The hosted preview saves a personal review and associated progress in one transaction. It also saves lesson completion evidence and supports starting, updating, and submitting a quiz with revision checks. Each operation has a stable receipt. A retry with the same operation ID and payload returns the existing receipt, while a stale change or a reused ID with a different payload fails.
+
+Writes go to a separate schema and require a Firebase claim assigned for write testing. The November 15 hosted API test signed in through Firebase, saved and reloaded a review, progress, and a completion, and verified exact replay and access denial. The test identity and its records were removed. Database tests also checked quiz submission, stale-write rollback, and account isolation. Run `test-supabase-study-writes.sql` in a transaction and roll it back to repeat the database checks.
+
+The live app still saves to Firestore. Next, connect the app's real save actions and offline queue to a pilot backend, cover quiz resets and archives, profile and reward updates, and Guild saves, then test from a learner's device before reconciling the final Firebase changes.
+
 The original migration design below was prepared on November 4, 2026. Keep all browser data and pending answers through cutover. A quota-blocked Firestore read can hide existing records and must stop an export.
 
 ## Recommended boundary
