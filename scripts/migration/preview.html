@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ControlQuest Supabase Preview</title>
+<style>
+  :root { color-scheme: light dark; font: 1rem system-ui, sans-serif; }
+  body { margin: 0; }
+  main { max-width: 30rem; margin: 8vh auto; padding: 1.5rem; }
+  h1 { line-height: 1.1; }
+  form, label { display: grid; gap: .6rem; }
+  form { gap: 1rem; margin-block: 1.5rem; }
+  input, button { font: inherit; padding: .7rem; border-radius: .35rem; }
+  button { justify-self: start; }
+  output { display: block; white-space: pre-line; line-height: 1.6; }
+</style>
+<main>
+  <h1>ControlQuest Supabase Preview</h1>
+  <p>Sign in with your usual ControlQuest account to check the progress and homework copied from Firebase.</p>
+  <form>
+    <label>Email <input id="email" type="email" autocomplete="username" required></label>
+    <label>Password <input id="password" type="password" autocomplete="current-password" required></label>
+    <button disabled>Check my data</button>
+  </form>
+  <output aria-live="polite">Loading sign-in…</output>
+</main>
+<script type="module">
+  import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.12.5/firebase-app.js';
+  import { initializeAuth, inMemoryPersistence, signInWithEmailAndPassword, signOut } from 'https://www.gstatic.com/firebasejs/10.12.5/firebase-auth.js';
+  import { firebaseConfig } from '../../config/firebase-config.js';
+  import { createSupabaseSnapshotReader } from './supabase-snapshot-reader.mjs';
+
+  const form = document.querySelector('form');
+  const email = document.querySelector('#email');
+  const password = document.querySelector('#password');
+  const button = document.querySelector('button');
+  const status = document.querySelector('output');
+  const auth = initializeAuth(initializeApp(firebaseConfig, 'controlquest-supabase-preview'), {
+    persistence: inMemoryPersistence,
+  });
+
+  form.addEventListener('submit', async event => {
+    event.preventDefault();
+    button.disabled = true;
+    status.textContent = 'Signing in…';
+    const enteredPassword = password.value;
+    password.value = '';
+    try {
+      const { user } = await signInWithEmailAndPassword(auth, email.value.trim(), enteredPassword);
+      const { claims } = await user.getIdTokenResult();
+      if (claims.role !== 'authenticated') throw new Error('This account is waiting for preview access.');
+      status.textContent = 'Checking your migrated records…';
+      const reader = createSupabaseSnapshotReader({
+        projectRef: 'ogviikrhwsnpumcfsvdf',
+        publishableKey: 'sb_publishable_rMpKwYbMtV-xwcyJSaTK-w__tn9zu5K',
+        auth,
+      });
+      const profile = await reader.loadProfile();
+      if (profile?.uid !== user.uid) throw new Error('Supabase did not return your matching profile.');
+      const library = await reader.loadStudyLibrary(profile.activeGroupId);
+      const completions = Object.keys(library.homeworkCompletions).length;
+      const quizzes = Object.keys(library.homeworkQuizzes).length;
+      const archived = library.homeworkQuizHistory.length;
+      status.textContent = [
+        'Verified your sign-in and migrated profile.',
+        `${Object.keys(library.progress).length} study progress records`,
+        `${completions + quizzes + archived} homework records (${completions} completions, ${quizzes} quizzes, ${archived} archived attempts)`,
+      ].join('\n');
+    } catch (error) {
+      status.textContent = error.code?.startsWith('auth/')
+        ? 'Firebase sign-in failed. Check your ControlQuest email and password, then retry.'
+        : error.message;
+    } finally {
+      try {
+        await signOut(auth);
+      } finally {
+        button.disabled = false;
+      }
+    }
+  });
+  status.textContent = '';
+  button.disabled = false;
+</script>
+</html>
