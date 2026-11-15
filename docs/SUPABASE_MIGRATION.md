@@ -8,6 +8,8 @@ The [preview read adapter](../scripts/migration/supabase-snapshot-reader.mjs) re
 
 For a signed-in preview, add Firebase project `controlquest-studio-18ba7` under [ControlQuest Supabase Third-Party Auth](https://supabase.com/dashboard/project/ogviikrhwsnpumcfsvdf/auth/third-party). Use Firebase Admin to add the `role: authenticated` custom claim to the pilot account while preserving its other claims. Refresh the account's ID token before running the read adapter. Use a verified project admin session for the role change. See the [Firebase Auth integration instructions](https://supabase.com/docs/guides/auth/third-party/firebase-auth).
 
+The hosted Firebase connection passed a live test on November 15, 2026. A temporary Firebase account with the authenticated role read all 740 contributions available to signed-in users and received zero profiles or Guilds. Both temporary test accounts were removed. Existing learner accounts still need their own pilot verification.
+
 Before cutover, finish the Supabase write adapter, verify sign-in and app behavior with a real account, and reconcile every change since the snapshot, including pending device work. Verify the legacy Guild's intended owner before giving anyone its owner-only controls. The existing export and policy tests can be rerun without sending any browser data to Supabase. The SQL files in `scripts/migration` load the hydrated staging table and verify account and Guild isolation.
 
 The original migration design below was prepared on November 4, 2026. Keep all browser data and pending answers through cutover. A quota-blocked Firestore read can hide existing records and must stop an export.
