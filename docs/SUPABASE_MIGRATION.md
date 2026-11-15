@@ -20,6 +20,12 @@ Writes go to a separate schema and require a Firebase claim assigned for write t
 
 The live app still saves to Firestore. Next, connect the app's real save actions and offline queue to a pilot backend, cover quiz resets and archives, profile and reward updates, and Guild saves, then test from a learner's device before reconciling the final Firebase changes.
 
+## Final snapshot refresh
+
+The November 15 cutover export started after the learners confirmed syncing and pausing. Firestore returned HTTP 429 `RESOURCE_EXHAUSTED` after 2,976 documents. A single subsequent read also failed. The partial export cannot be used to replace the verified snapshot.
+
+The administrator-only refresh procedure accepts a complete checksummed staging snapshot and the earliest valid capture time. It reconstructs profile chunks, refreshes preview documents and Guild memberships in one transaction, and reports insertions, updates, and deletions. A rollback test reproduced all 4,820 existing preview records and three Guild memberships from the original raw snapshot, with zero changed or deleted records. The same test rejected incomplete staging and a snapshot that preceded the requested window.
+
 The original migration design below was prepared on November 4, 2026. Keep all browser data and pending answers through cutover. A quota-blocked Firestore read can hide existing records and must stop an export.
 
 ## Recommended boundary
