@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import vm from 'node:vm';
 import { readFile } from 'node:fs/promises';
-import { defaultProgress,rateCard,progressKey,createReviewEvent,DEFAULT_REVIEW_SETTINGS } from '../js/flashcard-engine.js';
+import { defaultProgress,rateCard,progressKey,createReviewEvent,DEFAULT_REVIEW_SETTINGS,isLearningCard } from '../js/flashcard-engine.js';
+import { resumeLearningReview } from '../js/study-session.js';
 import { uniqueStudyCards,studyIdentity } from '../js/study-intelligence.js';
 import { createWorld,advanceWorld } from '../js/quest-world.js';
 import { randomId,sha256Hex } from '../js/runtime-crypto.js';
@@ -18,7 +19,7 @@ function fixture({profile,library,store}={}){
   const hooks={failProfileAt:0,failProgressAt:0,onProfile:null,onProgress:null,onGuild:null};
   const guildCalls=[],streakCalls=[],awardCalls=[];
   const context=vm.createContext({state,crypto:globalThis.crypto,TextEncoder,Date,Uint8Array,Object,Math,Number,String,Error,
-    defaultProgress,rateCard,progressKey,createReviewEvent,DEFAULT_REVIEW_SETTINGS,uniqueStudyCards,studyIdentity,createWorld,advanceWorld,appendActivityEvent,randomId,sha256Hex,
+    defaultProgress,rateCard,progressKey,createReviewEvent,DEFAULT_REVIEW_SETTINGS,isLearningCard,resumeLearningReview,uniqueStudyCards,studyIdentity,createWorld,advanceWorld,appendActivityEvent,randomId,sha256Hex,
     currentStudyCard:()=>state.library.cards[0],reviewGapForRating:()=>0,friendly:e=>e.message,renderApp(){},persistActiveStudySession(){state.profile.activeStudySession={...state.studySession};},saveProfileDebounced:async()=>{data.profile=structuredClone(state.profile);},window:{dispatchEvent(){}},CustomEvent:class{constructor(type,options){this.type=type;this.detail=options.detail;}},toast(){},
     saveProfile:async p=>{data.profileCalls++;await hooks.onProfile?.(p,data.profileCalls);if(data.profileCalls===hooks.failProfileAt)throw new Error('profile unavailable');data.profile=structuredClone(p);},
     updateMemberSummary:async()=>{},updateHomeworkSummary(){},isSupabaseReady:()=>false,

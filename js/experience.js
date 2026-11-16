@@ -1,17 +1,17 @@
-import {renderPracticeSetup,bindPracticeSetup} from './concept-practice.js';
+import {PRACTICE_SIZES,renderPracticeSetup,bindPracticeSetup} from './concept-practice.js';
 import {createReviewOutbox} from './review-outbox.js';
-import {shuffle,choiceOrder,clockLabel,inferInitialCount,renderSessionProgress} from './study-session.js';
+import {shuffle,choiceOrder,clockLabel,inferInitialCount,renderSessionProgress,nextLearningReview,resumeLearningReview} from './study-session.js';
 import { randomId } from './runtime-crypto.js';
 import { LESSONS, cardLesson } from './lesson-catalog.js';
-import { buildDomainAnalytics, buildDailyPlan, uniqueStudyCards, STUDY_PRESETS } from './study-intelligence.js';
-import { hasUnresolvedMiss, progressKey, previewReviewIntervals, isCardAvailable } from './flashcard-engine.js';
+import { buildDomainAnalytics, buildDailyPlan, uniqueStudyCards, dailyReviewBudget, STUDY_PRESETS } from './study-intelligence.js';
+import { hasUnresolvedMiss, progressKey, previewReviewIntervals, isCardAvailable, isLearningCard, rateCard, buildStudyQueue } from './flashcard-engine.js';
 import { buildHomeworkPlan } from './homework-plan.js';
 import { getLessonGuidance } from './lesson-guidance.js';
 import { BATCH_SOURCES, createBatchPlan, runBatchImport, createBatchCheckpoint, summarizeBatchPlan, readBatchFile } from './batch-importer.js';
 import { createWorld } from './quest-world.js';
 import {renderExpedition,bindExpedition} from './expedition-view.js';
 import { CISA_MICROLESSONS, LEARNING_SOURCES } from './cisa-learning.js';
-import { askLocalCoach, askBrowserCoach, prepareBrowserCoach } from './local-coach.js';
+import { askLocalCoach, askBrowserCoach, prepareBrowserCoach, reviewCoachDetails, reviewCoachRequest } from './local-coach.js';
 import { exportActivityJournal } from './activity-bridge.js';
 
 const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -22,11 +22,11 @@ function ensure(c){
   c.profile.v3 ||= {dailyGoal:20,studyMinutes:10,activity:[],lessonProgress:{}};
   if(rt.uid!==c.user.uid){
     rt.batchAbort?.abort();rt.coachAbort?.abort();window.speechSynthesis?.cancel();
-    Object.assign(rt,{uid:c.user.uid,domain:'',mode:'recommended',minutes:[3,5,10,20].includes(c.profile.v3.studyMinutes)?c.profile.v3.studyMinutes:10,queue:[],index:0,choice:null,revealed:false,ratingBusy:false,coach:'',coachBusy:false,coachAbort:null,lesson:null,lessonAnswer:null,lessonRevealed:false,lessonBusy:false,batch:null,batchBusy:false,batchAbort:null,batchProgress:'',groupId:c.profile.activeGroupId||null,worldMode:c.group?'coop':'solo',feedRun:null,lessonQuery:'',assignmentLessonId:'',interlude:false,repeated:{},skipGameTurns:false,worldBusy:false,worldFeedback:null,worldNeedsStudy:false,lastReward:null,pendingNext:false,worldOpen:false});
+    Object.assign(rt,{uid:c.user.uid,domain:'',mode:'recommended',minutes:[3,5,10,20].includes(c.profile.v3.studyMinutes)?c.profile.v3.studyMinutes:10,queue:[],index:0,choice:null,revealed:false,ratingBusy:false,coach:'',coachBusy:false,coachAbort:null,lesson:null,lessonAnswer:null,lessonRevealed:false,lessonBusy:false,batch:null,batchBusy:false,batchAbort:null,batchProgress:'',groupId:c.profile.activeGroupId||null,worldMode:c.group?'coop':'solo',feedRun:null,lessonQuery:'',assignmentLessonId:'',interlude:false,repeated:{},delayedReviews:{},skipGameTurns:false,worldBusy:false,worldFeedback:null,worldNeedsStudy:false,lastReward:null,pendingNext:false,worldOpen:false});
     let saved=c.profile.v3.pocketSession;try{saved=JSON.parse(localStorage.getItem(`cq-pocket-${c.user.uid}`)||'null')||saved;}catch{}
-    if(saved?.run&&saved.groupId===(c.profile.activeGroupId||null)){const cards=uniqueStudyCards(c.library.cards,c.library.progress,c.library.reviews,{uid:c.user.uid,decks:c.library.decks});const queue=saved.queue.map(key=>cards.find(card=>`${card.scopeKey}|${card.id}`===key));if(queue.every(Boolean))Object.assign(rt,{timingKey:saved.timingKey,elapsedMs:saved.elapsedMs||0,timingTotal:saved.timingTotal||0,timingCount:saved.timingCount||0,choiceOrder:saved.choiceOrder||[],queue,initialCount:saved.initialCount??inferInitialCount(queue),index:Math.min(saved.index||0,queue.length),choice:saved.choice||null,revealed:!!saved.revealed,feedRun:saved.run,domain:saved.domain||'',mode:saved.mode||'recommended',worldMode:c.group?'coop':'solo',interlude:!!saved.interlude,repeated:saved.repeated||{},skipGameTurns:!!saved.skipGameTurns,pendingNext:!!saved.pendingNext,assignmentLessonId:saved.assignmentLessonId||''});}
+    if(saved?.run&&saved.groupId===(c.profile.activeGroupId||null)){const cards=uniqueStudyCards(c.library.cards,c.library.progress,c.library.reviews,{uid:c.user.uid,decks:c.library.decks});const queue=saved.queue.map(key=>cards.find(card=>`${card.scopeKey}|${card.id}`===key));if(queue.every(Boolean))Object.assign(rt,{timingKey:saved.timingKey,elapsedMs:saved.elapsedMs||0,timingTotal:saved.timingTotal||0,timingCount:saved.timingCount||0,choiceOrder:saved.choiceOrder||[],queue,initialCount:saved.initialCount??inferInitialCount(queue),index:Math.min(saved.index||0,queue.length),choice:saved.choice||null,revealed:!!saved.revealed,feedRun:saved.run,domain:saved.domain||'',mode:saved.mode||'recommended',worldMode:c.group?'coop':'solo',interlude:!!saved.interlude,repeated:saved.repeated||{},delayedReviews:saved.delayedReviews||{},skipGameTurns:!!saved.skipGameTurns,pendingNext:!!saved.pendingNext,assignmentLessonId:saved.assignmentLessonId||''});}
   }
-  if(rt.groupId!==(c.profile.activeGroupId||null)){rt.coachAbort?.abort();rt.coach='';rt.coachBusy=false;rt.ratingBusy=false;rt.worldBusy=false;rt.groupId=c.profile.activeGroupId||null;rt.worldMode=c.group?'coop':'solo';rt.worldFeedback=null;rt.worldNeedsStudy=false;rt.queue=[];rt.index=0;rt.interlude=false;rt.feedRun=null;rt.lastReward=null;rt.pendingNext=false;rt.worldOpen=false;rt.assignmentLessonId='';}
+  if(rt.groupId!==(c.profile.activeGroupId||null)){rt.coachAbort?.abort();rt.coach='';rt.coachBusy=false;rt.ratingBusy=false;rt.worldBusy=false;rt.groupId=c.profile.activeGroupId||null;rt.worldMode=c.group?'coop':'solo';rt.worldFeedback=null;rt.worldNeedsStudy=false;rt.queue=[];rt.index=0;rt.interlude=false;rt.feedRun=null;rt.lastReward=null;rt.pendingNext=false;rt.worldOpen=false;rt.assignmentLessonId='';rt.delayedReviews={};}
   rt.worldMode=c.group?'coop':'solo';
 }
 function worldNow(c){return createWorld(c.getWorld?.()||(c.group?c.group.questWorld:c.profile.v3.world));}
@@ -39,24 +39,24 @@ function renderStudyExperience(c,selected=studyExperience(c)){
  const question=selected==='guild'?`<section class="cq-expedition-guild" data-cq-guild-live>${c.renderGuildStudy()}</section>`:renderFocusContent(c);
  return `${tabs}<section class="expedition-shell ${rt.worldOpen?'cq-world-open':''}"><div class="cq-expedition-question">${question}<button class="secondary-button cq-phone-world-toggle" data-cq-toggle-world aria-expanded="${rt.worldOpen}">${rt.worldOpen?'Return to question':'Explore the world'} →</button></div><div class="cq-expedition-world">${expedition(c)}<button class="primary-button cq-phone-world-toggle" data-cq-toggle-world aria-expanded="${rt.worldOpen}">Return to question →</button></div></section>`;
 }
-function resumeQuestions(c){if(rt.queue.length>rt.index){rt.interlude=false;rt.worldOpen=false;persistPocket(c);c.navigate(studyExperience(c)==='focus'?'feed':'adventure');}else startFeed(c,'recommended','');}
+function resumeQuestions(c){if(rt.queue.length>rt.index||nextLearningReview(rt.delayedReviews)){rt.interlude=false;rt.worldOpen=false;persistPocket(c);c.navigate(studyExperience(c)==='focus'?'feed':'adventure');}else startFeed(c,'recommended','');}
 
 function rewardStrip(){if(!rt.lastReward)return '';return `<section class="cq-reward-burst" role="status" aria-live="polite"><strong>Study saved · island advanced</strong><p>${esc(rt.lastReward.message)}</p><div>${rt.lastReward.items.map(item=>`<span>${esc(item)}</span>`).join('')}</div></section>`;}
 function recordReward(before,after){const items=[];for(const [key,name]of Object.entries({wood:'timber',crystal:'starlight',coins:'quest coins',seeds:'seeds',crops:'glowfruit'})){const delta=(after.resources?.[key]||0)-(before.resources?.[key]||0);if(delta)items.push(`${delta>0?'+':''}${delta} ${name}`);}if(after.project?.progress>0)items.push(`${{beacon:'Beacon',greenhouse:'Greenhouse',telescope:'Observatory'}[after.project.building]||'Building'} · ${after.project.progress}/${after.project.target} construction`);const expedition=(after.expedition?.steps||0)-(before.expedition?.steps||0);if(expedition>0)items.push(`+${expedition} expedition step`);const focus=after.energy-before.energy;if(focus)items.push(`${focus>0?'+':''}${focus} focus`);const built=Object.values(after.buildings||{}).reduce((n,v)=>n+v,0)-Object.values(before.buildings||{}).reduce((n,v)=>n+v,0);if(built>0)items.push(`Building completed · +${built} level`);rt.lastReward={items,message:after.lastFeedback?.message||'Your crew has advanced its work. Every answer grows crops and moves the expedition forward.'};}
 function analytics(c){return buildDomainAnalytics(c.library.cards,c.library.progress,c.library.reviews,{uid:c.user.uid,decks:c.library.decks,timezone:c.profile.timezone});}
-function daily(c){return buildDailyPlan(c.library.cards,c.library.progress,c.library.reviews,{uid:c.user.uid,decks:c.library.decks,minutes:rt.minutes,dailyGoal:c.profile.v3.dailyGoal||20,timezone:c.profile.timezone});}
+function daily(c,domainId=''){return buildDailyPlan(c.library.cards,c.library.progress,c.library.reviews,{uid:c.user.uid,decks:c.library.decks,minutes:rt.minutes,dailyGoal:c.profile.v3.dailyGoal||20,timezone:c.profile.timezone,reviewSettings:c.profile.preferences?.studySettings||{},domainId});}
 function header(kicker,title,copy,actions=''){return `<header class="cq-page-head"><div><p class="eyebrow">${kicker}</p><h1>${title}</h1><p>${copy}</p></div>${actions}</header>`;}
 function navButton(view,label,cls='secondary-button'){return `<button class="${cls}" data-cq-nav="${view}">${label}</button>`;}
 function domainOptions(selected=''){return `<option value="">All five domains</option>`+['d1','d2','d3','d4','d5'].map(id=>{const l=LESSONS.find(x=>x.domainId===id);return `<option value="${id}" ${selected===id?'selected':''}>${esc(l.domain)} · ${esc(l.domainName)}</option>`;}).join('');}
 export function renderExperience(view,c){
-  stopClock();ensure(c);const content=({command:renderHome,feed:renderFeed,mastery:renderMastery,adventure:renderAdventure,learn:renderLearn,import:renderBatch}[view]||renderHome)(c);
+  stopClock();stopLearningWait();ensure(c);const content=({command:renderHome,feed:renderFeed,mastery:renderMastery,adventure:renderAdventure,learn:renderLearn,import:renderBatch}[view]||renderHome)(c);
   return `<div class="cq-experience cq-${view}">${content}</div>`;
 }
 function guidedSteps(active=1){return `<ol class="cq-guide-path" aria-label="Your study path">${[['Recall','Answer one question from your personal study plan.'],['Understand','Read why the answer works. Rate your recall honestly.'],['Grow','Use earned focus to build your colony, then keep going.']].map(([title,copy],i)=>`<li class="cq-guide-step ${active===i+1?'is-current':''}"><span class="cq-guide-number" aria-hidden="true">${i+1}</span><div><strong>${title}</strong><p>${copy}</p></div></li>`).join('')}</ol>`;}
 function renderHome(c){
   const a=analytics(c),p=daily(c),today=p.completedToday||0,goal=c.profile.v3.dailyGoal||20;
   const next=p.cards?.[0],nextLesson=next?cardLesson(next):null;
-  const hasCards=p.availableQuestions>0,resuming=rt.queue.length>rt.index,paused=resuming&&rt.interlude;
+  const hasCards=p.availableQuestions>0,resuming=rt.queue.length>rt.index||!!nextLearningReview(rt.delayedReviews),paused=resuming&&rt.interlude;
   const nextTitle=!hasCards?'First, add your questions.':resuming?'Pick up where you left off.':p.goalComplete?'Your daily study is complete.':nextLesson?`Next: ${esc(nextLesson.title)}`:'Your next study expedition.';
   const nextCopy=!hasCards?'Upload your Word question files together. We will help match each file to its lesson before you save.':resuming?`${rt.index} of ${rt.queue.length} questions saved in this round. ${paused?'Your colony turn is waiting.':'Your next question is waiting.'}`:p.goalComplete?'You can rest here. Your progress is saved, and your colony will be here when you return.':`${p.questionCount} questions from your lesson bank: ${p.steps.map(step=>`${step.count} ${step.id==='repair'?'missed':step.id==='recall'?'due':step.id==='discover'?'new':'practice'}`).join(', ')}. Your answers supply the crew and advance construction automatically.`;
   const primary=!hasCards?navButton('import','Add my question files →','primary-button cq-start'):resuming?navButton('feed',paused?'Continue my colony turn →':'Resume my study →','primary-button cq-start'):`<button class="primary-button cq-start" data-cq-start="recommended" data-cq-reset-domain>▶ ${p.goalComplete?'Study an optional round':'Start my '+rt.minutes+'-minute study'} <span>${p.questionCount} questions</span></button>`;
@@ -72,11 +72,22 @@ function renderMastery(c){const a=analytics(c);return `${header('KNOW WHERE YOU 
 function startFeed(c,mode='recommended',domain=rt.domain){
   if(rt.worldMode==='coop'&&!c.group)rt.worldMode='solo';
   const cards=uniqueStudyCards(c.library.cards,c.library.progress,c.library.reviews,{uid:c.user.uid,decks:c.library.decks}).filter(card=>!card.answerConflict&&isCardAvailable(card.effectiveProgress)&&(!domain||card.domainId===domain));
-  let chosen=mode==='recommended'&&!domain?daily(c).cards:cards;
+  const limit=Math.max(5,Math.min(40,Math.round(rt.minutes*1.5)));
+  const budget=dailyReviewBudget(c.library.reviews,c.profile.preferences?.studySettings,{uid:c.user.uid,timezone:c.profile.timezone});
+  const progress=Object.fromEntries(cards.map(card=>[progressKey(card),card.effectiveProgress]));
+  let chosen=mode==='recommended'?daily(c,domain).cards:cards;
   if(mode==='missed')chosen=cards.filter(card=>hasUnresolvedMiss(card,card.effectiveProgress||c.library.progress[progressKey(card)]));
-  if(mode==='due')chosen=cards.filter(card=>card.effectiveProgress&&new Date(card.effectiveProgress.dueAt)<=new Date());
-  if(mode==='new')chosen=cards.filter(card=>!(card.effectiveProgress?.repetitions>0));
-  rt.assignmentLessonId='';rt.queue=shuffle(chosen).slice(0,Math.max(5,Math.min(40,Math.round(rt.minutes*1.5))));rt.initialCount=rt.queue.length;rt.index=0;rt.choice=null;rt.revealed=false;rt.domain=domain;rt.mode=mode;rt.coach='';rt.feedRun=randomId();rt.timingTotal=0;rt.timingCount=0;rt.interlude=false;rt.skipGameTurns=false;rt.repeated={};rt.lastReward=null;rt.pendingNext=false;persistPocket(c);c.navigate(studyExperience(c)==='focus'?'feed':'adventure');
+  if(mode==='due'){
+    const reviewed=cards.filter(card=>card.effectiveProgress?.repetitions>0);
+    chosen=buildStudyQueue(reviewed,progress,{mode:'due',limit}).filter(card=>{
+      if(isLearningCard(card.effectiveProgress))return true;
+      if(!budget.reviews)return false;
+      budget.reviews--;
+      return true;
+    });
+  }
+  if(mode==='new')chosen=cards.filter(card=>!(card.effectiveProgress?.repetitions>0)).slice(0,budget.newCards);
+  rt.assignmentLessonId='';rt.queue=(['due','recommended'].includes(mode)?chosen:shuffle(chosen)).slice(0,limit);rt.initialCount=rt.queue.length;rt.index=0;rt.choice=null;rt.revealed=false;rt.domain=domain;rt.mode=mode;rt.coach='';rt.feedRun=randomId();rt.timingTotal=0;rt.timingCount=0;rt.interlude=false;rt.skipGameTurns=false;rt.repeated={};rt.delayedReviews={};rt.lastReward=null;rt.pendingNext=false;persistPocket(c);c.navigate(studyExperience(c)==='focus'?'feed':'adventure');
 }
 export function startQuizPractice(c,weekId,practice){
  ensure(c);
@@ -85,7 +96,7 @@ export function startQuizPractice(c,weekId,practice){
  const chosen=pending.map(item=>cards.find(card=>(card.studyIdentity&&card.studyIdentity===item.identity)||(card.id===item.cardId&&card.scopeKey===item.scopeKey))).filter(card=>card&&!card.answerConflict&&isCardAvailable(card.effectiveProgress));
  const unique=[...new Map(chosen.map(card=>[card.studyIdentity||`${card.scopeKey}|${card.id}`,card])).values()];
  if(!unique.length){c.toast('No available missed quiz questions remain. Check Progress for suspended cards.');return;}
- Object.assign(rt,{assignmentLessonId:'',queue:shuffle(unique),initialCount:unique.length,index:0,choice:null,revealed:false,domain:'',mode:'quiz-repair',coach:'',feedRun:randomId(),timingTotal:0,timingCount:0,interlude:false,skipGameTurns:false,repeated:{},lastReward:null,pendingNext:false});
+ Object.assign(rt,{assignmentLessonId:'',queue:shuffle(unique),initialCount:unique.length,index:0,choice:null,revealed:false,domain:'',mode:'quiz-repair',coach:'',feedRun:randomId(),timingTotal:0,timingCount:0,interlude:false,skipGameTurns:false,repeated:{},delayedReviews:{},lastReward:null,pendingNext:false});
  persistPocket(c);c.navigate(studyExperience(c)==='focus'?'feed':'adventure');
 }
 
@@ -144,6 +155,17 @@ function lessonAssignment(c){
  assignment.readyCount=assignment.cards.filter(card=>card.homeworkReadiness.ready).length;
  return assignment;
 }
+const reviewQueueKey=card=>`${card.scopeKey}|${card.id}`;
+let stopLearningWait=()=>{};
+function insertReadyLearning(c){
+ if(resumeLearningReview(rt.queue,rt.index,rt.delayedReviews||{},reviewQueueKey))persistPocket(c);
+}
+function renderLearningWait(){
+ const next=nextLearningReview(rt.delayedReviews);
+ if(!next)return '';
+ const eta=new Date(next.dueAt);
+ return `<section class="cq-mission-card cq-feed-empty" id="cqLearningWait"><h2>Next recall at <time datetime="${esc(next.dueAt)}">${esc(eta.toLocaleTimeString([], {hour:'numeric',minute:'2-digit',second:'2-digit'}))}</time></h2><p>Your learning card returns here when it is due. You can leave and resume this round later.</p><button class="secondary-button" id="cqCheckLearning">Check for due cards</button></section>`;
+}
 function feedCard(c){const card=rt.queue[rt.index];if(!card)return card;const current=uniqueStudyCards(c.library.cards,c.library.progress,c.library.reviews,{uid:c.user.uid,decks:c.library.decks}).find(x=>x.studyIdentity===card.studyIdentity);return current||card;}
 export function startLessonReview(c,lessonId){
  ensure(c);const lesson=LESSONS.find(x=>x.id===lessonId);if(!lesson)return c.toast('Choose a valid lesson.','error');
@@ -154,11 +176,11 @@ export function startLessonReview(c,lessonId){
  const cards=(assignment?.cards||[]).filter(card=>!card.answerConflict&&isCardAvailable(card.effectiveProgress));
  const pending=cards.filter(card=>!card.homeworkReadiness?.ready);
  const chosen=shuffle(assignment?.completedAt?cards:pending);
- Object.assign(rt,{queue:chosen,initialCount:assignment?.completedAt?0:chosen.length,index:0,timingTotal:0,timingCount:0,choice:null,revealed:false,domain:lesson.domainId,mode:'assignment',assignmentLessonId:lessonId,coach:'',feedRun:randomId(),interlude:false,skipGameTurns:true,repeated:{},lastReward:null,pendingNext:false});
+ Object.assign(rt,{queue:chosen,initialCount:assignment?.completedAt?0:chosen.length,index:0,timingTotal:0,timingCount:0,choice:null,revealed:false,domain:lesson.domainId,mode:'assignment',assignmentLessonId:lessonId,coach:'',feedRun:randomId(),interlude:false,skipGameTurns:true,repeated:{},delayedReviews:{},lastReward:null,pendingNext:false});
  persistPocket(c);c.navigate('feed');$('#cqStudyCard')?.focus?.({preventScroll:true});
 }
 export function invalidateReviewSession(c){
- if(rt.uid===c.user.uid){rt.coachAbort?.abort();Object.assign(rt,{queue:[],index:0,choice:null,revealed:false,pendingNext:false,feedRun:null,assignmentLessonId:'',interlude:false,lastReward:null,coach:'',coachBusy:false,coachAbort:null});}
+ if(rt.uid===c.user.uid){rt.coachAbort?.abort();Object.assign(rt,{queue:[],index:0,choice:null,revealed:false,pendingNext:false,feedRun:null,assignmentLessonId:'',interlude:false,delayedReviews:{},lastReward:null,coach:'',coachBusy:false,coachAbort:null});}
  if(c.profile.v3)delete c.profile.v3.pocketSession;
  try{localStorage.removeItem(`cq-pocket-${c.user.uid}`);}catch{}
 }
@@ -166,24 +188,69 @@ export function startFreeReview(c,mode='recommended',domain=''){ensure(c);c.prof
 function renderGuidance(lessonId){const guidance=getLessonGuidance(lessonId);return guidance?`<details class="cq-explain"><summary>Understand the concept · trusted references</summary><p>${esc(guidance.prompt||'Use these references to connect the answer to the underlying principle.')}</p>${(guidance.sources||[]).map(source=>`<p><a href="${esc(source.url)}" target="_blank" rel="noopener noreferrer">${esc(source.title)}</a> · ${esc(source.publisher)}${source.access&&source.access!=='Free reading'?' · '+esc(source.access):''}</p>`).join('')}</details>`:'';}
 
 function renderFeed(c){return (rt.assignmentLessonId&&!rt.queue[rt.index]?'':syncNotice(c))+renderStudyExperience(c);}
-function mobileStudyActions(card){
+
+function answerCoachKey(){
+ return JSON.stringify([rt.uid,rt.groupId,rt.feedRun,rt.index,rt.choice]);
+}
+
+function renderAnswerFeedback(card,lessonId){
+ const lesson=CISA_MICROLESSONS.find(item=>item.id===lessonId);
+ const feedback=reviewCoachDetails({card,selectedAnswer:rt.choice,lesson});
+ if(!feedback.missed)return '';
+ const reason=feedback.bestReason||feedback.principle||feedback.bestChoice;
+ return `<section class="cq-answer-coach" aria-label="Answer coach">
+   <h3>Why this answer missed</h3>
+   <dl>
+    <div><dt>Your choice</dt><dd>${esc(feedback.selectedChoice)}${feedback.selectedReason?`<p>${esc(feedback.selectedReason)}</p>`:''}</dd></div>
+    <div><dt>Best answer</dt><dd>${esc(feedback.bestChoice)}${reason&&reason!==feedback.bestChoice?`<p>${esc(reason)}</p>`:''}</dd></div>
+   </dl>
+   ${feedback.recallPrompt?`<p class="cq-coach-recall"><strong>Try to recall</strong> ${esc(feedback.recallPrompt)}</p>`:''}
+ </section>`;
+}
+
+function renderAnswerCoach(c){
+ const active=rt.coachKey===answerCoachKey();
+ let endpoint='';
+ try{endpoint=localStorage.getItem(`cqPracticeEndpoint:${c.user.uid}`)||'';}catch{}
+ const busy=rt.practiceOperation?.uid===c.user.uid&&rt.practiceOperation.groupId===rt.groupId;
+ return `<section aria-label="Explanation and practice tools">
+   <div class="cq-answer-tools">
+    <button id="cqListenAnswer" type="button">Hear explanation</button>
+    ${c.profile.v3.coachEnabled?`<label>Coach focus
+      <select id="cqCoachFocus"><option value="compare">Compare choices</option><option value="clue">Find the key clue</option><option value="example">Show an example</option></select>
+     </label><button id="cqCoach" type="button" ${active&&rt.coachBusy?'disabled':''}>${active&&rt.coachBusy?'Thinking on this device…':'Ask AI coach'}</button>`:
+     '<button id="cqCoach" type="button">Set up AI coach</button>'}
+   </div>
+   <p class="cq-coach-answer" id="cqCoachAnswer" role="status" ${active&&rt.coach?'':'hidden'}>${active?esc(rt.coach):''}</p>
+   <div class="cq-coach-practice">
+    <label>Extra questions <select id="cqPracticeCount">${PRACTICE_SIZES.map(count=>`<option value="${count}" ${count===(rt.practiceCount||3)?'selected':''}>${count}</option>`).join('')}</select></label>
+    ${rt.assignmentLessonId?'':'<label class="cq-coach-add-now"><input id="cqPracticeAddNow" type="checkbox"> Add to this round</label>'}
+    <button id="cqGeneratePractice" type="button" ${busy?'disabled':''}>Save checkpoint practice</button>
+    ${endpoint?`<button id="cqGenerateAIPractice" type="button" ${busy?'disabled':''}>Generate AI practice</button>`:''}
+    <p class="cq-fine" id="cqPracticeStatus" role="status">${busy?'Preparing practice…':'Practice stays in your personal library.'}</p>
+   </div>
+ </section>`;
+}
+function mobileStudyActions(card,intervals){
  const wrong=Object.keys(card.choices||{}).length>=2&&rt.choice!==card.correctAnswer;
- const action=rt.pendingNext?'<button class="primary-button" data-cq-mobile-next>Next question →</button>':rt.revealed?`<div class="cq-mobile-ratings">${['Again','Hard','Good','Easy'].map(r=>`<button data-cq-mobile-rate="${r}" ${rt.ratingBusy||wrong&&r!=='Again'?'disabled':''}>${r}</button>`).join('')}</div>`:`<button class="primary-button" data-cq-mobile-reveal ${Object.keys(card.choices||{}).length>=2&&!rt.choice?'disabled':''}>Check answer</button>`;
+ const action=rt.pendingNext?'<button class="primary-button" data-cq-mobile-next>Next question →</button>':rt.revealed?`<div class="cq-mobile-ratings">${['Again','Hard','Good','Easy'].map(r=>`<button data-cq-mobile-rate="${r}" ${rt.ratingBusy||wrong&&r!=='Again'?'disabled':''}>${r}${!rt.assignmentLessonId&&(!wrong||r==='Again')?`<small style="display:block">${esc(intervals.find(item=>item.rating===r)?.label||'')}</small>`:''}</button>`).join('')}</div>`:`<button class="primary-button" data-cq-mobile-reveal ${Object.keys(card.choices||{}).length>=2&&!rt.choice?'disabled':''}>Check answer</button>`;
  return `<nav class="cq-mobile-study-actions" aria-label="Question actions">${action}</nav>`;
 }
 function renderFocusContent(c){
   const restored=pendingReviews(c).find(e=>e.id===`${rt.feedRun}:${rt.index}`);if(restored){rt.choice=restored.input.selectedAnswer;rt.revealed=true;rt.pendingNext=true;}
   if(rt.interlude)return `<div class="cq-feed-interlude">${rewardStrip()}<h2>Your previous review is saved.</h2><button class="primary-button" id="cqNextQuestion">Continue to the next question →</button></div>`;
+  if(!rt.queue[rt.index])insertReadyLearning(c);
   const card=feedCard(c);if(card)prepareTiming(card);const done=rt.queue.length&&rt.index>=rt.queue.length;
   const assignmentLesson=LESSONS.find(x=>x.id===rt.assignmentLessonId);
   if(!card&&assignmentLesson){const assignment=lessonAssignment(c);return `${header('LESSON RECALL',esc(assignmentLesson.title),'Your answers are saved. Clear the lesson with Good or Easy; Again and Hard return without a timer.')}<section class="cq-mission-card cq-feed-empty"><h2>${!assignment?.total?'Add this lesson’s QAE questions.':assignment.readyCount===assignment.total?'This lesson meets the daily recall target.':done?'This recall pass is complete.':'Your lesson progress is saved.'}</h2><p>Return to Today to check off this lesson. Later retention reviews stay separate from this completion. Suspended or buried cards must be reactivated in Progress before they can be cleared.</p>${syncNotice(c)}<div class="button-row">${assignment?.canComplete||pendingReviews(c).length&&assignment?.total&&assignment.readyCount===assignment.total?`<button id="cqCompleteLesson" class="primary-button" ${pendingReviews(c).length&&!c.pendingHomework?'disabled':''}>${pendingReviews(c).length?(c.pendingHomework?'Save lesson on this device · sync later':'Syncing answers before lesson credit…'):'Complete lesson & save credit ✓'}</button>`:navButton('command','Check my assignment →','primary-button')}<button class="secondary-button" id="cqContinueLesson">Continue this lesson</button><button class="secondary-button" id="cqFreeStudy">Free study across my library</button></div></section>${studyMethods(c)}`;}
   const options=`<details class="cq-explain cq-study-settings"><summary>Customize this round · domain and question type</summary><div class="cq-feed-filters"><label><span>Domain</span><select id="cqFeedDomain">${domainOptions(rt.domain)}</select></label><label><span>Focus</span><select id="cqFeedMode">${[['recommended','Recommended'],['missed','Missed questions'],['due','Due reviews'],['new','Unseen cards'],['all','All questions']].map(([id,label])=>`<option value="${id}" ${id===rt.mode?'selected':''}>${label}</option>`).join('')}</select></label><button class="secondary-button" id="cqRefreshFeed">Start custom round</button></div><p class="cq-fine">Starting a custom round replaces the current queue. Saved reviews stay in your progress.</p></details>`;
-  if(!card){const plan=daily(c),hasCards=plan.availableQuestions>0,emptySelection=!!rt.feedRun&&rt.queue.length===0;return `${header('STUDY','Your flashcards, ready when you are.','Start with the recommended plan. We choose the questions; you focus on understanding one at a time.')}<section class="cq-mission-card cq-feed-empty"><span class="cq-tag">${done?'ROUND COMPLETE':emptySelection?'NO QUESTIONS IN THIS SELECTION':'RECOMMENDED FOR YOU'}</span><h2>${done?'Your progress is saved. Take a breath.':!hasCards?'Add your questions to begin.':emptySelection?'No questions match this selection.':'Ready for a recall session?'}</h2><p>${done?`${rt.queue.length} questions practiced. Return to your assignments, review due cards, or choose another deck.`:!hasCards?'Your library is empty. Batch import your QAE files or try an original concept lesson.':emptySelection?'Your selected domain or question type has no eligible questions right now. Try the recommended plan across all domains, or adjust the filters below.':`${plan.questionCount} questions · about ${rt.minutes} minutes. Missed concepts first, due recalls next, then new material.`}</p><div class="button-row">${hasCards?`<button class="primary-button" data-cq-start="recommended" data-cq-reset-domain>${done?'Start an optional round':'Start my recommended study'}</button>`:navButton('import','Add my question files →','primary-button')}${navButton(done?'command':'learn',done?'Check my assignments':'Try a concept lesson')}</div></section>${studyMethods(c)}${options}`;}
+  if(!card&&nextLearningReview(rt.delayedReviews))return renderLearningWait()+options;
+  if(!card){const plan=daily(c),hasCards=plan.availableQuestions>0,emptySelection=!!rt.feedRun&&rt.queue.length===0;return `${header('STUDY','Your flashcards, ready when you are.','Start with the recommended plan. We choose the questions; you focus on understanding one at a time.')}<section class="cq-mission-card cq-feed-empty"><span class="cq-tag">${done?'ROUND COMPLETE':emptySelection?'NO QUESTIONS IN THIS SELECTION':'RECOMMENDED FOR YOU'}</span><h2>${done?'Your progress is saved. Take a breath.':!hasCards?'Add your questions to begin.':emptySelection?'No questions match this selection.':'Ready for a recall session?'}</h2><p>${done?`${rt.queue.length} questions practiced. Return to your assignments, review due cards, or choose another deck.`:!hasCards?'Your library is empty. Batch import your QAE files or try an original concept lesson.':emptySelection?'Your selected domain or question type has no eligible questions right now. Try the recommended plan across all domains, or adjust the filters below.':`${plan.questionCount} questions · about ${rt.minutes} minutes. Ready learning cards first, then missed and due reviews and new material.`}</p><div class="button-row">${hasCards?`<button class="primary-button" data-cq-start="recommended" data-cq-reset-domain>${done?'Start an optional round':'Start my recommended study'}</button>`:navButton('import','Add my question files →','primary-button')}${navButton(done?'command':'learn',done?'Check my assignments':'Try a concept lesson')}</div></section>${studyMethods(c)}${options}`;}
   const isMc=Object.keys(card.choices||{}).length>=2,correct=rt.choice===card.correctAnswer;
-  const intervals=previewReviewIntervals(card,card.effectiveProgress||c.library.progress[progressKey(card)],c.profile.preferences?.studySettings);
+  const intervals=rt.revealed?previewReviewIntervals(card,card.effectiveProgress||c.library.progress[progressKey(card)],c.profile.preferences?.studySettings):[];
   const sourceLesson=cardLesson(card);const override=c.library.decks.find(d=>d.categoryOverride&&card.aliases?.some(a=>a.scopeKey===d.scopeKey&&a.deckIds.includes(d.id)));const lesson=override?LESSONS.find(l=>l.id===override.lessonId):sourceLesson?.domainId===card.domainId?sourceLesson:null;const logicalDomain=LESSONS.find(l=>l.domainId===card.domainId);const world=createWorld(c.profile.v3.world);
   return `<div class="cq-feed-layout"><div>${header(assignmentLesson?'YOUR ASSIGNMENT · UNTIMED':'FLASHCARDS · UNTIMED',assignmentLesson?esc(assignmentLesson.title):'One question. One useful step.','Recall first. Read the explanation. Rate honestly to schedule your next review.')}${options}<article class="cq-study-card" id="cqStudyCard" tabindex="0" aria-label="Study question; Space to reveal, keys 1 through 4 to rate, Enter to continue"><p class="cq-fine">Your recall history is personal · Space to reveal · 1–4 to rate</p><div class="cq-card-meta"><span>${esc(logicalDomain?.domain||lesson?.domain||'Mixed / needs categorizing')} · ${esc(lesson?.title||'Your library')}</span><span>${rt.index+1} / ${rt.queue.length}</span></div>${renderSessionProgress({total:rt.queue.length,initialCount:rt.initialCount,index:rt.index,answered:rt.pendingNext})}<p class="cq-fine cq-session-timing"><span id="cqQuestionClock">${clockLabel(rt.elapsedMs)}</span> this question · Average <span id="cqAverageClock">${clockLabel(rt.timingCount?rt.timingTotal/rt.timingCount:0)}</span> · No time limit</p>${assignmentLesson?`<p class="cq-lesson-remaining" role="status">${Math.max(0,(lessonAssignment(c)?.total||0)-(lessonAssignment(c)?.readyCount||0))} questions left to clear in this lesson</p>`:""}${card.aiGenerated?'<p class="cq-ai-label">AI-generated concept practice · Unverified; check uncertain explanations against your course material.</p>':''}<h2>${esc(card.question)}</h2>${isMc?`<div class="cq-answer-list">${rt.choiceOrder.map((letter,position)=>{const text=card.choices[letter];return `<button class="${rt.choice===letter?'chosen':''} ${rt.revealed&&letter===card.correctAnswer?'correct':''} ${rt.revealed&&rt.choice===letter&&!correct?'incorrect':''}" data-cq-choice="${letter}" ${rt.revealed?'disabled':''}><b>${String.fromCharCode(65+position)}</b><span>${esc(text)}</span>${rt.revealed&&letter===card.correctAnswer?'<i>✓</i>':''}</button>`;}).join('')}</div>`:''}
-  ${rt.revealed?`<details class="cq-answer-explanation" ${window.matchMedia?.('(max-width: 760px)').matches?'':'open'}><summary>${esc(card.choices?.[card.correctAnswer]||"Answer")} · Explanation</summary><div class="cq-recall-result ${correct||!isMc?'good':'repair'}" aria-live="polite"><strong>${!isMc?'Here is the recall target':correct?'You’ve got it.':'A useful miss. Let’s repair it.'}</strong><p>${esc(card.choices?.[card.correctAnswer]||card.justifications?._||'')}</p>${Object.entries(card.justifications||{}).map(([letter,text])=>`<p><b>${rt.choiceOrder.includes(letter)?String.fromCharCode(65+rt.choiceOrder.indexOf(letter)):esc(letter)}${card.choices?.[letter]?'. '+esc(card.choices[letter]):''}</b> ${esc(text)}</p>`).join('')}</div></details><div class="cq-rating-label">How well did you recall it?</div><p class="cq-fine">Again = missed or guessed. Hard = recalled with effort. Good = recalled confidently. Easy = immediate, effortless recall.</p><div class="cq-rating-row">${[['Again','↻','Soon'],['Hard','◒','A short step'],['Good','✓','On schedule'],['Easy','✦','A longer step']].map(([rating,icon,label])=>`<button data-cq-rate="${rating}" ${rt.ratingBusy||rt.pendingNext||(isMc&&!correct&&rating!=='Again')?'disabled':''}><span>${icon}</span><b>${rating}</b><small>${assignmentLesson?({Again:'Return this lesson',Hard:'Practice again',Good:'Clear this question',Easy:'Clear this question'}[rating]):esc(intervals.find(item=>item.rating===rating)?.label||label)}</small></button>`).join('')}</div>${isMc&&!correct?'<p class="cq-fine">An incorrect choice is scheduled as Again, regardless of confidence.</p>':''}${renderGuidance(lesson?.id)}<div class="cq-answer-tools"><button id="cqListenAnswer">♫ Hear the explanation</button><button id="cqGeneratePractice" ${rt.practiceBusy?'disabled':''}>${rt.practiceBusy?'Preparing new scenarios…':'Add 10–15 new concept scenarios'}</button><button id="cqCoach">${rt.coachBusy?'Thinking locally…':'Ask my local coach'}</button></div>${rt.coach?`<p class="cq-coach-answer">${esc(rt.coach)}</p>`:''}`:`<button class="primary-button cq-reveal" id="cqReveal" ${isMc&&!rt.choice?'disabled':''}>Reveal and learn</button>`}${rt.pendingNext?`<div class="cq-feedback-ack cq-feed-interlude"><p role="status">${pendingReviews(c).length?'Answer saved on this device. Syncing in the background.':'Review synced. Your lesson checklist is updated.'}</p>${studyExperience(c)!=='focus'&&!pendingReviews(c).length?rewardStrip():''}<button class="primary-button" id="cqNextQuestion">${rt.assignmentLessonId?'I understand · continue lesson →':rt.index+1<rt.queue.length?'I understand · next question →':'Finish this round →'}</button><p class="cq-fine">Read the explanation above before continuing. You can continue immediately.</p></div>`:''}${mobileStudyActions(card)}</article><p class="cq-feed-hint">Swipe right on the question to reveal. Swipe left after reading to save Good, or Again for a wrong choice. Rating buttons give you full control.</p></div></div>`;
+  ${rt.revealed?`${renderAnswerFeedback(card,lesson?.id)}<details class="cq-answer-explanation" ${window.matchMedia?.('(max-width: 760px)').matches?'':'open'}><summary>${esc(card.choices?.[card.correctAnswer]||"Answer")} · Explanation</summary><div class="cq-recall-result ${correct||!isMc?'good':'repair'}" aria-live="polite"><strong>${!isMc?'Here is the recall target':correct?'You’ve got it.':'A useful miss. Let’s repair it.'}</strong><p>${esc(card.choices?.[card.correctAnswer]||card.justifications?._||'')}</p>${Object.entries(card.justifications||{}).map(([letter,text])=>`<p><b>${rt.choiceOrder.includes(letter)?String.fromCharCode(65+rt.choiceOrder.indexOf(letter)):esc(letter)}${card.choices?.[letter]?'. '+esc(card.choices[letter]):''}</b> ${esc(text)}</p>`).join('')}</div></details><div class="cq-rating-label">How well did you recall it?</div><p class="cq-fine">Again = missed or guessed. Hard = recalled with effort. Good = recalled with some effort. Easy = immediate, effortless recall.</p><div class="cq-rating-row">${[['Again','↻','Soon'],['Hard','◒','A short step'],['Good','✓','On schedule'],['Easy','✦','A longer step']].map(([rating,icon,label])=>`<button data-cq-rate="${rating}" ${rt.ratingBusy||rt.pendingNext||(isMc&&!correct&&rating!=='Again')?'disabled':''}><span>${icon}</span><b>${rating}</b><small>${assignmentLesson?({Again:'Return this lesson',Hard:'Practice again',Good:'Clear this question',Easy:'Clear this question'}[rating]):esc(intervals.find(item=>item.rating===rating)?.label||label)}</small></button>`).join('')}</div>${isMc&&!correct?'<p class="cq-fine">An incorrect choice is scheduled as Again, regardless of confidence.</p>':''}${renderGuidance(lesson?.id)}${renderAnswerCoach(c)}`:`<button class="primary-button cq-reveal" id="cqReveal" ${isMc&&!rt.choice?'disabled':''}>Reveal and learn</button>`}${rt.pendingNext?`<div class="cq-feedback-ack cq-feed-interlude"><p role="status">${pendingReviews(c).length?'Answer saved on this device. Syncing in the background.':'Review synced. Your lesson checklist is updated.'}</p>${studyExperience(c)!=='focus'&&!pendingReviews(c).length?rewardStrip():''}<button class="primary-button" id="cqNextQuestion">${rt.assignmentLessonId?'I understand · continue lesson →':rt.index+1<rt.queue.length?'I understand · next question →':'Finish this round →'}</button><p class="cq-fine">Read the explanation above before continuing. You can continue immediately.</p></div>`:''}${mobileStudyActions(card,intervals)}</article><p class="cq-feed-hint">Swipe right on the question to reveal. Swipe left after reading to save Good, or Again for a wrong choice. Rating buttons give you full control.</p></div></div>`;
 }
 function renderAdventure(c){return syncNotice(c)+renderStudyExperience(c,studyExperience(c)==='guild'?'guild':'expedition');}
 
@@ -229,42 +296,108 @@ export function bindExperience(view,c){
    if(rt.ratingBusy||rt.pendingNext||!rt.revealed)return;
    rt.ratingBusy=true;const card=feedCard(c),rating=b.dataset.cqRate;
    try{
-    outbox(c).enqueue({id:`${rt.feedRun}:${rt.index}`,card,input:{rating,selectedAnswer:rt.choice,eventId:`${rt.feedRun}:${rt.index}`,mode:rt.assignmentLessonId?'homework-recall':'pocket-quest',worldMode:rt.worldMode,responseTimeMs:Math.round(rt.elapsedMs||0)}});
-    const identity=card.studyIdentity||`${card.scopeKey}|${card.id}`;
+    const reviewedAt=new Date().toISOString();
     const incorrect=Object.keys(card.choices||{}).length>=2&&rt.choice!==card.correctAnswer;
-    if(!rt.assignmentLessonId&&(incorrect||['Again','Hard'].includes(rating))&&!rt.repeated?.[identity]&&rt.queue.length<60){rt.repeated ||= {};rt.repeated[identity]=1;rt.queue.push(card);}
+    const effectiveRating=incorrect?'Again':rating;
+    const progress=card.effectiveProgress||c.library.progress[progressKey(card)];
+    const projected=rt.assignmentLessonId?null:rateCard(card,progress,effectiveRating,c.profile.preferences?.studySettings,reviewedAt);
+    outbox(c).enqueue({id:`${rt.feedRun}:${rt.index}`,card,input:{rating:effectiveRating,selectedAnswer:rt.choice,reviewedAt,eventId:`${rt.feedRun}:${rt.index}`,mode:rt.assignmentLessonId?'homework-recall':'pocket-quest',worldMode:rt.worldMode,responseTimeMs:Math.round(rt.elapsedMs||0)}});
+    if(projected){
+     rt.delayedReviews||={};
+     const key=reviewQueueKey(card);
+     if(isLearningCard(projected)&&!projected.suspended)rt.delayedReviews[key]=projected.dueAt;
+     else delete rt.delayedReviews[key];
+    }
     rt.timingTotal=(rt.timingTotal||0)+(rt.elapsedMs||0);rt.timingCount=(rt.timingCount||0)+1;rt.pendingNext=true;rt.interlude=false;persistPocket(c);
    }catch(error){c.toast(`Could not save this answer on this device: ${error.message}`,'error');}
    finally{rt.ratingBusy=false;c.render();if(rt.pendingNext){if(!window.matchMedia?.('(max-width: 760px)').matches){$('#cqNextQuestion')?.focus?.({preventScroll:true});}}}
   });
   bindSyncActions(c);
+  if($('#cqLearningWait')){
+   const recheck=()=>{if($('#cqLearningWait')&&rt.uid===c.user.uid&&c.isCurrent?.()!==false)c.render();};
+   $('#cqCheckLearning')?.addEventListener('click',recheck);
+   const due=nextLearningReview(rt.delayedReviews);
+   if(due){
+    const timer=window.setTimeout(recheck,Math.max(50,Date.parse(due.dueAt)-Date.now()+50));
+    stopLearningWait=()=>window.clearTimeout(timer);
+   }
+  }
   $('[data-cq-mobile-next]')?.addEventListener('click',()=>$('#cqNextQuestion')?.click());
   $('[data-cq-mobile-reveal]')?.addEventListener('click',()=>$('#cqReveal')?.click());
   $$('[data-cq-mobile-rate]').forEach(button=>button.onclick=()=>$(`[data-cq-rate="${button.dataset.cqMobileRate}"]`)?.click());
   bindFeedGestures(c);
   $('#cqListenAnswer')?.addEventListener('click',()=>{const card=feedCard(c);speak([card.question,card.choices?.[card.correctAnswer],...Object.values(card.justifications||{})].join('. '),c);});
-  $('#cqGeneratePractice')?.addEventListener('click',async()=>{
-   if(rt.practiceBusy)return;
-   let endpoint='';try{endpoint=localStorage.getItem(`cqPracticeEndpoint:${c.user.uid}`)||'';}catch{}
-   if(!endpoint||!c.generatePractice){c.toast('Configure your secured concept practice service in Profile first.');c.navigate('profile');return;}
-   const run=rt.feedRun,uid=c.user.uid,card=feedCard(c),button=$('#cqGeneratePractice');
-   rt.practiceBusy=true;button.disabled=true;button.textContent='Preparing new scenarios…';
+  const updatePracticeTools=(busy,message)=>{
+   for(const name of ['#cqGeneratePractice','#cqGenerateAIPractice']){const button=$(name);if(button)button.disabled=busy;}
+   const status=$('#cqPracticeStatus');if(status)status.textContent=message;
+  };
+  $('#cqPracticeCount')?.addEventListener('change',event=>{rt.practiceCount=Number(event.target.value);});
+  async function saveExtraPractice(source){
+   const uid=c.user.uid,groupId=rt.groupId,run=rt.feedRun,card=feedCard(c);
+   if(!card||!c.generatePractice||(rt.practiceOperation?.uid===uid&&rt.practiceOperation.groupId===groupId))return;
+   const count=Number($('#cqPracticeCount')?.value)||3;
+   const addNow=$('#cqPracticeAddNow')?.checked===true;
+   const operation={uid,groupId};rt.practiceOperation=operation;
+   const current=()=>rt.uid===uid&&rt.groupId===groupId&&rt.practiceOperation===operation;
+   let message='Practice stays in your personal library.';
+   updatePracticeTools(true,'Preparing practice…');
    try{
-    const generated=await c.generatePractice(card,Math.max(1,Object.keys(rt.repeated||{}).length));
-    if(rt.uid!==uid||rt.feedRun!==run)return;
-    const existing=new Set(rt.queue.map(card=>`${card.scopeKey}|${card.id}`));
-    const additional=(generated||[]).filter(card=>!existing.has(`${card.scopeKey}|${card.id}`));
-    rt.queue.push(...shuffle(additional));persistPocket(c);
-    c.toast(`${additional.length} new concept questions saved and added to this round.`);
-    // The learner may have continued during generation. Never replace or jump
-    // the active question simply because the service finished in the background.
-    const progress=$('.cq-session-progress');
-    if(progress)progress.outerHTML=renderSessionProgress({total:rt.queue.length,initialCount:rt.initialCount,index:rt.index,answered:rt.pendingNext});
-   }catch(error){if(rt.uid===uid)c.toast(error.message,'error');}
-   finally{rt.practiceBusy=false;const current=$('#cqGeneratePractice');if(current){current.disabled=false;current.textContent='Add 10–15 new concept scenarios';}}
+    const generated=await c.generatePractice(card,Math.max(1,Object.keys(rt.repeated||{}).length),{count,source});
+    if(!current())return;
+    if(!generated.length){message='You already saved the available checkpoints for this domain.';return;}
+    if(addNow&&rt.feedRun===run&&!rt.assignmentLessonId){
+     const existing=new Set(rt.queue.map(item=>item.scopeKey+'|'+item.id));
+     const additional=generated.filter(item=>!existing.has(item.scopeKey+'|'+item.id));
+     rt.queue.push(...shuffle(additional));persistPocket(c);
+     const progress=$('.cq-session-progress');
+     if(progress)progress.outerHTML=renderSessionProgress({total:rt.queue.length,initialCount:rt.initialCount,index:rt.index,answered:rt.pendingNext});
+     message=generated.length+' practice questions saved. '+additional.length+' added to this round.';
+    }else{
+     message=generated.length+' practice questions saved to your personal library.';
+    }
+    c.toast(message);
+   }catch(error){if(current()){message=error.message;c.toast(message,'error');}}
+   finally{
+    const visible=current();
+    if(rt.practiceOperation===operation)rt.practiceOperation=null;
+    if(visible)updatePracticeTools(false,message);
+   }
+  }
+  $('#cqGeneratePractice')?.addEventListener('click',()=>saveExtraPractice('built-in'));
+  $('#cqGenerateAIPractice')?.addEventListener('click',()=>saveExtraPractice('ai'));
+  $('#cqCoach')?.addEventListener('click',async()=>{
+   if(!c.profile.v3.coachEnabled){c.navigate('profile');return;}
+   const key=answerCoachKey(),card=feedCard(c);
+   if(!card||(rt.coachKey===key&&rt.coachBusy))return;
+   rt.coachAbort?.abort();
+   const controller=new AbortController(),timeout=setTimeout(()=>controller.abort(),60000);
+   const button=$('#cqCoach'),output=$('#cqCoachAnswer');
+   const focus=$('#cqCoachFocus')?.value;
+   const lessonId=card.lessonId||cardLesson(card)?.id;
+   const lesson=CISA_MICROLESSONS.find(item=>item.id===lessonId);
+   const request=reviewCoachRequest({card,selectedAnswer:rt.choice,lesson,focus});
+   const current=()=>answerCoachKey()===key&&rt.coachAbort===controller;
+   Object.assign(rt,{coachKey:key,coachAbort:controller,coachBusy:true,coach:''});
+   button.disabled=true;button.textContent='Thinking on this device…';output.hidden=true;
+   try{
+    const infer=c.profile.v3.coachProvider==='browser'?askBrowserCoach:askLocalCoach;
+    const answer=await infer({...request,endpoint:c.profile.v3.coachEndpoint,model:c.profile.v3.coachModel,signal:controller.signal});
+    if(current())rt.coach=answer;
+   }catch(error){
+    if(current())rt.coach=controller.signal.aborted?'AI coaching timed out. You can still use the answer comparison above.':error.message;
+   }finally{
+    clearTimeout(timeout);
+    if(rt.coachAbort===controller){
+     if(current()){
+      const result=$('#cqCoachAnswer'),currentButton=$('#cqCoach');
+      if(result){result.textContent=rt.coach;result.hidden=!rt.coach;}
+      if(currentButton){currentButton.disabled=false;currentButton.textContent='Ask AI coach';}
+     }
+     rt.coachBusy=false;rt.coachAbort=null;
+    }
+   }
   });
-  $('#cqCoach')?.addEventListener('click',async()=>{if(rt.coachBusy)return;const card=feedCard(c);if(!c.profile.v3.coachEnabled)return c.navigate('profile');const operationUid=rt.uid,controller=new AbortController();rt.coachAbort=controller;const timeout=setTimeout(()=>controller.abort(),60000);rt.coachBusy=true;c.render();try{const answer=await (c.profile.v3.coachProvider==='browser'?askBrowserCoach:askLocalCoach)({endpoint:c.profile.v3.coachEndpoint,model:c.profile.v3.coachModel,question:'Explain this answer and the tempting distractor.',context:{question:card.question,answer:card.choices?.[card.correctAnswer],justifications:card.justifications},signal:controller.signal});if(rt.uid===operationUid)rt.coach=answer;}catch(error){if(rt.uid===operationUid)rt.coach=error.message;}finally{clearTimeout(timeout);if(rt.uid===operationUid){rt.coachBusy=false;rt.coachAbort=null;c.render();}}});
-  $('#cqNextQuestion')?.addEventListener('click',()=>{if(rt.pendingNext){rt.index++;rt.choice=null;rt.revealed=false;rt.coach='';rt.pendingNext=false;if(rt.assignmentLessonId&&rt.index>=rt.queue.length){const a=lessonAssignment(c);const pending=(a?.cards||[]).filter(card=>!card.homeworkReadiness.ready&&!card.answerConflict&&isCardAvailable(card.effectiveProgress));if(!a?.completedAt&&pending.length){rt.queue.push(...shuffle(pending));}}}rt.interlude=false;persistPocket(c);c.render();($('#cqStudyCard')||$('.cq-feed-empty'))?.scrollIntoView?.({block:'start',behavior:'instant'});$('#cqStudyCard')?.focus?.({preventScroll:true});});$('#cqSkipGameTurns')?.addEventListener('click',()=>{rt.interlude=false;rt.skipGameTurns=true;persistPocket(c);c.render();});
+  $('#cqNextQuestion')?.addEventListener('click',()=>{if(rt.pendingNext){rt.index++;rt.choice=null;rt.revealed=false;rt.coach='';rt.pendingNext=false;if(!rt.assignmentLessonId)insertReadyLearning(c);if(rt.assignmentLessonId&&rt.index>=rt.queue.length){const a=lessonAssignment(c);const pending=(a?.cards||[]).filter(card=>!card.homeworkReadiness.ready&&!card.answerConflict&&isCardAvailable(card.effectiveProgress));if(!a?.completedAt&&pending.length){rt.queue.push(...shuffle(pending));}}}rt.interlude=false;persistPocket(c);c.render();($('#cqStudyCard')||$('.cq-feed-empty'))?.scrollIntoView?.({block:'start',behavior:'instant'});$('#cqStudyCard')?.focus?.({preventScroll:true});});$('#cqSkipGameTurns')?.addEventListener('click',()=>{rt.interlude=false;rt.skipGameTurns=true;persistPocket(c);c.render();});
   const expeditionRoot=$('.expedition-view');if(expeditionRoot)bindExpedition(expeditionRoot,{world:worldNow(c),onAction:async event=>{if(rt.worldBusy||rt.ratingBusy)return;const uid=rt.uid,groupId=rt.groupId;rt.worldBusy=true;try{const result=await c.worldAction(event,rt.worldMode);if(rt.uid!==uid||rt.groupId!==groupId)return;rt.worldFeedback=result?.feedback||null;rt.worldNeedsStudy=!!result?.needsStudy;c.render();return result;}catch(error){if(rt.uid===uid&&rt.groupId===groupId){rt.worldFeedback={tone:'hint',message:error.message};c.toast(error.message,'error');c.render();}}finally{if(rt.uid===uid&&rt.groupId===groupId)rt.worldBusy=false;}},onStudy:()=>resumeQuestions(c)});
   if($('[data-cq-guild-live]'))c.bindGuildStudy?.();
 
@@ -316,7 +449,7 @@ export function bindExperience(view,c){
 function bindFeedGestures(c){
   const cardElement=$('#cqStudyCard');if(!cardElement)return;
   let start=null;
-  const blocked=target=>target.closest('button,a,input,select,textarea,summary,details,[contenteditable="true"],.cq-recall-result,.cq-coach-answer');
+  const blocked=target=>target.closest('button,a,input,select,textarea,summary,details,[contenteditable="true"],.cq-recall-result,.cq-answer-coach,.cq-coach-answer');
   const act=direction=>{
     if(rt.ratingBusy)return;
     if(direction==='right'&&!rt.revealed){const reveal=$('#cqReveal');if(reveal&&!reveal.disabled)reveal.click();}
@@ -334,7 +467,7 @@ export function bindExperienceSettings(c){bindPracticeSetup({save:async endpoint
 
 function persistPocket(c){
   if(rt.uid!==c.user.uid||!rt.feedRun)return;
-  const session={initialCount:rt.initialCount,timingKey:rt.timingKey||null,elapsedMs:rt.elapsedMs||0,timingTotal:rt.timingTotal||0,timingCount:rt.timingCount||0,choiceOrder:rt.choiceOrder||[],run:rt.feedRun,groupId:c.profile.activeGroupId||null,queue:rt.queue.map(card=>`${card.scopeKey}|${card.id}`),index:rt.index,choice:rt.choice,revealed:rt.revealed,domain:rt.domain,mode:rt.mode,assignmentLessonId:rt.assignmentLessonId||'',worldMode:rt.worldMode,interlude:!!rt.interlude,repeated:rt.repeated||{},skipGameTurns:!!rt.skipGameTurns,pendingNext:!!rt.pendingNext};
+  const session={initialCount:rt.initialCount,timingKey:rt.timingKey||null,elapsedMs:rt.elapsedMs||0,timingTotal:rt.timingTotal||0,timingCount:rt.timingCount||0,choiceOrder:rt.choiceOrder||[],run:rt.feedRun,groupId:c.profile.activeGroupId||null,queue:rt.queue.map(card=>`${card.scopeKey}|${card.id}`),index:rt.index,choice:rt.choice,revealed:rt.revealed,domain:rt.domain,mode:rt.mode,assignmentLessonId:rt.assignmentLessonId||'',worldMode:rt.worldMode,interlude:!!rt.interlude,repeated:rt.repeated||{},delayedReviews:rt.delayedReviews||{},skipGameTurns:!!rt.skipGameTurns,pendingNext:!!rt.pendingNext};
   c.profile.v3.pocketSession=session;try{localStorage.setItem(`cq-pocket-${c.user.uid}`,JSON.stringify(session));}catch{}
   c.saveQuiet?.();
 }

@@ -3,6 +3,30 @@ export function shuffle(items,random=Math.random){const out=[...items];for(let i
 export function choiceOrder(card,random=Math.random){const keys=Object.keys(card.choices||{});return /\b(all|none) of the above\b|\b[A-D] and [A-D]\b/i.test(Object.values(card.choices||{}).join(' '))?keys:shuffle(keys,random);}
 export function clockLabel(ms){const seconds=Math.max(0,Math.floor((Number(ms)||0)/1000));return `${Math.floor(seconds/60)}:${String(seconds%60).padStart(2,'0')}`;}
 
+export function nextLearningReview(reviews = {}) {
+ const due = Object.entries(reviews)
+  .filter(([, time]) => Number.isFinite(Date.parse(time)))
+  .sort((a, b) => Date.parse(a[1]) - Date.parse(b[1]) || a[0].localeCompare(b[0]));
+ return due.length ? { key: due[0][0], dueAt: due[0][1] } : null;
+}
+
+// Insert a card once, at the next unanswered position, when its learning
+// timer expires. Leave the completed prefix intact for stable review IDs.
+export function resumeLearningReview(queue, index, reviews, keyForCard, now = Date.now()) {
+ const next = nextLearningReview(reviews);
+ if (!next || Date.parse(next.dueAt) > now) return false;
+ const card = queue.find(item => keyForCard(item) === next.key);
+ if (card === undefined) {
+  delete reviews[next.key];
+  return resumeLearningReview(queue, index, reviews, keyForCard, now);
+ }
+ const later = queue.findIndex((item, position) => position >= index && keyForCard(item) === next.key);
+ if (later >= 0) queue.splice(later, 1);
+ queue.splice(index, 0, card);
+ delete reviews[next.key];
+ return true;
+}
+
 // Older saved queues have no boundary metadata. Their first repeated card marks
 // the first review pass; each original pass contains unique study identities.
 export function inferInitialCount(queue=[]){

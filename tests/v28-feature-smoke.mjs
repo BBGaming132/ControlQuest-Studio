@@ -11,7 +11,7 @@ assert.ok(DAILY_QUEST_TEMPLATES.some(q => /Monday/i.test(q.details)), 'Daily que
 assert.ok(AVATAR_ITEMS.filter(i => i.type === 'ship').length >= 4, 'Expected at least four starships');
 assert.ok(GAME_CATALOG.some(g => g.id === 'spaceQuest'), 'Assurance Odyssey should exist');
 const app = fs.readFileSync(new URL('../js/app.js', import.meta.url), 'utf8');
-for (const token of ['Weekend Flex Block','Guild Starship Race','Assurance Odyssey','Reveal Answers','compressGuildImage','Review Mastered Cards']) {
+for (const token of ['Weekend Flex Block','Guild Domain Voyages','Assurance Odyssey','Reveal Answers','compressGuildImage','Review Mastered Cards']) {
   assert.ok(app.includes(token), `Missing feature marker: ${token}`);
 }
 console.log('ControlQuest v2.8 feature smoke test passed.');

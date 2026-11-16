@@ -36,6 +36,8 @@ try{
   await click('[data-cq-domain="d1"]');assert.equal($('.cq-study-card h2').textContent,'Which audit evidence is BEST?');
   assert.equal($('#cqReveal').disabled,true);await click('[data-cq-choice="B"]');assert.equal($('#cqReveal').disabled,false);c.failReview=true;await click('#cqReveal');
   assert.ok($('.cq-recall-result').textContent.includes('Independent confirmation'));
+  assert.match($('.cq-answer-coach').textContent,/Convenience does not establish reliability/);
+  assert.match($('.cq-answer-coach').textContent,/Independent evidence is more reliable/);
   assert.ok($('#test-root').textContent.includes('scheduled as Again'));
   $('#cqListenAnswer').click();assert.ok(c.toasts.some(t=>t[0].includes('Spoken audio')));
   $('#cqCoach').click();assert.ok($('.cq-settings')===null); // Context routes to the preferences view through the host.

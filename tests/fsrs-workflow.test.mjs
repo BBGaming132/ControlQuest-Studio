@@ -14,6 +14,11 @@ p=rateCard(card,p,'Hard',undefined,new Date(p.dueAt));assert.equal(p.dueAt,'2026
 p=rateCard(card,p,'Good',undefined,new Date(p.dueAt));assert.equal(p.state,'review');assert.ok(p.fsrs.stability>0);
 const frozen=JSON.parse(JSON.stringify(p)),later=rateCard(card,p,'Easy',undefined,new Date(p.lastReviewedAt));
 assert.deepEqual(later.fsrs,p.fsrs);assert.equal(later.dueAt,p.dueAt);assert.equal(later.validatedRecalls,p.validatedRecalls);assert.deepEqual(p,frozen);
+const olderOfflineAnswer=rateCard(card,p,'Again',undefined,new Date('2026-10-26T12:55:00Z'));
+assert.deepEqual(olderOfflineAnswer.fsrs,p.fsrs,'An older offline answer cannot replace the newer schedule');
+assert.equal(olderOfflineAnswer.lastReviewedAt,p.lastReviewedAt);
+assert.equal(olderOfflineAnswer.lapses,p.lapses);
+assert.equal(olderOfflineAnswer.incorrectCount,p.incorrectCount+1,'The attempt still contributes accuracy evidence');
 const high=previewReviewIntervals(card,p,{desiredRetention:.97},new Date(p.dueAt)),low=previewReviewIntervals(card,p,{desiredRetention:.8},new Date(p.dueAt));
 assert.ok(high.find(x=>x.rating==='Good').intervalDays<low.find(x=>x.rating==='Good').intervalDays,'retention changes real FSRS interval');
 let replay={...p};for(let i=0;i<120;i++){replay=rateCard(card,replay,i%7===0?'Again':i%5===0?'Hard':'Good',undefined,new Date(replay.dueAt));assert.ok(Number.isFinite(Date.parse(replay.dueAt)));assert.ok(replay.fsrs.stability>0);assert.ok(replay.fsrs.difficulty>=1&&replay.fsrs.difficulty<=10);}
@@ -25,6 +30,7 @@ const failed=rateCard(card,{...legacy,lapses:7},'Again',{leechThreshold:8,leechA
 const suspended=setCardAvailability(p,{suspended:true,now});assert.equal(isDue(suspended,now),false);assert.equal(buildStudyQueue([card],{[progressKey(card)]:suspended},{mode:'all'}).length,0);assert.equal(buildStudyQueue([card],{[progressKey(card)]:suspended},{mode:'all',includeUnavailable:true}).length,1);
 const buried=setCardAvailability(p,{buriedUntil:'2026-10-27T04:00:00Z',now});assert.equal(isCardAvailable(buried,now),false);assert.equal(isCardAvailable(buried,new Date('2026-10-27T04:00:00Z')),true);
 const reset=resetCardProgress(card,p,{now:new Date('2026-10-27T13:00:00Z')});assert.equal(reset.repetitions,0);assert.equal(reset.correctCount,0);assert.equal(reset.fsrs,undefined);assert.equal(reset.state,'new');assert.equal(reset.archivedProgress.repetitions,p.repetitions);
+assert.deepEqual(rateCard(card,reset,'Again',undefined,now),reset,'A review from before a reset does not recreate cleared progress');
 const resetWithoutAccuracy=resetCardProgress(card,p,{now,resetAccuracy:false});assert.equal(resetWithoutAccuracy.correctCount,p.correctCount);assert.equal(cardMastery(resetWithoutAccuracy),'New');assert.equal(hasUnresolvedMiss(card,resetWithoutAccuracy),false,'preserved historical accuracy is not an active new-epoch miss');
 const alias={...card,id:'copy',scope:'Public',scopeKey:'public'};
 const reviews=[{id:'old',uid:'u',scopeKey:card.scopeKey,cardId:card.id,correct:false,reviewedAt:'2026-10-26T13:00:00Z'}];

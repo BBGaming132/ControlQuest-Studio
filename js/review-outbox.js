@@ -5,6 +5,7 @@ export function nextPacificReset(now=Date.now()){
  return new Date(Math.ceil(high/1000)*1000+60000).toISOString();
 }
 const quotaError=error=>/resource-exhausted/.test(error?.code||'')||/resource-exhausted|quota.*exceed|exceed.*quota/i.test(error?.message||String(error));
+const retryableError=error=>['unavailable','busy','deadline-exceeded','network-request-failed'].includes(error?.code);
 // Review IDs must also be idempotent at the remote save boundary: a browser can
 // close after the server commits but before it removes the local receipt.
 export function createReviewOutbox({storage,key,save,onChange=()=>{},stallAfterMs=30000,now=()=>Date.now()}){
@@ -32,7 +33,16 @@ export function createReviewOutbox({storage,key,save,onChange=()=>{},stallAfterM
     commit(entries.map(e=>e.state==='failed'&&!e.retryAt&&quotaError(e.error)?{...e,state:'pending',quotaPaused:false}:e));
   }
   const fail=(id,error)=>{
-    const next=entries.map(e=>e.id===id?{...e,state:'failed',error:error?.message||String(error),...(quotaError(error)?{retryAt:nextPacificReset(now()),quotaPaused:true}:{})}:e);
+    const next=entries.map(entry=>{
+      if(entry.id!==id)return entry;
+      const failed={...entry,state:'failed',error:error?.message||String(error)};
+      if(quotaError(error))return {...failed,retryAt:nextPacificReset(now()),quotaPaused:true};
+      if(retryableError(error)){
+        const retryCount=Math.min(6,(Number(entry.retryCount)||0)+1);
+        return {...failed,retryCount,retryAt:new Date(now()+Math.min(60000,1000*2**retryCount)).toISOString()};
+      }
+      return failed;
+    });
     // If local storage itself failed, the old durable pending record survives
     // for a reload. Keep the failure visible in this tab and stop retrying.
     try{commit(next);}catch{entries=next;}
@@ -78,7 +88,7 @@ export function createReviewOutbox({storage,key,save,onChange=()=>{},stallAfterM
     return clone(record);
   }
   function retry(){
-    if(entries[0]?.retryAt&&Date.parse(entries[0].retryAt)>now()){scheduleRetry();notify();return Promise.resolve();}
+    if(entries[0]?.quotaPaused&&entries[0]?.retryAt&&Date.parse(entries[0].retryAt)>now()){scheduleRetry();notify();return Promise.resolve();}
     commit(entries.map(({error,retryAt,quotaPaused,...entry})=>({...entry,state:'pending'})));
     paused=false;notify();return start();
   }

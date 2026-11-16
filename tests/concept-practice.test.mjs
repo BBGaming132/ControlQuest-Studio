@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import {practiceCount,validatePracticeSet,generationEndpoint,requestConceptPractice,catalogPracticeSet,practiceCards} from '../js/concept-practice.js';
+import {practiceCount,validatePracticeSet,generationEndpoint,requestConceptPractice,builtInPracticeSet,catalogPracticeSet,practiceCards} from '../js/concept-practice.js';
 assert.equal(practiceCount(1),10);assert.equal(practiceCount(100),15);
 assert.throws(()=>generationEndpoint('http://service.test'));assert.throws(()=>generationEndpoint('https://key@service.test'));assert.throws(()=>generationEndpoint('https://service.test?key=secret'));
 const questions=Array.from({length:10},(_,i)=>({question:`Original scenario ${i}`,concept:'Independence',choices:{A:'A',B:'B',C:'C',D:'D'},correctAnswer:'B',justifications:{A:'A reason',B:'B reason',C:'C reason',D:'D reason'}}));
@@ -7,6 +7,15 @@ assert.equal(validatePracticeSet({questions},{lessonId:'d1-t01'}).questions.leng
 assert.throws(()=>validatePracticeSet({questions:[...questions.slice(0,9),questions[0]]}));
 let sent;const set=await requestConceptPractice({endpoint:'https://service.test/practice',getToken:async()=>'user-token',lessonId:'d1-t01',concepts:['Independence'],missCount:2,fetcher:async(url,options)=>{sent=options;return {ok:true,text:async()=>JSON.stringify({catalogId:'shared-id',questions})};}});
 assert.equal(sent.headers.Authorization,'Bearer user-token');assert.equal(JSON.parse(sent.body).count,10);assert.ok(!sent.body.includes('user-token'));
+const short=await requestConceptPractice({endpoint:'https://service.test/practice',getToken:async()=>'user-token',lessonId:'d1-t01',concepts:['Independence'],count:2,fetcher:async(url,options)=>{assert.equal(JSON.parse(options.body).count,2);assert.equal(options.redirect,'error');return {ok:true,text:async()=>JSON.stringify({catalogId:'short',questions:questions.slice(0,2)})};}});
+assert.equal(short.questions.length,2);
+const checkpoints=builtInPracticeSet({lessonId:'d1-t01',count:3});
+assert.equal(checkpoints.questions[0].lessonId,'d1-t01');
+assert.ok(checkpoints.questions.every(q=>q.homeworkExcluded&&q.domainId==='d1'&&!q.aiGenerated));
+const previouslySaved=checkpoints.questions.map(q=>q.id);
+const more=builtInPracticeSet({lessonId:'d1-t01',count:3,alreadySaved:previouslySaved});
+assert.ok(more.questions.every(question=>!previouslySaved.includes(question.id)));
+assert.ok(practiceCards(checkpoints,'a').every(c=>c.homeworkExcluded&&c.scope==='Personal'&&c.id.startsWith('coach_')));
 const map=new Map();const entry=await catalogPracticeSet(set,{uid:'a',storage:{setItem:(k,v)=>map.set(k,v)}});assert.equal(map.size,1);assert.ok(practiceCards(entry,'a').every(c=>c.homeworkExcluded&&c.aiGenerated));
 await assert.rejects(requestConceptPractice({endpoint:'https://service.test',getToken:async()=>null,concepts:['x']}),/Sign in/);
 await assert.rejects(catalogPracticeSet(set,{uid:'a',storage:{setItem(){throw new Error('Storage full');}}}),/Storage full/);

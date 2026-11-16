@@ -57,15 +57,32 @@ export function createSupabaseDatabase({ projectRef, publishableKey, auth, fetch
 
   async function rpc(name, body, user = requireUser()) {
     checkUser(user);
-    const token = await user.getIdToken();
+    const unavailable = cause => Object.assign(new Error(
+      'ControlQuest could not reach the cloud. Reconnecting will retry saved answers.', { cause },
+    ), { code: 'unavailable' });
+    let token;
+    try {
+      token = await user.getIdToken();
+    } catch (error) {
+      checkUser(user);
+      if (error.code === 'auth/network-request-failed') throw unavailable(error);
+      throw error;
+    }
     checkUser(user);
-    const response = await fetcher(`${endpoint}/controlquest_${name}`, {
-      method: 'POST',
-      headers: { apikey: publishableKey, Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-      cache: 'no-store',
-      redirect: 'error',
-    });
+    let response;
+    try {
+      response = await fetcher(`${endpoint}/controlquest_${name}`, {
+        method: 'POST',
+        headers: { apikey: publishableKey, Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+        cache: 'no-store',
+        redirect: 'error',
+        signal: AbortSignal.timeout?.(15000),
+      });
+    } catch (cause) {
+      checkUser(user);
+      throw unavailable(cause);
+    }
     checkUser(user);
     if (!response.ok) {
       const error = await response.json().catch(() => ({}));
@@ -78,7 +95,15 @@ export function createSupabaseDatabase({ projectRef, publishableKey, auth, fetch
         : error.code;
       throw Object.assign(new Error(error.message || `ControlQuest database request failed (${response.status}).`), { code });
     }
-    return response.status === 204 ? undefined : response.json();
+    if (response.status === 204) return undefined;
+    try {
+      const data = await response.json();
+      checkUser(user);
+      return data;
+    } catch (cause) {
+      checkUser(user);
+      throw unavailable(cause);
+    }
   }
 
   async function page(location, singleDocument, afterPath, user) {
@@ -132,8 +157,13 @@ export function createSupabaseDatabase({ projectRef, publishableKey, auth, fetch
     const isDocument = reference.path.split('/').length % 2 === 0;
     let last;
     let stopped = false;
+    let polling = false;
     let timer;
     const poll = async () => {
+      if (stopped || polling || auth.currentUser !== user) return;
+      clearTimeout(timer);
+      if (typeof document !== 'undefined' && document.hidden) return;
+      polling = true;
       try {
         const revision = await rpc('location_revision', { location: reference.path, single_document: isDocument }, user);
         if (!stopped && revision !== last) {
@@ -148,11 +178,18 @@ export function createSupabaseDatabase({ projectRef, publishableKey, auth, fetch
       } catch (error) {
         if (!stopped && auth.currentUser === user) onError(error);
       } finally {
+        polling = false;
         if (!stopped && auth.currentUser === user) timer = setTimeout(poll, isDocument ? 2500 : 30000);
       }
     };
+    const visible = () => { if (!document.hidden) void poll(); };
+    if (typeof document !== 'undefined') document.addEventListener('visibilitychange', visible);
     void poll();
-    return () => { stopped = true; clearTimeout(timer); };
+    return () => {
+      stopped = true;
+      clearTimeout(timer);
+      if (typeof document !== 'undefined') document.removeEventListener('visibilitychange', visible);
+    };
   }
 
   return {

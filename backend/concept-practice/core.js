@@ -1,6 +1,6 @@
 import {createHash} from 'node:crypto';
 export function normalizeRequest(body){
- if(body?.version!==1||typeof body.lessonId!=='string'||!/^[a-zA-Z0-9_-]{1,100}$/.test(body.lessonId)||!Number.isInteger(body.count)||body.count<10||body.count>15)throw new Error('Invalid practice request');
+ if(body?.version!==1||typeof body.lessonId!=='string'||!/^[a-zA-Z0-9_-]{1,100}$/.test(body.lessonId)||!Number.isInteger(body.count)||body.count<2||body.count>15)throw new Error('Invalid practice request');
  if(!Array.isArray(body.concepts)||body.concepts.length<1||body.concepts.length>15||body.concepts.some(x=>typeof x!=='string'||!x.trim()||x.length>500))throw new Error('Invalid concepts');
  return {version:1,lessonId:body.lessonId,count:body.count,concepts:[...new Set(body.concepts.map(x=>x.trim()))].sort()};
 }

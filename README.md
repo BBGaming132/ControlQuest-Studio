@@ -1,4 +1,12 @@
-# ControlQuest Studio 4.0
+# ControlQuest Studio
+
+## Guild voyages and study coaching
+
+Open **More tools → Guild voyages**. Each domain unlocks after every current Guild member has synced completion for its lessons. In a voyage, the crew takes turns captaining shared questions, gambles one Full Sail wager each, and earns salvage for the harbor. Older Guild members can open the updated app once to publish their confirmed lesson progress.
+
+After a missed question, the coach compares your choice with the verified answer. Save a two- or three-question checkpoint set for later study, or choose a larger set. Optional on-device AI and a secured generation service provide additional explanations and original questions when configured. [Practice setup](docs/AI_CONCEPT_PRACTICE.md)
+
+Scheduled reviews follow the existing FSRS engine's actual learning and relearning intervals. Assignment practice can still revisit a miss immediately to finish a lesson. [Anki learning and relearning steps](https://docs.ankiweb.net/manual/deck-options)
 
 Study first, with a shared sailing expedition alongside it. Choose Focus study for questions and explanations, Expedition for a world-and-question workspace, or Guild live for synchronized questions beside the shared mission. Every mode uses the same personal recall records and active island save.
 

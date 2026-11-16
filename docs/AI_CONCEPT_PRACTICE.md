@@ -27,7 +27,9 @@ Original generated practice stays labeled as AI-generated, not official ISACA co
 
 `renderPracticeSetup(endpoint)` and `bindPracticeSetup({root,save,toast})` provide Settings controls. Save the endpoint per signed-in account.
 
-`requestConceptPractice({endpoint,getToken,lessonId,concepts,missCount})` sends a Firebase ID token from `currentUser.getIdToken()` and generic missed-concept tags. Never supply the provider key. It requests 10–15 questions, validates exact question count, answer identity, distinct options, unique questions and explanations for all choices, and requires a server catalog ID. It has a 60-second timeout; the provider call has a 45-second timeout. Failure leaves lesson progress unchanged.
+`requestConceptPractice({endpoint,getToken,lessonId,concepts,count})` sends a Firebase ID token from `currentUser.getIdToken()` and titles from the public ControlQuest syllabus. The provider key belongs in the service's secret settings. The learner can request 2, 3, 5, 10, or 15 questions. The client validates the exact count, answer identity, unique questions, distinct options, and explanations for each choice. It also requires a server catalog ID. The client waits up to 60 seconds, and the service waits up to 45 seconds for its model.
+
+The answer comparison and original checkpoint practice are available without an AI service. Checkpoint and AI practice are stored in the learner's personal library and excluded from assigned homework. The learner can also add the extra questions to an active non-assignment round.
 
 Then call `catalogPracticeSet(result,{uid})` to retain a browser copy, followed by `practiceCards(cataloged,uid)` to produce personal supplemental cards. Add those cards through the existing personal-card persistence path before opening a practice session. Question and choice shuffling remains the study runner's job, preserving the correct answer identity.
 

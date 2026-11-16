@@ -5,6 +5,7 @@ let app, auth, db, currentUnsub;
 let ready = false;
 let databaseProvider = 'firestore';
 const confirmedProfileChunks=new Map(),profileSaveQueues=new Map(),memberSummaryQueues=new Map(),confirmedMemberSummaries=new Map(),confirmedProfileSnapshots=new Map();
+const supabaseProfileBaselines = new Map();
 function chunkCache(uid){if(!confirmedProfileChunks.has(uid))confirmedProfileChunks.set(uid,new Set());return confirmedProfileChunks.get(uid);}
 let localKey = 'controlquest_v24_local_state';
 let localStudyKey = 'controlquest_v27_study_library';
@@ -123,9 +124,21 @@ export async function loadProfile(uid) {
   const key=cacheKey(uid,'profile');
   try{
     const snap=await fs().getDoc(userRef(uid));
-    const profile=snap.exists()?await unpackProfile(snap.data(),async id=>{const part=await fs().getDoc(fs().doc(db,'users',uid,'studyReviews',id));if(part.exists()){chunkCache(uid).add(id);return part.data();}return null;}):null;
+    const raw=snap.exists()?snap.data():null;
+    const profile=raw?await unpackProfile(raw,async id=>{const part=await fs().getDoc(fs().doc(db,'users',uid,'studyReviews',id));if(part.exists()){chunkCache(uid).add(id);return part.data();}return null;}):null;
+    if(isSupabaseReady()){
+      supabaseProfileBaselines.set(uid,{local:structuredClone(profile),remote:raw});
+      confirmedProfileSnapshots.delete(uid);
+    }
     await rememberConfirmed(key,profile);return profile;
-  }catch(error){return (await fallbackConfirmed(key,error)).data;}
+  }catch(error){
+    const cached=(await fallbackConfirmed(key,error)).data;
+    if(isSupabaseReady()){
+      supabaseProfileBaselines.set(uid,{local:structuredClone(cached),remote:structuredClone(cached)});
+      confirmedProfileSnapshots.delete(uid);
+    }
+    return cached;
+  }
 }
 export function profileStorageSnapshot(profile) {
   const homework=profile.v3?.homework;
@@ -151,7 +164,23 @@ async function saveProfileSnapshot(snapshot) {
   try{
   const {updatedAt,...stable}=snapshot,fingerprint=JSON.stringify(stable);
   if(confirmedProfileSnapshots.get(profile.uid)===fingerprint)return;
-  const {root,chunks}=databaseProvider==='supabase'?{root:snapshot,chunks:[]}:await packProfile(snapshot);
+  if(isSupabaseReady()){
+    const reference=userRef(profile.uid),baseline=supabaseProfileBaselines.get(profile.uid);
+    const stored=await fs().runTransaction(db,async transaction=>{
+      const read=await transaction.get(reference);
+      const remote=read.exists()?read.data():null;
+      const patch=prepareSupabaseProfilePatch(baseline,remote,snapshot);
+      if(!Object.keys(patch).length)return remote;
+      const payload=withStamp(patch);
+      transaction.set(reference,payload,{mergeFields:Object.keys(payload)});
+      return {...remote,...payload};
+    });
+    supabaseProfileBaselines.set(profile.uid,{local:snapshot,remote:stored});
+    confirmedProfileSnapshots.set(profile.uid,fingerprint);
+    await rememberConfirmed(cacheKey(profile.uid,'profile'),stored);
+    return;
+  }
+  const {root,chunks}=await packProfile(snapshot);
   // Never publish references until all immutable chunks are confirmed saved.
   const confirmed=chunkCache(profile.uid),missing=chunks.filter(chunk=>!confirmed.has(chunk.id));
   for(let i=0;i<missing.length;i+=20)await Promise.all(missing.slice(i,i+20).map(async chunk=>{await fs().setDoc(fs().doc(db,'users',profile.uid,'studyReviews',chunk.id),{...chunk,uid:profile.uid});confirmed.add(chunk.id);}));
@@ -161,7 +190,21 @@ async function saveProfileSnapshot(snapshot) {
   await fs().setDoc(userRef(profile.uid),payload,{mergeFields:Object.keys(payload)});
   confirmedProfileSnapshots.set(profile.uid,fingerprint);
   await rememberConfirmed(cacheKey(profile.uid,'profile'),snapshot);
-  }catch(error){throw new Error(`Profile save: ${error.message}`,{cause:error});}
+  }catch(error){throw Object.assign(new Error(`Profile save: ${error.message}`,{cause:error}),{code:error.code});}
+}
+
+export function prepareSupabaseProfilePatch(baseline, remote, incoming) {
+  const equal=(left,right)=>comparableJson(left)===comparableJson(right);
+  const conflict=()=>Object.assign(new Error('Your profile changed on another device. Reload ControlQuest to sync your saved answers.'),{code:'failed-precondition'});
+  if(!baseline && remote)throw conflict();
+  if(baseline?.remote && !remote)throw conflict();
+  const patch={};
+  for(const [key,value] of Object.entries(incoming)){
+    if(key==='updatedAt'||key==='_profileChunks'||equal(value,baseline?.local?.[key]))continue;
+    if(!equal(remote?.[key],baseline?.remote?.[key])&&!equal(remote?.[key],value))throw conflict();
+    if(!equal(remote?.[key],value))Object.defineProperty(patch,key,{value,enumerable:true});
+  }
+  return patch;
 }
 export async function backupProfile(profile, reason='Manual Backup') {
   const backup = { profile, reason, createdAt: new Date().toISOString() };
@@ -172,7 +215,7 @@ export async function backupProfile(profile, reason='Manual Backup') {
 export async function deleteProfileData(profile) {
   await backupProfile(profile, 'Profile Delete Backup');
   if (!ready) { localStorage.removeItem(localKey); return; }
-  await fs().deleteDoc(userRef(profile.uid));confirmedProfileSnapshots.delete(profile.uid);
+  await fs().deleteDoc(userRef(profile.uid));confirmedProfileSnapshots.delete(profile.uid);supabaseProfileBaselines.delete(profile.uid);
   await rememberConfirmed(cacheKey(profile.uid,'profile'),null);
 }
 
@@ -202,7 +245,7 @@ export async function saveGroup(group,{includeLiveState=false}={}) {
   const snapshot={...group};
   // Live question and island state are owned by command transactions. A stale
   // settings/import/member snapshot must never roll back another player's turn.
-  if(!includeLiveState){delete snapshot.studySession;delete snapshot.questWorld;}
+  if(!includeLiveState){delete snapshot.studySession;delete snapshot.questWorld;delete snapshot.recentVoyages;}
   if(!ready){const local=loadLocal()||{};local.group={...(local.group?.id===group.id?local.group:{}),...snapshot};saveLocal(local);return;}
   await fs().setDoc(groupRef(group.id),withStamp(snapshot),{merge:true});
 }
@@ -424,21 +467,70 @@ export async function saveStudyReview(uid, review) {
   await updateConfirmedLibraries(uid,library=>{if(!review.recordType||review.recordType==='study-review')library.reviews=[review,...(library.reviews||[]).filter(r=>r.id!==review.id)];});
 }
 
-export async function saveStudyReviewBundle(uid, updates, review) {
+export async function saveStudyReviewBundle(uid, updates, review, reschedule = null) {
   if (!isSupabaseReady() || auth.currentUser?.uid !== uid || review.uid !== uid || !review.id) {
     throw new Error('Sign in to your own account before saving a review.');
   }
-  const batch = fs().writeBatch(db);
   for (const progress of updates) {
     if (progress.uid !== uid || !progress.id) throw new Error('Invalid review progress.');
-    batch.set(docRefFor('Personal', uid, null, 'progress', progress.id), withStamp(progress), { merge: true });
   }
-  batch.set(docRefFor('Personal', uid, null, 'review', review.id), review);
-  await batch.commit();
+  const reviewRef = docRefFor('Personal', uid, null, 'review', review.id);
+  const references = updates.map(progress => docRefFor('Personal', uid, null, 'progress', progress.id));
+  const saved = await fs().runTransaction(db, async transaction => {
+    const [existing, ...snapshots] = await Promise.all([reviewRef, ...references].map(ref => transaction.get(ref)));
+    const current = snapshots.map(snapshot => snapshot.exists() ? snapshot.data() : null);
+    if (existing.exists()) {
+      const event = existing.data();
+      const intentFields = ['id', 'uid', 'cardId', 'scopeKey', 'sessionId', 'rating', 'correct', 'reviewedAt'];
+      if (intentFields.some(field => event[field] !== review[field])) throw new Error('This review ID was already saved with a different answer.');
+      return { review: event, updates: current.filter(Boolean) };
+    }
+    const values = reconcileReviewProgress(updates, current, review, reschedule);
+    const confirmed = [];
+    values.forEach((value, index) => {
+      if (!value) {
+        if (current[index]) confirmed.push(current[index]);
+        return;
+      }
+      const record = withStamp({ ...current[index], ...value });
+      transaction.set(references[index], record);
+      confirmed.push(record);
+    });
+    transaction.set(reviewRef, review);
+    return { review, updates: confirmed };
+  });
   await updateConfirmedLibraries(uid, library => {
     library.progress ||= {};
-    for (const progress of updates) library.progress[progress.id] = { ...library.progress[progress.id], ...progress };
-    library.reviews = [review, ...(library.reviews || []).filter(item => item.id !== review.id)];
+    for (const progress of saved.updates) library.progress[progress.id] = progress;
+    library.reviews = [saved.review, ...(library.reviews || []).filter(item => item.id !== review.id)];
+  });
+  return saved;
+}
+
+export function reconcileReviewProgress(updates, current, review, reschedule) {
+  const reviewTime = Date.parse(review.reviewedAt);
+  const time = value => Date.parse(value) || 0;
+  const records = current.filter(Boolean);
+  const reset = records.reduce((best, value) => time(value.resetAt) > time(best?.resetAt) ? value : best, null);
+  const cutoff = time(reset?.resetAt);
+  const rank = value => Math.max(time(value?.lastReviewedAt), time(value?.resetAt));
+  const latest = records.filter(progress => rank(progress) >= cutoff).reduce((best, progress) => {
+    return !best || rank(progress) > rank(best) ? progress : best;
+  }, null);
+  // The answer still belongs in history. A reset made after it was answered
+  // starts a new scheduling epoch and must never be filled from an old queue.
+  if (cutoff && cutoff >= reviewTime) return updates.map(() => null);
+  const alreadyApplied = records.some(progress => progress.lastReviewEventId === review.id);
+  const baseline = reset && latest ? { ...latest, resetAt: reset.resetAt,
+    resetCount: reset.resetCount, accuracyResetAt: reset.accuracyResetAt } : latest;
+  const next = alreadyApplied ? baseline : baseline && reschedule ? reschedule(baseline) : null;
+  return updates.map((update, index) => {
+    const previous = current[index];
+    if (previous?.lastReviewEventId === review.id) return null;
+    if (!next) return time(previous?.lastReviewedAt) > reviewTime ? null : update;
+    const eventId = time(latest.lastReviewedAt) > reviewTime || alreadyApplied ? latest.lastReviewEventId : review.id;
+    return { ...next, uid: review.uid, id: update.id, cardId: update.cardId, scope: update.scope,
+      scopeKey: update.scopeKey, lastReviewEventId: eventId || null };
   });
 }
 
@@ -505,13 +597,36 @@ export function subscribeCommunityLibrary(onChange,onError) {
 // Atomic reducers prevent one player's answer from replacing a teammate's update.
 export async function mutateGuildSession(groupId,command){
   const {reduceGuildSession}=await import('./guild-session.js');
-  if(!ready)return serializeLocalGuild(groupId,async()=>{const group=await loadGroup(groupId);if(!group)throw new Error('Guild not found');group.studySession=reduceGuildSession(group.studySession,command);await saveGroup(group,{includeLiveState:true});return group.studySession;});
-  return fs().runTransaction(db,async transaction=>{const ref=groupRef(groupId),snapshot=await transaction.get(ref);if(!snapshot.exists())throw new Error('Guild not found');const next=reduceGuildSession(snapshot.data().studySession,command);transaction.update(ref,{studySession:next});return next;});
+  const prepare=group=>{
+    const previous=group.studySession;
+    const studySession=reduceGuildSession(previous,command,group);
+    studySession.commandVersion=(Number(previous?.commandVersion)||0)+1;
+    const fields={studySession};
+    if(command.type==='start'&&previous?.voyage&&Object.keys(previous.voyage.history||{}).length){
+      fields.recentVoyages=[...(group.recentVoyages||[]),{id:previous.id,voyage:previous.voyage}].slice(-3);
+    }
+    return fields;
+  };
+  if(!ready)return serializeLocalGuild(groupId,async()=>{
+    const group=await loadGroup(groupId);
+    if(!group)throw new Error('Guild not found');
+    const fields=prepare(group);
+    await saveGroup({...group,...fields},{includeLiveState:true});
+    return fields.studySession;
+  });
+  if(auth?.currentUser?.uid!==command.uid)throw new Error('Sign in to play as yourself.');
+  return fs().runTransaction(db,async transaction=>{
+    const ref=groupRef(groupId),snapshot=await transaction.get(ref);
+    if(!snapshot.exists())throw new Error('Guild not found');
+    const fields=prepare(snapshot.data());
+    transaction.set(ref,fields,{mergeFields:Object.keys(fields)});
+    return fields.studySession;
+  });
 }
 export async function mutateGuildWorld(groupId,event){
   const {createWorld,advanceWorld}=await import('./quest-world.js');
   if(!ready)return serializeLocalGuild(groupId,async()=>{const group=await loadGroup(groupId);if(!group)throw new Error('Guild not found');const result=advanceWorld(createWorld(group.questWorld),event);group.questWorld=result.world;if(result.changed)await saveGroup(group,{includeLiveState:true});return result;});
-  return fs().runTransaction(db,async transaction=>{const ref=groupRef(groupId),snapshot=await transaction.get(ref);if(!snapshot.exists())throw new Error('Guild not found');const result=advanceWorld(createWorld(snapshot.data().questWorld),event);if(result.changed)transaction.update(ref,{questWorld:result.world});return result;});
+  return fs().runTransaction(db,async transaction=>{const ref=groupRef(groupId),snapshot=await transaction.get(ref);if(!snapshot.exists())throw new Error('Guild not found');const result=advanceWorld(createWorld(snapshot.data().questWorld),event);if(result.changed)transaction.set(ref,{questWorld:result.world},{mergeFields:['questWorld']});return result;});
 }
 
 export function enableDemoStorage(){ready=false;localKey='controlquest_demo_v3_profile';localStudyKey='controlquest_demo_v3_study';}

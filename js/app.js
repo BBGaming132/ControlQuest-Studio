@@ -1,7 +1,7 @@
 import {nextPacificReset} from './review-outbox.js';
 import {homeworkJournal,pendingReviewEvents,mergePendingHomework,streakSnapshot} from './offline-homework.js';
 import {saveErrorMessage} from './save-errors.js';
-import {requestConceptPractice,catalogPracticeSet,practiceCards} from './concept-practice.js';
+import {requestConceptPractice,builtInPracticeSet,catalogPracticeSet,practiceCards} from './concept-practice.js';
 import {buildHomeworkPlan,buildHomeworkPublicSummary,refreshHomeworkPublicSummary,enrollHomework,recordHomeworkCompletion} from './homework-plan.js';
 import {renderHomework,bindHomework,renderHomeworkQuiz,bindHomeworkQuiz} from './homework-view.js';
 import {renderReviewTools,bindReviewTools} from './review-tools.js';
@@ -13,13 +13,16 @@ import { EXPERIENCE_VIEWS, renderExperience, bindExperience, renderExperienceSet
 import { CISA_MICROLESSONS } from './cisa-learning.js';
 import { createWorld, advanceWorld } from './quest-world.js';
 import { appendActivityEvent } from './activity-bridge.js';
-import { uniqueStudyCards, studyIdentity } from './study-intelligence.js';
+import { VOYAGE_PORTS, buildVoyageRounds, voyageReadiness } from './guild-voyage.js';
+import { renderVoyageLobby, renderVoyageSession } from './guild-voyage-view.js';
+import { uniqueStudyCards, studyIdentity, dailyReviewBudget } from './study-intelligence.js';
 import { buildPublicContributions, aggregateCommunityLibrary } from './community-library.js';
 import { LESSONS, matchLesson, deckLesson, cardLesson, inferDeckLesson, filterDecks, filterDeckCards } from './lesson-catalog.js';
 import { initFirebase, onAuth, signIn, createAccount, sendReset, signOutUser, loadProfile, saveProfile, backupProfile, deleteProfileData, createGroup, loadGroup, joinGuild, saveGroup, updateMemberSummary, subscribeGroup, publicSummary, isFirebaseReady, isSupabaseReady, loadStudyLibrary, saveStudyImport, saveStudyDeck, saveStudyCard, saveStudyProgress, saveStudyReview, saveStudyReviewBundle, deleteStudyDeck, saveGuildLessonStatus, loadCommunityLibrary, savePublicContributions, savePublicLessonStatus, subscribeCommunityLibrary, mutateGuildSession, mutateGuildWorld, enableDemoStorage, saveCategoryPatch, saveStudyAuditEvent, saveHomeworkRecord } from './firebase-service.js';
 import { RESOURCE_LINKS, TIMEZONES, DOMAIN_TOPICS, ISACA_STUDY_PLAN, CISA_RULES, DECISION_PROMPTS, HOMEWORK_SUGGESTIONS, DAILY_QUEST_TEMPLATES, SHOP_ITEMS, AVATAR_ITEMS, GAME_CATALOG } from './content.js';
 import { parseQaePaste, missedConceptFromParsedQuestion } from './qae-parser.js';
-import { DEFAULT_REVIEW_SETTINGS, buildImportBundle, buildStudyQueue, hasUnresolvedMiss, calculateLibraryStats, cardFingerprint, createReviewEvent, defaultProgress, formatCardBack, mergeUniqueLibrary, progressKey, rateCard, scopeKey, makeDeckId, resetCardProgress, setCardAvailability } from './flashcard-engine.js';
+import { DEFAULT_REVIEW_SETTINGS, buildImportBundle, buildStudyQueue, hasUnresolvedMiss, calculateLibraryStats, cardFingerprint, createReviewEvent, defaultProgress, formatCardBack, mergeUniqueLibrary, progressKey, rateCard, scopeKey, makeDeckId, resetCardProgress, setCardAvailability, isLearningCard, previewReviewIntervals } from './flashcard-engine.js';
+import { nextLearningReview, resumeLearningReview } from './study-session.js';
 import { downloadIcs, canUseGoogleCalendar, connectGoogleCalendar, createGoogleEvent } from './calendar.js';
 
 let avatarSequence=0;
@@ -73,7 +76,7 @@ const PRIMARY_NAV = [
 const TOOL_NAV = [
   ['learn','Short lessons','notebook'],['adventure','Expedition','arcade'],['arcade','Games','timer'],['homeworkQuiz','Weekly quiz','qae'],
   ['tools','Manage decks','cards'],['audit','Library health','target'],['import','Import files','qae'],
-  ['room','Study together','guild'],['guild','Your Guild','guild'],
+  ['room','Study together','guild'],['guild','Your Guild','guild'],['voyages','Guild voyages','arcade'],
   ['rewards','Avatar & rewards','avatar'],['practice','Practice log','qae'],
   ['plan','Exam study plan','roadmap'],['calendar','Calendar','calendar'],
   ['notebook','Notes','notebook'],['profile','Settings & connections','target']
@@ -112,6 +115,7 @@ async function init(){
         saveProfileDebounced();
         if (profile.activeGroupId)try{await loadActiveGroup(profile.activeGroupId);}catch(error){console.warn('Guild unavailable',error.message);}
         await refreshStudyLibrary();
+        void reconcileVoyageReviews();
         void recordAccountActivity('session-start','Authenticated app session started').catch(error=>console.warn('Activity sync paused',error.message));
         state.communityUnsub?.();
         let publicRefreshTimer;
@@ -207,10 +211,26 @@ function dailySessionFlow(date=localDateForProfileSafe(state.profile)){
     {id:`${date}-log-progress`,title:'Log And Close',details:'Record what you completed so the weekend flex block appears in progress and contributes to your personal streak.',links:[{label:'Open Practice Log',go:'practice'}]}
   ];
 }
+let activeGroupLoadSequence = 0;
 async function loadActiveGroup(groupId){
-  if(state.groupUnsub) state.groupUnsub();
-  state.group = await loadGroup(groupId);
-  if(state.group && isFirebaseReady()) state.groupUnsub = subscribeGroup(groupId, g=>{ const previousLibraryVersion=state.group?.studyLibraryUpdatedAt; state.group = g; if(g?.studyLibraryUpdatedAt && g.studyLibraryUpdatedAt!==previousLibraryVersion) refreshStudyLibrary().then(()=>renderIfApp()); else renderIfApp(); });
+  const sequence = ++activeGroupLoadSequence;
+  const uid = state.user?.uid;
+  const current = () => sequence === activeGroupLoadSequence && state.user?.uid === uid;
+  state.groupUnsub?.();
+  state.groupUnsub = null;
+  const group = await loadGroup(groupId);
+  if (!current()) return;
+  state.group = group;
+  if (!group || !isFirebaseReady()) return;
+  state.groupUnsub = subscribeGroup(groupId, updated => {
+    if (!current()) return;
+    const previousLibraryVersion = state.group?.studyLibraryUpdatedAt;
+    state.group = updated;
+    void reconcileVoyageReviews();
+    if (updated?.studyLibraryUpdatedAt && updated.studyLibraryUpdatedAt !== previousLibraryVersion) {
+      void refreshStudyLibrary().then(() => { if (current()) renderIfApp(); });
+    } else renderIfApp();
+  });
 }
 
 let studyRefreshSequence=0,communityRefreshSequence=0;
@@ -343,7 +363,8 @@ function renderApp(){
 function renderIfApp(){
   // Realtime Guild/member updates must not replace a question being answered.
   // The latest state is picked up by the next deliberate navigation/render.
-  if(document.querySelector('#cqStudyCard, .hw-quiz-question'))return;
+  if(document.querySelector('#cqStudyCard, .hw-quiz-question, .modal-backdrop')
+    || document.activeElement?.matches('input, textarea, select, [contenteditable=true]'))return;
   if(state.user && state.profile)renderApp();
 }
 
@@ -362,13 +383,13 @@ function renderStatusStrip(){
 function renderArcadeHub(){
  const deck=selectedLibraryDeck();
  const games=[['confidence-climb','Mountain climb','target','Answer questions to climb toward the summit.'],['space-odyssey','Assurance Odyssey','arcade','A question-powered campaign with a persistent ship and upgrades.'],['missed-gauntlet','Mistake rescue','qae','Repair missed questions in a three-heart challenge.'],['speed-audit','Audit sprint','timer','An optional timed challenge for quick recall.']];
- return `<section class="cq-arcade-hub"><header class="cq-page-head"><div><p class="eyebrow">PLAY WITH WHAT YOU KNOW</p><h1>Choose your adventure.</h1><p>Every saved answer builds your recall and advances ${state.group?'your Guild’s shared island':'your island'}. Your missed questions return for practice.</p></div></header><div class="panel">${deck?deckPicker('games'):'<p>Add question files to play with your own lessons.</p><button class="primary-button" data-go="import">Import questions</button>'}<details class="cq-explain"><summary>Choose a domain, lesson or question type</summary>${renderDeckFilters()}</details></div><div class="cq-arcade-grid">${games.map(([id,title,icon,copy])=>`<article class="panel"><span class="app-icon ${icon}">${svgIcon(icon)}</span><h2>${title}</h2><p>${copy}</p><button class="primary-button" data-arcade-game="${id}" ${deck?'':'disabled'}>Play ${title}</button></article>`).join('')}<article class="panel"><span class="app-icon guild">${svgIcon('guild')}</span><h2>Guild starship race</h2><p>Join a live question round. Everyone’s recall stays personal; the island grows together.</p><button class="primary-button" id="arcadeGuild">${state.group?'Play together':'Set up a Guild'}</button></article><article class="panel"><span class="app-icon cards">${svgIcon('cards')}</span><h2>Island expedition</h2><p>Explore on foot, choose a building, and answer questions to send the crew to work.</p><button class="primary-button" data-go="adventure">Explore the island</button></article></div></section>`;
+ return `<section class="cq-arcade-hub"><header class="cq-page-head"><div><p class="eyebrow">PLAY WITH WHAT YOU KNOW</p><h1>Choose your adventure.</h1><p>Every saved answer builds your recall and advances ${state.group?'your Guild’s shared island':'your island'}. Your missed questions return for practice.</p></div></header><div class="panel">${deck?deckPicker('games'):'<p>Add question files to play with your own lessons.</p><button class="primary-button" data-go="import">Import questions</button>'}<details class="cq-explain"><summary>Choose a domain, lesson or question type</summary>${renderDeckFilters()}</details></div><div class="cq-arcade-grid">${games.map(([id,title,icon,copy])=>`<article class="panel"><span class="app-icon ${icon}">${svgIcon(icon)}</span><h2>${title}</h2><p>${copy}</p><button class="primary-button" data-arcade-game="${id}" ${deck?'':'disabled'}>Play ${title}</button></article>`).join('')}<article class="panel"><span class="app-icon guild">${svgIcon('guild')}</span><h2>Guild Domain Voyages</h2><p>Finish a domain as a crew, then sail a shared quiz route and restore its harbor.</p><button class="primary-button" id="arcadeGuild">${state.group?'Open voyages':'Set up a Guild'}</button></article><article class="panel"><span class="app-icon cards">${svgIcon('cards')}</span><h2>Island expedition</h2><p>Explore on foot, choose a building, and answer questions to send the crew to work.</p><button class="primary-button" data-go="adventure">Explore the island</button></article></div></section>`;
 }
 function bindArcadeHub(){
  bindDeckFilters();
  document.querySelector('[data-deck-picker="games"]')?.addEventListener('change',event=>{state.selectedDeckId=event.target.value;renderApp();});
  $$('[data-arcade-game]').forEach(button=>button.onclick=()=>startLibraryGame(button.dataset.arcadeGame));
- $('#arcadeGuild')?.addEventListener('click',()=>{if(!state.group)return navigateTo('guild');state.toolsTab='guild-study';navigateTo('tools');});
+ $('#arcadeGuild')?.addEventListener('click',()=>navigateTo(state.group?'voyages':'guild'));
 }
 function renderLibraryAudit(){
  const report=auditLibrary({decks:state.library.decks,cards:state.library.cards,uid:state.user.uid,groupId:state.profile.activeGroupId});
@@ -439,6 +460,7 @@ function renderView(){
   if(EXPERIENCE_VIEWS.includes(state.activeView))return renderExperience(state.activeView,experienceContext())+(['command','feed'].includes(state.activeView)?renderMissionShortcut(state.profile):'');
   if(state.activeView==='audit')return renderLibraryAudit();
   if(state.activeView==='arcade')return renderArcadeHub();
+  if(state.activeView==='voyages')return renderGuildStudyTab();
   if(state.activeView==='library')return renderLibraryHub();
   if(state.activeView==='profile')return renderExperienceSettings(experienceContext())+renderProfile();
   const views = {command:renderCommand,room:renderRoom,plan:renderPlan,practice:renderPractice,tools:renderTools,guild:renderGuild,calendar:renderCalendar,notebook:renderNotebook,rewards:renderRewards,profile:renderProfile};
@@ -928,7 +950,7 @@ function renderSmartReviewTab(){
 }
 function renderFlashcardsTab(){
   const deck=selectedLibraryDeck(); if(!deck)return renderNoDeckCta();
-  return `<div class="section-head"><div><p class="eyebrow">Flashcards</p><h3>${esc(deck.title)}</h3><p class="helper">Flip the card, read the correct answer and explanation, then honestly rate how well you recalled it. Ratings drive the adaptive schedule.</p></div>${deckPicker('flashcards')}</div>${state.studySession?.mode==='flashcards'?renderStudyRunner():`<div class="empty"><button class="primary-button" data-start-flashcards>Start Flashcard Session</button></div>`}`;
+  return `<div class="section-head"><div><p class="eyebrow">Flashcards</p><h3>${esc(deck.title)}</h3><p class="helper">Flip the card, read the correct answer and explanation, then honestly rate how well you recalled it. Ratings drive the adaptive schedule.</p></div>${deckPicker('flashcards')}</div>${state.studySession?.mode==='flashcards'?renderStudyRunner():`<div class="empty"><div class="button-row"><button class="primary-button" data-start-flashcards="due">Review due cards</button><button class="secondary-button" data-start-flashcards="new">Learn new cards</button><button class="secondary-button" data-start-flashcards="all">Practice this deck</button></div></div>`}`;
 }
 function renderQuizTab(){
   const deck=selectedLibraryDeck(); if(!deck)return renderNoDeckCta(); const eligible=libraryCardsForDeck(deck).filter(c=>!c.answerConflict&&c.correctAnswer&&Object.keys(c.choices||{}).length>=2).length;
@@ -942,18 +964,29 @@ function startStudySession(mode, queueMode='due'){
   let cards=libraryCardsForDeck(deck).filter(c=>!c.answerConflict);
   if(mode==='quiz') cards=cards.filter(c=>!c.answerConflict&&c.correctAnswer&&Object.keys(c.choices||{}).length>=2);
   const settings=state.profile.preferences.studySettings||DEFAULT_REVIEW_SETTINGS;
-  const remainingNew=Math.max(0,(settings.newCardsPerDay||20)-newCardsIntroducedToday());
+  const budget=dailyReviewBudget(state.library.reviews,settings,{uid:state.user.uid,timezone:state.profile.timezone});
+  const remainingNew=budget.newCards;
   if(queueMode==='new'&&remainingNew<=0)return toast('You have reached today’s New Cards limit. Change it in Profile or continue with Due/Missed review.','error');
   const dailyLimit=queueMode==='new'?remainingNew:(settings.maxReviewsPerDay||100);
   const limit=mode==='quiz'?Math.min(50,cards.length):Math.min(dailyLimit,cards.length);
+  if(queueMode==='due')cards=cards.filter(card=>state.library.progress[progressKey(card)]?.repetitions>0);
   let queue=buildStudyQueue(cards,state.library.progress,{mode:queueMode,limit,newLimit:remainingNew,uid:state.user.uid});
-  if(!queue.length&&queueMode==='due') queue=buildStudyQueue(cards,state.library.progress,{mode:'all',limit:Math.min(20,limit),uid:state.user.uid});
-  if(!queue.length)return toast('No cards are available for this mode.','error');
+  if(queueMode==='due')queue=queue.filter(card=>{
+    if(isLearningCard(state.library.progress[progressKey(card)]))return true;
+    if(!budget.reviews)return false;
+    budget.reviews--;
+    return true;
+  });
+  if(!queue.length)return toast(queueMode==='due'?'No reviews are due right now. Choose another practice mode to study ahead.':'No cards are available for this mode.','error');
   state.studySession={id:randomId(),mode,queueMode,deckId:deck.id,deckScopeKey:deck.scopeKey,queue:queue.map(libraryCardKey),index:0,correct:0,incorrect:0,ratings:{Again:0,Hard:0,Good:0,Easy:0},startedAt:new Date().toISOString(),answerSubmitted:false,selectedAnswer:null,revealed:false};
   state.reviewStartedAt=Date.now(); state.deckFlipped=false; state.quizSelection=null; state.quizRevealed=false; persistActiveStudySession(); renderApp();
 }
 function renderStudyRunner(){
-  const session=state.studySession; const deck=libraryDecks().find(d=>d.id===session.deckId); const card=currentStudyCard();
+  const session=state.studySession;
+  if(!currentStudyCard()&&resumeLearningReview(session.queue,session.index,session.delayedReviews||{},key=>key))persistActiveStudySession();
+  const card=currentStudyCard();
+  const wait=nextLearningReview(session.delayedReviews);
+  if(!card&&wait)return `<section class="study-complete" id="legacyLearningWait"><h2>Waiting for the next recall</h2><p>Next learning card at <time datetime="${escAttr(wait.dueAt)}">${esc(new Date(wait.dueAt).toLocaleTimeString())}</time>.</p><button class="primary-button" id="checkLegacyLearning">Check for due cards</button><button class="ghost-button" id="endStudySession">End Session</button></section>`;
   if(!card)return renderStudySessionComplete();
   const p=state.library.progress[progressKey(card)]; const mastery=p?`${p.state} · ${p.intervalDays||0} Day Interval`:'New Card'; const progressPct=Math.round(((session.index||0)/Math.max(1,session.queue.length))*100);
   return `<div class="study-runner"><div class="study-runner-head"><div><span class="bubble">${session.index+1} / ${session.queue.length}</span><span class="bubble good">${session.correct} Correct</span><span class="bubble warn">${session.incorrect} Missed</span><span class="bubble">${esc(mastery)}</span></div><button class="ghost-button small" id="endStudySession">End Session</button></div><div class="progress"><span style="width:${progressPct}%"></span></div>${session.mode==='quiz'?renderQuizQuestion(card):renderAdaptiveFlashcard(card)}<div class="study-source"><span>${esc(card.domain||'Imported QAE')}</span><span>${esc(card.knowledgeStatement||card.sessionTitle||'')}</span></div></div>`;
@@ -969,13 +1002,6 @@ function renderQuizQuestion(card){
 }
 function renderChoicesReadOnly(card){ const entries=Object.entries(card.choices||{}); return entries.length?`<div class="read-only-choices">${entries.map(([l,t])=>`<div><strong>${l}</strong><span>${esc(t)}</span></div>`).join('')}</div>`:''; }
 function renderAllJustifications(card){ const entries=Object.entries(card.justifications||{}).filter(([k])=>k!=='_'); if(!entries.length)return `<p class="helper">${esc(card.justifications?._||'No detailed justification was included in the import.')}</p>`; return `<details class="justification-details" open><summary>Why Each Option Is Right Or Wrong</summary>${entries.map(([letter,text])=>`<div class="justification-row ${letter===card.correctAnswer?'correct':''}"><strong>${letter}</strong><p>${esc(text)}</p></div>`).join('')}</details>`; }
-function reviewGapForRating(rating,session=state.studySession){
-  const remaining=Math.max(0,(session?.queue?.length||0)-(session?.index||0)-1);
-  if(rating==='Again')return Math.min(3,Math.max(1,remaining));
-  if(rating==='Hard')return Math.min(8,Math.max(2,remaining));
-  if(rating==='Good')return remaining>=12?Math.min(20,remaining):null;
-  return null;
-}
 function ratingFace(rating){
   const faces={Again:'<circle cx="32" cy="32" r="24" fill="#ff5c8a"/><circle cx="24" cy="27" r="3" fill="white"/><circle cx="40" cy="27" r="3" fill="white"/><path d="M22 43c6-7 14-7 20 0" stroke="white" stroke-width="4" fill="none" stroke-linecap="round"/>',Hard:'<circle cx="32" cy="32" r="24" fill="#ffd166"/><circle cx="24" cy="27" r="3" fill="#14213d"/><circle cx="40" cy="27" r="3" fill="#14213d"/><path d="M23 42h18" stroke="#14213d" stroke-width="4" stroke-linecap="round"/>',Good:'<circle cx="32" cy="32" r="24" fill="#18c29c"/><circle cx="24" cy="27" r="3" fill="white"/><circle cx="40" cy="27" r="3" fill="white"/><path d="M21 39c7 8 15 8 22 0" stroke="white" stroke-width="4" fill="none" stroke-linecap="round"/>',Easy:'<circle cx="32" cy="32" r="24" fill="#00c2ff"/><path d="M20 26l7 3-7 3M44 26l-7 3 7 3" stroke="white" stroke-width="4" fill="none" stroke-linecap="round"/><path d="M20 39c8 10 16 10 24 0" stroke="white" stroke-width="4" fill="none" stroke-linecap="round"/>'};
   return `<svg viewBox="0 0 64 64" aria-hidden="true">${faces[rating]}</svg>`;
@@ -983,7 +1009,8 @@ function ratingFace(rating){
 function ratingButtons(card){
   const selected=state.studySession?.selectedAnswer; const hasChoices=Object.keys(card?.choices||{}).length>=2; const correct=hasChoices?selected===card.correctAnswer:null;
   const defs={Again:'Did Not Know It',Hard:'Remembered With Effort',Good:'Recalled Correctly',Easy:'Instant Recall'};
-  return `<div class="rating-panel"><p class="helper">${hasChoices?`You selected ${selected||'—'} and ${correct?'answered correctly':'missed this question'}. Rate the strength of your memory so ControlQuest can place it later in this session and schedule the next review.`:'Rate how confidently you recalled the answer.'}</p><div class="rating-grid">${['Again','Hard','Good','Easy'].map(rating=>{const gap=reviewGapForRating(rating);const hint=rating==='Easy'?'Moves To A Later Session':gap?`Returns In ${gap} Card${gap===1?'':'s'}`:'Scheduled Later';return `<button class="rating-button ${rating.toLowerCase()}" data-rate-card="${rating}"><span class="rating-face" aria-hidden="true">${ratingFace(rating)}</span><strong>${rating}</strong><span>${defs[rating]}</span><small>${hint}</small></button>`;}).join('')}</div></div>`;
+  const intervals=previewReviewIntervals(card,state.library.progress[progressKey(card)],state.profile.preferences.studySettings);
+  return `<div class="rating-panel"><p class="helper">${hasChoices?(correct?'Rate how confidently you recalled the answer.':'The incorrect answer is scheduled as Again.'):'Rate how confidently you recalled the answer.'}</p><div class="rating-grid">${intervals.map(({rating,label})=>`<button class="rating-button ${rating.toLowerCase()}" data-rate-card="${rating}" ${hasChoices&&!correct&&rating!=='Again'?'disabled':''}><span class="rating-face" aria-hidden="true">${ratingFace(rating)}</span><strong>${rating}</strong><span>${defs[rating]}</span><small>${esc(label)}</small></button>`).join('')}</div></div>`;
 }
 function persistActiveStudySession(){
   if(!state.profile)return; state.profile.activeStudySession=state.studySession?{...state.studySession,deckFlipped:state.deckFlipped,reviewStartedAt:state.reviewStartedAt}:null; saveProfileDebounced();
@@ -1008,9 +1035,12 @@ async function applyCardRating(rating){
     if(state.studySession!==session)return;
     session.ratings ||= {};session.ratings[rating]=(session.ratings[rating]||0)+1;
     if(answerCorrect)session.correct=(session.correct||0)+1;else session.incorrect=(session.incorrect||0)+1;
-    const gap=reviewGapForRating(rating,session),currentKey=session.queue[index];
-    if(gap)session.queue.splice(Math.min(session.queue.length,index+1+gap),0,currentKey);
-    session.index++;session.answerSubmitted=false;session.selectedAnswer=null;state.deckFlipped=false;state.reviewStartedAt=Date.now();
+    const saved=state.library.progress[progressKey(card)],currentKey=session.queue[index];
+    session.delayedReviews||={};
+    if(isLearningCard(saved)&&!saved.suspended) session.delayedReviews[currentKey]=saved.dueAt;
+    else delete session.delayedReviews[currentKey];
+    session.index++;resumeLearningReview(session.queue,session.index,session.delayedReviews,key=>key);
+    session.answerSubmitted=false;session.selectedAnswer=null;state.deckFlipped=false;state.reviewStartedAt=Date.now();
     persistActiveStudySession();await saveProfileDebounced(true);renderApp();
   }catch(error){toast(`Review not finished: ${friendly(error)}. Your answer can be retried.`,'error');}
   finally{applyCardRating.saving=false;}
@@ -1018,13 +1048,19 @@ async function applyCardRating(rating){
 function renderStudySessionComplete(){ const s=state.studySession; const total=(s.correct||0)+(s.incorrect||0); const pct=total?Math.round(s.correct/total*100):0; return `<div class="study-complete"><span class="app-icon xp">${svgIcon('xp')}</span><h2>Review Session Complete</h2><div class="practice-summary"><div class="soft"><h3>${total}</h3><p class="helper">Cards Reviewed</p></div><div class="soft"><h3>${pct}%</h3><p class="helper">Recall Accuracy</p></div><div class="soft"><h3>${s.ratings?.Again||0}</h3><p class="helper">Again</p></div><div class="soft"><h3>${s.ratings?.Easy||0}</h3><p class="helper">Easy</p></div></div><button class="primary-button" id="finishStudySession">Return To Deck</button></div>`; }
 
 function renderGuildStudyTab(){
-  if(!state.group)return `<div class="empty"><h3>Join A Study Guild First</h3><p>Guild Study synchronizes the same question, member answers, reveal state, and score board across every member’s screen.</p><button class="primary-button" data-go="guild">Open Guild</button></div>`;
-  const guildDecks=filteredLibraryDecks().filter(d=>d.scope==='Guild'); const gs=state.group.studySession;
-  if(!guildDecks.length)return `<div class="empty"><h3>No Guild Decks Yet</h3><p>Import a QAE session with Guild scope. Guild is the default import option.</p><button class="primary-button" data-go="practice">Import Guild QAE Session</button></div>`;
-  if(!gs?.active)return `<div class="section-head"><div><p class="eyebrow">Live Guild Review</p><h3>Start A Synchronized Question Session</h3><p class="helper">Every member sees the same question. Each answer is tracked individually, then the group reveals the explanation together.</p></div></div><label><span class="label-title">Guild Deck</span><select id="guildStudyDeck">${guildDecks.map(d=>`<option value="${d.id}">${esc(d.title)}</option>`).join('')}</select></label><div class="button-row"><button class="primary-button" id="startGuildQuiz">Start Guild Quiz</button><button class="secondary-button" id="startGuildMissed">Start Missed-Question Review</button></div>`;
-  return renderGuildStudySession(gs);
+  if(!state.group)return `<div class="empty"><h3>Join a Study Guild</h3><p>Finish domains with your crew to launch quiz voyages together.</p><button class="primary-button" data-go="guild">Open Guild</button></div>`;
+  const gs=state.group.studySession;
+  if(gs?.active)return renderGuildStudySession(gs);
+  return renderVoyageLobby({group:state.group,cards:state.library.cards||[],decks:state.library.decks||[]});
 }
+let pirateFullSailKey=null;
 function renderGuildStudySession(gs){
+  if(gs.voyage){
+    const card=gs.voyage.rounds[gs.index];
+    queueMicrotask(reconcileVoyageReviews);
+    return renderVoyageSession({session:gs,group:state.group,uid:state.user.uid,
+      charge:pirateFullSailKey===`${gs.id}:${gs.index}`,explanation:gs.revealed&&card?renderAllJustifications(card):''});
+  }
   const card=libraryCardFromKey(gs.cardKeys?.[gs.index||0]);
   if((gs.pendingParticipants||[]).includes(state.user.uid))return `<section class="cq-feed-empty"><h2>You’re joining the next question.</h2><p>This round is already revealed. Your place is saved for the next one.</p></section>`;
   if(!(gs.participants||[gs.hostUid]).includes(state.user.uid))return `<section class="cq-feed-empty"><h2>${esc(gs.title||'Live study is ready')}</h2><p>Join this round when you are here and ready. Offline Guild members do not block the session.</p><button class="primary-button" id="joinV3Guild">Join live session</button></section>`;
@@ -1040,8 +1076,25 @@ async function recordLocalGuildReviewIfNeeded(gs,card){
   const answer=gs.responses?.[state.user.uid]?.answer;if(!answer)return;
   const marker=`${gs.id}:${gs.index}`;state.profile.guildReviewRecorded ||= {};
   if(state.profile.guildReviewRecorded[marker])return;
-  try{await saveExperienceReview(card,{rating:answer===card.correctAnswer?'Good':'Again',selectedAnswer:answer,eventId:`guild:${marker}:${state.user.uid}`,mode:'guild-study'});if(state.profile!==profile||state.user?.uid!==uid)return;profile.guildReviewRecorded[marker]=new Date().toISOString();await saveProfile(profile);if(state.profile===profile&&state.user?.uid===uid)renderApp();}catch(error){toast(friendly(error),'error');}
+  const answerTime=gs.responses?.[uid]?.at;
+  try{await saveExperienceReview(card,{rating:answer===card.correctAnswer?'Good':'Again',selectedAnswer:answer,eventId:`guild:${marker}:${state.user.uid}`,mode:'guild-study',reviewedAt:Number.isFinite(Date.parse(answerTime))?answerTime:undefined});if(state.profile!==profile||state.user?.uid!==uid)return;profile.guildReviewRecorded[marker]=new Date().toISOString();await saveProfile(profile);if(state.profile===profile&&state.user?.uid===uid)renderApp();}catch(error){toast(friendly(error),'error');}
 }
+let voyageReviewFlight=false;
+async function reconcileVoyageReviews(){
+  const group=state.group,uid=state.user?.uid;
+  if(voyageReviewFlight||!group||!uid||!state.library.loaded)return;
+  const voyages=[...(group.recentVoyages||[]),group.studySession].filter(session=>session?.voyage);
+  voyageReviewFlight=true;
+  try{
+    for(const session of voyages)for(const [index,round] of Object.entries(session.voyage.history||{})){
+      if(state.group?.id!==group.id||state.user?.uid!==uid)return;
+      if(round.responses?.[uid]?.answer&&session.voyage.rounds[index])await recordLocalGuildReviewIfNeeded({
+        id:session.id,index,revealed:true,responses:round.responses,
+      },session.voyage.rounds[index]);
+    }
+  }finally{voyageReviewFlight=false;}
+}
+window.addEventListener('online',()=>void reconcileVoyageReviews());
 
 function renderStudyGamesTab(){
   const deck=selectedLibraryDeck(); if(!deck)return renderNoDeckCta();
@@ -1108,15 +1161,6 @@ function renderLibraryGameOverlay(){
   const card=libraryCardFromKey(g.queue[g.index]); const complete=!card||(g.type==='speed-audit'&&Date.now()>=g.endsAt)||(g.type==='missed-gauntlet'&&g.lives<=0);
   return `<div class="game-overlay" role="dialog" aria-modal="true"><div class="game-overlay-card"><div class="game-overlay-head"><div><p class="eyebrow">Question-Powered Game</p><h2>${gameTitle(g.type)}</h2></div><div class="metric-row"><span class="bubble good">Score ${g.score}</span><span class="bubble">Streak ${g.streak}</span><button class="ghost-button small" id="quitLibraryGame">Quit</button></div></div>${complete?renderLibraryGameComplete(g):`${renderGameVisual(g)}<div class="game-question"><p class="eyebrow">Question ${g.index+1}</p><h2>${esc(card.question)}</h2><div class="quiz-options">${Object.entries(card.choices||{}).map(([l,t])=>`<button class="quiz-option" data-library-game-answer="${l}"><strong>${l}</strong><span>${esc(t)}</span></button>`).join('')}</div></div>`}</div></div>`;
 }
-async function startGuildRace(){
-  if(!state.group)return toast('Join a Guild before starting a Guild Starship Race.','error');
-  const guildDecks=filteredLibraryDecks().filter(d=>d.scope==='Guild'); const deck=(selectedLibraryDeck()?.scope==='Guild'?selectedLibraryDeck():guildDecks[0]);
-  if(!deck)return toast('Import or create a Guild deck before starting a Guild Starship Race.','error');
-  let cards=libraryCardsForDeck(deck).filter(c=>!c.answerConflict&&c.correctAnswer&&Object.keys(c.choices||{}).length>=2); if(!cards.length)return toast('The selected Guild deck has no eligible multiple-choice questions.','error');
-  cards=[...cards].sort(()=>Math.random()-.5).slice(0,20);
-  state.group.studySession={id:randomId(),active:true,gameType:'guild-race',title:'Guild Starship Race',deckId:deck.id,scopeKey:deck.scopeKey,cardKeys:cards.map(libraryCardKey),index:0,participants:[state.user.uid],responses:{},scores:{},revealed:false,hostUid:state.user.uid,startedAt:new Date().toISOString(),targetScore:1200};
-  await persistNewGuildStudySession(); state.toolsTab='guild-study'; renderApp();
-}
 function renderGuildRaceTrack(gs,members){
   const target=gs.targetScore||1200;
   return `<div class="guild-race-stage star-race"><div class="race-stars"></div><div class="finish-line">FINISH GATE</div>${members.map(m=>{const pct=Math.min(89,Math.round((gs.scores?.[m.uid]||0)/target*84)+2);const ship=m.avatar?.ship||'scout';return `<div class="guild-race-lane"><strong>${esc(m.name)}</strong><div class="lane-track space-lane"><div class="guild-racer space-racer" style="left:${pct}%">${spaceshipSvg(ship,m.avatar||{})}</div></div><span>${gs.scores?.[m.uid]||0}</span></div>`;}).join('')}</div>`;
@@ -1140,8 +1184,7 @@ function dueForecast(days){
 function reviewCountsLastDays(days){ const out=[]; for(let i=days-1;i>=0;i--){const d=new Date();d.setDate(d.getDate()-i);const iso=d.toISOString().slice(0,10);out.push({iso,label:new Intl.DateTimeFormat('en-US',{weekday:'short'}).format(d),count:(state.library.reviews||[]).filter(r=>String(r.reviewedAt||'').slice(0,10)===iso).length});}return out; }
 
 function bindTools(){
-  $('#leaveV3Guild')?.addEventListener('click',()=>guildCommand('leave').catch(e=>toast(friendly(e),'error')));
-  $('#joinV3Guild')?.addEventListener('click',()=>guildCommand('join').catch(e=>toast(friendly(e),'error')));
+  bindGuildVoyage();
   bindDeckFilters();
   bindLessonCoverage();
   $('#publishExistingLessons')?.addEventListener('click',publishExistingLessons);
@@ -1159,7 +1202,7 @@ function bindTools(){
   $$('[data-delete-library-deck]').forEach(b=>b.onclick=()=>deleteLibraryDeckFlow(b.dataset.deleteLibraryDeck));
   $$('[data-export-library-deck]').forEach(b=>b.onclick=()=>exportLibraryDeck(b.dataset.exportLibraryDeck));
   $$('[data-start-study]').forEach(b=>b.onclick=()=>startStudySession('review',b.dataset.startStudy));
-  $('[data-start-flashcards]')?.addEventListener('click',()=>startStudySession('flashcards','all'));
+  $$('[data-start-flashcards]').forEach(button=>button.addEventListener('click',()=>startStudySession('flashcards',button.dataset.startFlashcards)));
   $$('[data-start-quiz]').forEach(b=>b.onclick=()=>startStudySession('quiz',b.dataset.startQuiz));
   $$('[data-flash-choice]').forEach(b=>b.onclick=()=>{if(!state.deckFlipped){state.studySession.selectedAnswer=b.dataset.flashChoice;persistActiveStudySession();renderApp();}});
   $('#revealAdaptiveCard')?.addEventListener('click',revealAdaptiveCard);
@@ -1167,10 +1210,28 @@ function bindTools(){
   $('#submitQuizAnswer')?.addEventListener('click',()=>{if(!state.studySession.selectedAnswer)return;state.studySession.answerSubmitted=true;state.quizRevealed=true;persistActiveStudySession();renderApp();});
   $$('[data-rate-card]').forEach(b=>b.onclick=()=>applyCardRating(b.dataset.rateCard));
   $('#endStudySession')?.addEventListener('click',()=>{clearActiveStudySession();renderApp();});
+  const waiting=$('#legacyLearningWait');
+  if(waiting){
+    $('#checkLegacyLearning')?.addEventListener('click',renderApp);
+    const time=Date.parse(waiting.querySelector('time').dateTime);
+    window.setTimeout(()=>{if(waiting.isConnected)renderApp();},Math.max(50,time-Date.now()+50));
+  }
   $('#finishStudySession')?.addEventListener('click',()=>{const session=state.studySession;const reviewed=(session?.correct||0)+(session?.incorrect||0);if(reviewed){state.profile.studyHistory.sessions=(state.profile.studyHistory.sessions||0)+1;award({xp:Math.min(40,10+reviewed),coins:Math.min(18,4+Math.floor(reviewed/2)),reason:`Adaptive Study Session: ${reviewed} Cards`,type:'Flashcards'});saveProfileDebounced();}clearActiveStudySession();state.deckFlipped=false;renderApp();});
-  $('#startGuildQuiz')?.addEventListener('click',()=>startGuildStudy(false)); $('#startGuildMissed')?.addEventListener('click',()=>startGuildStudy(true));
-  $$('[data-guild-answer]').forEach(b=>b.onclick=()=>submitGuildAnswer(b.dataset.guildAnswer)); $('#revealGuildAnswer')?.addEventListener('click',revealGuildAnswer); $('#nextGuildQuestion')?.addEventListener('click',nextGuildQuestion); $('#endGuildStudy')?.addEventListener('click',endGuildStudy);
   $$('[data-library-game]').forEach(b=>b.onclick=async()=>startLibraryGame(b.dataset.libraryGame)); $$('[data-library-game-answer]').forEach(b=>b.onclick=()=>answerLibraryGame(b.dataset.libraryGameAnswer)); $('#quitLibraryGame')?.addEventListener('click',()=>{state.gameState=null;renderApp();}); $('#finishLibraryGame')?.addEventListener('click',finishLibraryGame);
+}
+
+function bindGuildVoyage(){
+  $('#leaveV3Guild')?.addEventListener('click',()=>guildCommand('leave').catch(error=>toast(friendly(error),'error')));
+  $('#joinV3Guild')?.addEventListener('click',()=>guildCommand('join').catch(error=>toast(friendly(error),'error')));
+  $$('[data-pirate-launch]').forEach(button=>button.onclick=()=>startGuildVoyage(button));
+  $('#pirateFullSail')?.addEventListener('change',event=>{
+    const session=state.group?.studySession;
+    pirateFullSailKey=event.target.checked&&session?`${session.id}:${session.index}`:null;
+  });
+  $$('[data-guild-answer]').forEach(button=>button.onclick=()=>submitGuildAnswer(button.dataset.guildAnswer));
+  $('#revealGuildAnswer')?.addEventListener('click',revealGuildAnswer);
+  $('#nextGuildQuestion')?.addEventListener('click',nextGuildQuestion);
+  $('#endGuildStudy')?.addEventListener('click',endGuildStudy);
 }
 async function libraryDeckModal(id=null){
   const current=libraryDecks().find(d=>d.id===id); const defaultScope=state.profile.activeGroupId?'Guild':'Personal';
@@ -1180,19 +1241,47 @@ async function libraryDeckModal(id=null){
 function libraryCardModal(deckId){ const deck=libraryDecks().find(d=>d.id===deckId);if(!deck)return;modal('Add Original Study Card',`<label><span class="label-title">Question / Prompt</span><textarea id="newCardQuestion"></textarea></label><div class="form-grid"><input id="newCardA" placeholder="A. Optional choice"><input id="newCardB" placeholder="B. Optional choice"><input id="newCardC" placeholder="C. Optional choice"><input id="newCardD" placeholder="D. Optional choice"><label><span class="label-title">Correct Choice</span><select id="newCardCorrect"><option value="">Simple Flashcard</option><option>A</option><option>B</option><option>C</option><option>D</option></select></label></div><label><span class="label-title">Answer / Explanation</span><textarea id="newCardExplanation"></textarea></label>`,async()=>{const question=$('#newCardQuestion').value.trim(),explanation=$('#newCardExplanation').value.trim();if(!question||!explanation)return toast('Question and explanation are required.','error');const choices={};['A','B','C','D'].forEach(l=>{const v=$(`#newCard${l}`).value.trim();if(v)choices[l]=v;});const correct=$('#newCardCorrect').value;if(correct&&!choices[correct])return toast('The selected correct choice needs text.','error');const fp=cardFingerprint(question,choices);const card={id:`card_${fp}`,fingerprint:fp,scope:deck.scope,scopeKey:deck.scopeKey,deckIds:[deck.id],source:'Original Card',question,choices,correctAnswer:correct,justifications:correct?{[correct]:explanation}:{_:explanation},tags:[deck.title],ownerUid:state.user.uid,importedAt:new Date().toISOString(),updatedAt:new Date().toISOString()};await saveStudyCard({uid:state.user.uid,groupId:state.profile.activeGroupId,card});Object.assign(state.library,mergeUniqueLibrary(state.library,{cards:[card],decks:[]}));renderApp();},'Add Card'); }
 async function deleteLibraryDeckFlow(id){ const deck=libraryDecks().find(d=>d.id===id);if(!deck)return;await confirmModal('Delete Deck',`Delete “${esc(deck.title)}”? Cards shared with a Master deck remain in the Master bank.`,async()=>{await deleteStudyDeck({uid:state.user.uid,groupId:state.profile.activeGroupId,deck});state.library.decks=state.library.decks.filter(d=>!(d.id===deck.id&&d.scopeKey===deck.scopeKey));state.library.cards=state.library.cards.map(c=>c.scopeKey===deck.scopeKey?{...c,deckIds:(c.deckIds||[]).filter(x=>x!==deck.id)}:c);if(state.selectedDeckId===deck.id)state.selectedDeckId=null;renderApp();}); }
 function exportLibraryDeck(id){ const deck=libraryDecks().find(d=>d.id===id);if(!deck)return;const rows=libraryCardsForDeck(deck).map(c=>[c.question,c.correctAnswer,c.choices?.[c.correctAnswer]||'',c.justifications?.[c.correctAnswer]||c.justifications?._||'',c.domain,c.knowledgeStatement].map(v=>String(v||'').replace(/\t/g,' ')).join('\t'));downloadText(`${safeFile(deck.title)}.tsv`,`Question\tCorrect Letter\tCorrect Answer\tExplanation\tDomain\tKnowledge Statement\n${rows.join('\n')}`,'text/tab-separated-values'); }
-async function startGuildStudy(missedOnly){ const deck=libraryDecks().find(d=>d.id===$('#guildStudyDeck').value);if(!deck)return;let cards=libraryCardsForDeck(deck).filter(c=>!c.answerConflict&&c.correctAnswer&&Object.keys(c.choices||{}).length>=2);if(missedOnly)cards=cards.filter(c=>c.wasCorrectAtImport===false);cards=[...cards].sort(()=>Math.random()-.5).slice(0,30);if(!cards.length)return toast('No eligible questions in that Guild deck.','error');state.group.studySession={id:randomId(),active:true,title:missedOnly?'Guild Missed-Question Review':'Guild Question Review',deckId:deck.id,scopeKey:deck.scopeKey,cardKeys:cards.map(libraryCardKey),index:0,participants:[state.user.uid],responses:{},scores:{},revealed:false,hostUid:state.user.uid,startedAt:new Date().toISOString()};await persistNewGuildStudySession();renderApp(); }
-async function guildCommand(type,extra={}){
-  const gs=state.group?.studySession;if(!gs)return;
-  state.group.studySession=await mutateGuildSession(state.group.id,{type,uid:state.user.uid,sessionId:gs.id,index:gs.index,at:new Date().toISOString(),...extra});renderApp();
+async function startGuildVoyage(button){
+  const group=state.group,uid=state.user?.uid;
+  if(!group||!uid||button.disabled)return;
+  const port=VOYAGE_PORTS.find(item=>item.id===button.dataset.pirateLaunch);
+  if(!port||!voyageReadiness(group.members,port.id).unlocked)return toast('Every crew member must finish this domain.', 'error');
+  const rounds=buildVoyageRounds(state.library.cards||[],state.library.decks||[],port.id,group.id);
+  if(!rounds.length)return toast('This domain needs shared questions before you can launch.','error');
+  const session={id:randomId(),title:port.name,cardKeys:rounds.map(libraryCardKey),startedAt:new Date().toISOString(),
+    voyage:{domainId:port.id,rounds}};
+  button.disabled=true;
+  try{
+    const result=await mutateGuildSession(group.id,{type:'start',uid,session});
+    if(state.group?.id===group.id&&state.user?.uid===uid&&
+      (state.group.studySession?.commandVersion||0)<=(result.commandVersion||0)){
+      state.group.studySession=result;
+      renderIfApp();
+    }
+  }catch(error){toast(friendly(error),'error');}
+  finally{button.disabled=false;}
 }
-async function submitGuildAnswer(letter){try{await guildCommand('answer',{answer:letter});}catch(error){toast(friendly(error),'error');}}
-async function revealGuildAnswer(){const card=libraryCardFromKey(state.group?.studySession?.cardKeys?.[state.group?.studySession?.index]);if(!card)return;try{await guildCommand('reveal',{correctAnswer:card.correctAnswer});}catch(error){toast(friendly(error),'error');}}
+let guildCommandBusy=false;
+async function guildCommand(type,extra={}){
+  const group=state.group,gs=group?.studySession,uid=state.user?.uid;
+  if(!gs||!uid||guildCommandBusy)return;
+  guildCommandBusy=true;
+  try{
+    const result=await mutateGuildSession(group.id,{type,uid,sessionId:gs.id,index:gs.index,at:new Date().toISOString(),...extra});
+    if(state.group?.id!==group.id||state.user?.uid!==uid||state.group.studySession?.id!==gs.id)return;
+    if((state.group.studySession.commandVersion||0)<=(result.commandVersion||0))state.group.studySession=result;
+    void reconcileVoyageReviews();
+    renderIfApp();
+  }finally{guildCommandBusy=false;}
+}
+async function submitGuildAnswer(letter){const session=state.group?.studySession;try{await guildCommand('answer',{answer:letter,charge:pirateFullSailKey===`${session?.id}:${session?.index}`});}catch(error){toast(friendly(error),'error');}}
+async function revealGuildAnswer(){const session=state.group?.studySession;const card=session?.voyage?.rounds[session.index]||libraryCardFromKey(session?.cardKeys?.[session?.index]);if(!card)return;try{await guildCommand('reveal',{correctAnswer:card.correctAnswer});}catch(error){toast(friendly(error),'error');}}
 async function nextGuildQuestion(){try{await guildCommand('next');}catch(error){toast(friendly(error),'error');}}
 async function endGuildStudy(){try{await guildCommand('end');}catch(error){toast(friendly(error),'error');}}
 
 function renderGuild(){
   const color=state.group?.color||'#7c4dff';
-  return `<div class="grid"><div class="panel guild-hero" style="--guild-color:${escAttr(color)}" data-tour="guild-home"><div class="guild-hero-brand">${state.group?guildEmblem(state.group,'large'):guildEmblem({icon:'guild',color},'large')}<div><p class="eyebrow">Study Guild</p><h3>${esc(state.group?.name||'Join Or Create A Guild')}</h3><p class="helper">Your Guild icon and color now brand the Guild page, Command Center snapshot, calendar accents, and sidebar membership chip.</p></div></div>${state.group?guildDetails():guildSetup()}</div>${state.group?`<div class="panel span-12">${renderDeckFilters()}${renderLessonCoverage()}</div>`:''}${state.group?`<div class="panel"><div class="section-head"><div><p class="eyebrow">Guild Calendar Glance</p><h3>Upcoming Shared Events</h3></div><button class="secondary-button small" data-go="calendar">Open Full Calendar</button></div>${guildEventsMini()}</div><div class="panel"><p class="eyebrow">Guild Session Metrics</p><div class="grid four"><div class="soft"><h3>${state.group.sessionStats?.completed||0}</h3><p class="helper">Completed Sessions</p></div><div class="soft"><h3>${state.group.sessionStats?.minutes||0}</h3><p class="helper">Guild Minutes</p></div><div class="soft"><h3>${state.group.sessionStats?.streak||0}</h3><p class="helper">Session Streak</p></div><div class="soft"><h3>${Object.keys(state.group.members||{}).length}</h3><p class="helper">Members</p></div></div></div>`:''}</div>`;
+  return `<div class="grid"><div class="panel guild-hero" style="--guild-color:${escAttr(color)}" data-tour="guild-home"><div class="guild-hero-brand">${state.group?guildEmblem(state.group,'large'):guildEmblem({icon:'guild',color},'large')}<div><p class="eyebrow">Study Guild</p><h3>${esc(state.group?.name||'Join Or Create A Guild')}</h3><p class="helper">Your Guild icon and color now brand the Guild page, Command Center snapshot, calendar accents, and sidebar membership chip.</p></div></div>${state.group?`<button class="primary-button" data-go="voyages">Open Guild voyages</button>${guildDetails()}`:guildSetup()}</div>${state.group?`<div class="panel span-12">${renderDeckFilters()}${renderLessonCoverage()}</div>`:''}${state.group?`<div class="panel"><div class="section-head"><div><p class="eyebrow">Guild Calendar Glance</p><h3>Upcoming Shared Events</h3></div><button class="secondary-button small" data-go="calendar">Open Full Calendar</button></div>${guildEventsMini()}</div><div class="panel"><p class="eyebrow">Guild Session Metrics</p><div class="grid four"><div class="soft"><h3>${state.group.sessionStats?.completed||0}</h3><p class="helper">Completed Sessions</p></div><div class="soft"><h3>${state.group.sessionStats?.minutes||0}</h3><p class="helper">Guild Minutes</p></div><div class="soft"><h3>${state.group.sessionStats?.streak||0}</h3><p class="helper">Session Streak</p></div><div class="soft"><h3>${Object.keys(state.group.members||{}).length}</h3><p class="helper">Members</p></div></div></div>`:''}</div>`;
 }
 function guildEmblem(group,size='small'){ const color=group?.color||'#7c4dff'; if(group?.iconImage)return `<span class="guild-emblem ${size}" style="--guild-color:${escAttr(color)}"><img src="${escAttr(group.iconImage)}" alt="Guild"></span>`; return `<span class="guild-emblem ${size}" style="--guild-color:${escAttr(color)}"><span class="app-icon ${group?.icon||'guild'}">${svgIcon(group?.icon||'guild')}</span></span>`; }
 function readFileDataUrl(file){ return new Promise((resolve,reject)=>{const r=new FileReader();r.onload=()=>resolve(r.result);r.onerror=reject;r.readAsDataURL(file);}); }
@@ -1297,6 +1386,7 @@ function bindView(){
 
   if(state.activeView==='audit'){bindLibraryAudit();return;}
   if(state.activeView==='arcade'){bindArcadeHub();return;}
+  if(state.activeView==='voyages'){bindGuildVoyage();return;}
   if(EXPERIENCE_VIEWS.includes(state.activeView)){bindExperience(state.activeView,experienceContext());return;}
   if(state.activeView==='profile'){bindExperienceSettings(experienceContext());}
   ({command:bindCommand,room:bindRoom,plan:bindPlan,practice:bindPractice,tools:bindTools,guild:bindGuild,calendar:bindCalendar,notebook:bindNotebook,rewards:bindRewards,profile:bindProfile}[state.activeView]||(()=>{}))();
@@ -1613,7 +1703,7 @@ async function saveExperienceReview(card,{rating,selectedAnswer,eventId,mode='po
       const logical=uniqueStudyCards(library.cards,library.progress,library.reviews,{uid:uid,decks:library.decks}).find(c=>studyIdentity(c)===studyIdentity(card));
       const saved=logical?.effectiveProgress||library.progress[progressKey(card)];
       const previous=saved&&(!saved.uid||saved.uid===uid)?saved:defaultProgress(card,uid);
-      const event=existing||{...createReviewEvent({uid:uid,card,deckId:card.deckIds?.[0]||'',mode,rating:effectiveRating,correct,responseTimeMs:Math.max(0,Math.min(86400000,Number(responseTimeMs)||0)),sessionId:eventId,groupId:profile.activeGroupId,wasNew:!(previous.repetitions||0)}),id:reviewId,reviewedAt:reviewedAt.toISOString()};
+      const event=existing||{...createReviewEvent({uid:uid,card,deckId:card.deckIds?.[0]||'',mode,rating:effectiveRating,correct,responseTimeMs:Math.max(0,Math.min(86400000,Number(responseTimeMs)||0)),sessionId:eventId,groupId:profile.activeGroupId,wasNew:!(previous.repetitions||0),schedulerState:previous.state}),id:reviewId,reviewedAt:reviewedAt.toISOString()};
       let updates=[];
       if(!existing){
         const next=rateCard(card,previous,effectiveRating,profile.preferences.studySettings||DEFAULT_REVIEW_SETTINGS,reviewedAt);
@@ -1627,8 +1717,13 @@ async function saveExperienceReview(card,{rating,selectedAnswer,eventId,mode='po
     }
     if(!receipt.intentPersisted){await persist(false);receipt.intentPersisted=true;}
     if(!receipt.reviewSaved){
-      if(isSupabaseReady())await saveStudyReviewBundle(uid,receipt.updates,receipt.event);
-      else await Promise.all([...receipt.updates.map(p=>saveStudyProgress(uid,p)),saveStudyReview(uid,receipt.event)]);
+      if(isSupabaseReady()){
+        const settings=profile.preferences.studySettings||DEFAULT_REVIEW_SETTINGS;
+        const saved=await saveStudyReviewBundle(uid,receipt.updates,receipt.event,latest=>
+          rateCard(card,latest,receipt.event.rating,settings,new Date(receipt.event.reviewedAt)));
+        receipt.updates=saved.updates;
+        receipt.event=saved.review;
+      }else await Promise.all([...receipt.updates.map(p=>saveStudyProgress(uid,p)),saveStudyReview(uid,receipt.event)]);
       assertContext();
       for(const p of receipt.updates)library.progress[p.id]=p;
       if(!library.reviews.some(e=>e.id===receipt.event.id))library.reviews.unshift(receipt.event);
@@ -1685,21 +1780,30 @@ async function saveExperienceWorldAction(event,mode='solo'){
     assertContext();toast(result.feedback?.message||'Your island is saved.');return result;
   }finally{experienceWorldLock=false;}
 }
-async function generateConceptPractice(card,missCount=1){
+async function generateConceptPractice(card,missCount=1,options={}){
   const user=state.user,profile=state.profile,library=state.library,uid=user?.uid;
-  if(!uid||typeof user.getIdToken!=='function')throw new Error('Sign in to generate concept practice. Demo practice does not call the AI service.');
-  const endpoint=localStorage.getItem(`cqPracticeEndpoint:${uid}`);
-  if(!endpoint)throw new Error('Connect your secured concept practice service in Profile first.');
+  if(!uid)throw new Error('Open a study session before saving practice.');
+  let endpoint='';
+  try{endpoint=localStorage.getItem(`cqPracticeEndpoint:${uid}`)||'';}catch{}
+  const useAI=options.source==='ai'||(!options.source&&Boolean(endpoint));
   const lessonId=card.lessonId||cardLesson(card)?.id;
-  if(!lessonId)throw new Error('Assign this question to a lesson before generating targeted practice.');
   const lesson=LESSONS.find(l=>l.id===lessonId);
-  // Send topic descriptions, not private imported question banks or answer history.
-  const concepts=[card.concept,lesson?.title,lesson?.domainName].filter(Boolean);
-  const set=await requestConceptPractice({endpoint,getToken:()=>user.getIdToken(),lessonId,concepts,missCount});
+  const domainId=lesson?.domainId||card.domainId||(Number(card.domainNumber)?`d${card.domainNumber}`:'');
   const current=()=>{if(state.user?.uid!==uid||state.profile!==profile)throw new Error('Account changed. Return to the original account to open this practice.');};
+  let set;
+  if(useAI){
+    if(!endpoint||typeof user.getIdToken!=='function')throw new Error('Connect your secured concept practice service and sign in first.');
+    if(!lesson)throw new Error('Assign this question to a lesson before generating AI practice.');
+    // Restrict hosted requests to titles from the app’s public syllabus.
+    set=await requestConceptPractice({endpoint,getToken:()=>user.getIdToken(),lessonId,concepts:[lesson.title,lesson.domainName].filter(Boolean),missCount,count:options.count});
+  }else{
+    const alreadySaved=library.cards.filter(item=>item.scope==='Personal'&&item.ownerUid===uid).map(item=>item.id);
+    set=builtInPracticeSet({lessonId,domainId,count:options.count,alreadySaved});
+  }
   current();
-  const catalog=await catalogPracticeSet(set,{uid}),deckId=`ai_${catalog.id}`;
-  const deck={id:deckId,title:`Concept practice: ${lesson?.title||lessonId}`,scope:'Personal',scopeKey:scopeKey('Personal',uid),ownerUid:uid,lessonId,domainId:lesson?.domainId||'',kind:'lesson',source:'AI-generated concept practice',homeworkExcluded:true,createdAt:catalog.generatedAt,contributors:[]};
+  if(!set.questions.length)return [];
+  const catalog=set.builtIn?set:await catalogPracticeSet(set,{uid}),deckId=set.builtIn?`coach_practice_${domainId}`:`ai_${catalog.id}`;
+  const deck={id:deckId,title:set.builtIn?`Coach practice · Domain ${domainId.slice(1)}`:`Concept practice: ${lesson.title}`,scope:'Personal',scopeKey:scopeKey('Personal',uid),ownerUid:uid,lessonId:set.builtIn?'':lessonId,domainId,kind:'lesson',source:set.builtIn?'ControlQuest original checkpoint':'AI-generated concept practice',homeworkExcluded:true,createdAt:catalog.generatedAt,contributors:[]};
   const cards=practiceCards(catalog,uid).map(q=>({...q,deckIds:[deckId]}));
   await saveStudyImport({uid,groupId:null,decks:[deck],cards});current();
   // Keep the context's library object alive for session resume and queued saves.
@@ -1745,12 +1849,6 @@ async function startDemoSession(){
   await refreshStudyLibrary();await recordAccountActivity('session-start','Demo app session started');applyTheme();startClock();renderApp();
 }
 
-async function persistNewGuildStudySession(){
-  const session=state.group.studySession;try{state.group.studySession=await mutateGuildSession(state.group.id,{type:'start',uid:state.user.uid,session});}
-  catch(error){state.group=await loadGroup(state.profile.activeGroupId);toast(friendly(error),'error');}
-}
-
-
 function hydrateHomeworkRecords(){
   if(!state.profile)return;
   state.profile.v3 ||= {};state.profile.v3.homework ||= {};
@@ -1759,7 +1857,14 @@ function hydrateHomeworkRecords(){
   h.completions={...h.completions,...state.library.homeworkCompletions};
 }
 function currentHomeworkPlan(){return buildHomeworkPlan({cards:state.library.cards,progressMap:state.library.progress,reviews:[...state.library.reviews,...pendingReviewEvents(localStorage,state.user.uid,state.profile.activeGroupId)],decks:state.library.decks,uid:state.user.uid,state:state.profile.v3?.homework||{}});}
-function updateHomeworkSummary(){if(!state.profile||!state.library.loaded)return;state.profile.v3 ||= {};const plan=currentHomeworkPlan();state.profile.v3.homeworkSummary=buildHomeworkPublicSummary(plan,state.profile.v3.homework||{});}
+function updateHomeworkSummary(){
+  if(!state.profile||!state.library.loaded)return;
+  state.profile.v3 ||= {};
+  const summary=buildHomeworkPublicSummary(currentHomeworkPlan(),state.profile.v3.homework||{});
+  summary.confirmedLessonIds=summary.assignments.filter(item=>item.completedAt&&
+    item.completedAt===state.library.homeworkCompletions?.[item.lessonId]?.completedAt).map(item=>item.lessonId);
+  state.profile.v3.homeworkSummary=summary;
+}
 function homeworkContext(){
   const c=experienceContext();
   const plan=currentHomeworkPlan();
